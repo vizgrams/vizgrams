@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 .wt_context
 .vz_context
+# Runtime databases
+data/api.db
+data/batch.db
 # Legacy per-model metadata DB — replaced by central data/api.db (VG-100)
 **/scryglass-metadata.db
 .coverage
