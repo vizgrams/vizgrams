@@ -3,9 +3,7 @@
 
 """Tests for core/significance.py"""
 
-import pytest
 from core.significance import compute_significance_score
-
 
 # ---------------------------------------------------------------------------
 # Edge cases — no data / insufficient data

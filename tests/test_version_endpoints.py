@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 from api.dependencies import get_base_dir, get_job_service
 from api.main import app
 from api.services.job_service import JobService
-from core import metadata_db
 
 # ---------------------------------------------------------------------------
 # Shared YAML fixtures

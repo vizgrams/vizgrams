@@ -994,9 +994,11 @@ def _compile_window_feature_to_sql(
     entity_bucket = features.get(feat.entity_type)
     if isinstance(entity_bucket, dict):
         # Nested format
-        for short_name, f in entity_bucket.items():
-            if isinstance(f, ExpressionFeatureDef) and short_name != my_short_name:
-                same_entity_feats[short_name] = f
+        same_entity_feats.update({
+            short_name: f
+            for short_name, f in entity_bucket.items()
+            if isinstance(f, ExpressionFeatureDef) and short_name != my_short_name
+        })
     else:
         # Flat format
         for fid, f in features.items():
@@ -1110,9 +1112,9 @@ def _compile_window_feature_to_sql(
             all_middle_cols = passthrough_col_sqls + window_col_sqls
             middle_lines = (
                 ["SELECT"] + [c + "," for c in all_middle_cols[:-1]] + [all_middle_cols[-1]] +
-                ["FROM (", *["  " + l for l in inner_sql.split("\n")], f") {inner_base_alias}"]
+                ["FROM (", *["  " + ln for ln in inner_sql.split("\n")], f") {inner_base_alias}"]
             )
-            indented_middle = "\n".join("  " + l for l in "\n".join(middle_lines).split("\n"))
+            indented_middle = "\n".join("  " + ln for ln in "\n".join(middle_lines).split("\n"))
 
             # Outer SELECT: scalar functions only, window results referenced by alias
             outer_alias = "w"

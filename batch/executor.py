@@ -79,8 +79,8 @@ def run_extractor(
     Returns:
         ``ExtractionResult`` — always returns, never raises.
     """
-    from core.tool_service import get_tool_instance
     from core.db import get_backend
+    from core.tool_service import get_tool_instance
     from engine.extractor import JobCancelledError, find_extractor, parse_yaml_config_from_content, run_task
 
     def _progress(msg: str) -> None:

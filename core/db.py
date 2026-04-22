@@ -802,7 +802,8 @@ class ClickHouseBackend(DBBackend):
 def get_backend(model_dir: Path, namespace: str = "sem") -> DBBackend:
     """Return the appropriate DBBackend for the given model directory.
 
-    Reads ``database:`` from ``config.yaml``; defaults to ClickHouse.
+    Reads ``database:`` from ``config.yaml``; defaults to SQLite.
+    Production models always specify their backend explicitly.
 
     ``namespace`` is only meaningful for ClickHouse backends:
       ``"sem"``  — connect to the entity database, same name as ``database`` config
@@ -815,7 +816,11 @@ def get_backend(model_dir: Path, namespace: str = "sem") -> DBBackend:
     """
     from core.model_config import load_database_config  # noqa: PLC0415
     cfg = load_database_config(model_dir)
-    backend = cfg.get("backend", "clickhouse")
+    backend = cfg.get("backend", "sqlite")
+
+    if backend == "sqlite":
+        db_path = cfg.get("path", "data/data.db")
+        return SQLiteBackend(db_path=Path(model_dir) / db_path)
 
     if backend == "clickhouse":
         base_db = cfg.get("database", model_dir.name)

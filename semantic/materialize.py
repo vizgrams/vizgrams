@@ -68,8 +68,7 @@ def _entity_table_specs(
     if all_entities:
         upsert_set = {e.name for e in all_entities if not e.history}
         for attr in entity.all_base_columns:
-            if attr.semantic == SemanticHint.RELATION and attr.references:
-                if attr.references in upsert_set:
+            if attr.semantic == SemanticHint.RELATION and attr.references and attr.references in upsert_set:
                     ref = next(e for e in all_entities if e.name == attr.references)
                     if ref.primary_key:
                         base_fks[attr.name] = (

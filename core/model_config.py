@@ -122,7 +122,10 @@ def load_model_config(model_dir: Path) -> dict | None:
 
 
 _DATABASE_DEFAULTS: dict = {
-    "backend": "clickhouse",
+    "backend": "sqlite",
+}
+
+_CLICKHOUSE_DEFAULTS: dict = {
     "host": "env:CLICKHOUSE_HOST",
     "port": 8123,
     "username": "default",
@@ -134,9 +137,8 @@ def load_database_config(model_dir: Path) -> dict:
     """Return the ``database:`` block from config.yaml, with defaults applied.
 
     When config.yaml is absent or has no ``database:`` key, defaults to a
-    ClickHouse backend whose connection details are read from the environment
-    (CLICKHOUSE_HOST, CLICKHOUSE_PASSWORD) and whose database name is derived
-    from the model directory name.
+    SQLite backend.  Production models that use ClickHouse always specify
+    ``database: {backend: clickhouse}`` explicitly in their config.yaml.
 
     All string values in the block are resolved via ``resolve_credential`` so
     that ``env:VAR`` and ``file:name`` references work for any field.
@@ -155,6 +157,9 @@ def load_database_config(model_dir: Path) -> dict:
         db_block = load_config_yaml(model_dir).get("database") or {}
 
     merged = {**_DATABASE_DEFAULTS, **db_block}
+    # Inject ClickHouse connection defaults only when backend is clickhouse.
+    if merged.get("backend") == "clickhouse":
+        merged = {**_CLICKHOUSE_DEFAULTS, **merged}
     resolved = {k: resolve_credential(v) if isinstance(v, str) else v for k, v in merged.items()}
 
     # Apply env-var fallbacks: CLICKHOUSE_HOST / CLICKHOUSE_PASSWORD may be

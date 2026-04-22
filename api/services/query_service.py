@@ -77,6 +77,7 @@ def get_query(model_dir: Path, query_name: str) -> dict:
 def validate_query(model_dir: Path, query_name: str) -> dict:
     import shutil
     import tempfile
+
     from semantic.query import validate_query_yaml
 
     queries_dir = model_dir / "queries"
@@ -127,6 +128,7 @@ def validate_inline_query(model_dir: Path, name: str, content: str) -> dict:
         if not errors:
             try:
                 import yaml as _yaml
+
                 from semantic.query import parse_query_dict
                 q = parse_query_dict(_yaml.safe_load(tmp_path.read_text()))
                 if q:
@@ -232,6 +234,7 @@ def execute_inline_yaml(
 ) -> dict:
     """Compile and execute a query defined as YAML content (no file required)."""
     import yaml as _yaml
+
     from semantic.query import parse_query_dict
 
     try:
@@ -370,6 +373,7 @@ def validate_all(model_dir: Path) -> list[dict]:
     """Validate all query artifacts in the DB; returns list of {file, valid, errors}."""
     import shutil
     import tempfile
+
     from semantic.query import validate_query_yaml
 
     ontology_dir = model_dir / "ontology"

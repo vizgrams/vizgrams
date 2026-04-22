@@ -3,10 +3,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from core.db import BackendUnavailableError
-
 from api.batch_client import BatchServiceError, submit_materialize_job
-from api.dependencies import get_job_service, resolve_entity, resolve_model_dir
+from api.dependencies import resolve_entity, resolve_model_dir
 from api.routers.jobs import _to_job_out
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.entity import EntityCreate, EntityDetail, EntitySummary
@@ -14,7 +12,7 @@ from api.schemas.job import JobOut
 from api.services import entity_service, feature_service
 from api.services.entity_service import EntityValidationError
 from api.services.feature_service import FeatureValidationError
-from api.services.job_service import JobService
+from core.db import BackendUnavailableError
 from core.version_routes import make_version_routes
 
 router = APIRouter(prefix="/model/{model}/entity", tags=["entities"])

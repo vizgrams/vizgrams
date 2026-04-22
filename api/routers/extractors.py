@@ -3,18 +3,17 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from core.db import BackendUnavailableError
-
 from api.batch_client import BatchServiceError
 from api.dependencies import get_job_service, require_role, resolve_model_dir
 from api.limiter import limiter
-from core.rbac import ModelRole
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.extractor import ExtractorDetail
 from api.schemas.job import JobOut
 from api.services import extractor_service
 from api.services.extractor_service import ExtractorConflictError, ExtractorValidationError
 from api.services.job_service import JobService
+from core.db import BackendUnavailableError
+from core.rbac import ModelRole
 from core.version_routes import make_version_routes
 
 router = APIRouter(prefix="/model/{model}/tool", tags=["extractors"])

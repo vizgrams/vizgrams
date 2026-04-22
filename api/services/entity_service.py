@@ -4,7 +4,6 @@
 """Entity service: ontology inspection and validation."""
 
 import re
-import sqlite3
 from pathlib import Path
 
 import yaml
@@ -126,6 +125,7 @@ def get_entity(model_dir: Path, entity_name: str) -> dict:
 def validate_entity(model_dir: Path, entity_name: str) -> dict:
     """Validate an entity YAML file using the ontology validator."""
     import tempfile
+
     from semantic.ontology import validate_ontology_yaml
 
     content = metadata_db.get_current_content(model_dir, "entity", _entity_db_key(model_dir, entity_name))
@@ -428,6 +428,7 @@ def _materialize_entity(model_dir: Path, entity_name: str) -> None:
 def validate_all(model_dir: Path) -> list[dict]:
     """Validate all ontology artifacts in the DB; returns list of {file, valid, errors}."""
     import tempfile
+
     from semantic.ontology import validate_ontology_yaml
 
     results = []
@@ -575,7 +576,7 @@ def save_entity_yaml(model_dir: Path, entity_name: str, content: str) -> dict:
     import os
     import tempfile
 
-    from semantic.ontology import validate_ontology_yaml, validate_all_entities
+    from semantic.ontology import validate_all_entities, validate_ontology_yaml
 
     tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".yaml")
     tmp_path = Path(tmp_path_str)

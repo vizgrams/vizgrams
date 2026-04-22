@@ -15,13 +15,13 @@ from pathlib import Path
 import yaml
 
 from core import metadata_db
+from semantic.application import parse_application_dict
 from semantic.feature import parse_feature_dict
 from semantic.mapper import parse_mapper_dict
 from semantic.ontology import parse_entity_dict
 from semantic.query import parse_query_dict
-from semantic.application import parse_application_dict
-from semantic.view import parse_view_dict
 from semantic.types import EntityDef
+from semantic.view import parse_view_dict
 
 
 class YAMLAdapter:

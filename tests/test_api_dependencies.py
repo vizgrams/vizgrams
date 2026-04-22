@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from api.dependencies import get_base_dir, get_models_dir, get_current_user, optional_user
+from api.dependencies import get_base_dir, get_current_user, get_models_dir, optional_user
 
 
 def _mock_request(email_header: str | None = None) -> MagicMock:

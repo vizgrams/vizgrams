@@ -23,10 +23,9 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from core.db import BackendUnavailableError
-
 from batch.logging_config import configure_logging
 from batch.tracing import configure_tracing
+from core.db import BackendUnavailableError
 
 # ---------------------------------------------------------------------------
 # Logging + tracing — initialised before any other imports touch the OTel API
@@ -69,6 +68,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
+from api.limiter import limiter
 from api.routers import (
     applications,
     batch,
@@ -89,8 +89,6 @@ from api.routers import (
     views,
     vizgrams,
 )
-
-from api.limiter import limiter
 
 app = FastAPI(
     title="vizgrams API",
@@ -156,6 +154,7 @@ app.include_router(vizgrams.router, prefix=PREFIX)
 # OTel instrumentation — must run after app + routers are fully configured
 # ---------------------------------------------------------------------------
 import os as _otel_os
+
 if _otel_os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor

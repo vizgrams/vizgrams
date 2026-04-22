@@ -3,11 +3,9 @@
 
 """Tests for core/rbac.py — role resolution and system admin checks."""
 
-import pytest
 import yaml
 
 from core.rbac import ModelRole, _matches, get_model_role, is_creator, is_system_admin
-
 
 # ---------------------------------------------------------------------------
 # _matches

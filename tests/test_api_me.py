@@ -3,7 +3,6 @@
 
 """Tests for GET /api/v1/me — identity and platform role."""
 
-import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app

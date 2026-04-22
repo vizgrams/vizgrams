@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.dependencies import get_current_user, optional_user, require_creator
-from core.vizgrams_db import get_user_display_name
 from core.caption_provider import (
     build_caption_prompt,
     compute_snapshot_hash,
@@ -21,6 +20,7 @@ from core.vizgrams_db import (
     create_vizgram,
     find_caption_by_hash,
     get_engagement_counts,
+    get_user_display_name,
     get_viewer_engagement,
     get_vizgram,
     list_feed,

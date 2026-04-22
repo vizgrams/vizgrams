@@ -16,7 +16,6 @@ from api.batch_client import BatchServiceError, get_schedules, trigger
 from api.dependencies import require_role, resolve_model_dir
 from api.limiter import limiter
 from core.rbac import ModelRole
-from api.schemas.job import JobOut
 
 _log = logging.getLogger(__name__)
 

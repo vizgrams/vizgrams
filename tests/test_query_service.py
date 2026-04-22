@@ -249,7 +249,7 @@ where:
 @pytest.fixture
 def inline_model_dir(tmp_path):
     """A minimal model dir with inline query files and example ontology seeded to DB."""
-    from core.metadata_db import record_version, seed_from_directory
+    from core.metadata_db import record_version
 
     # Seed queries into DB
     (tmp_path / "data").mkdir()

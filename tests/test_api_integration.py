@@ -7,7 +7,6 @@ Tests run against an in-memory/tmp_path environment — no external services nee
 Each test exercises the full HTTP contract: routing, status codes, response shapes.
 """
 
-from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -825,7 +824,7 @@ def test_execute_extractor_blocked_while_cancelling(live_client, fake_batch_clie
 
 def test_is_cancelling_returns_true_after_cancel():
     """JobService.is_cancelling reflects the cancel() call (unit test, no HTTP)."""
-    from api.services.job_service import JobService, JobStatus
+    from api.services.job_service import JobService
     svc = JobService()
     job = svc.create(model="m1", operation="extract")
     assert not svc.is_cancelling(job.job_id)
@@ -835,7 +834,7 @@ def test_is_cancelling_returns_true_after_cancel():
 
 def test_mark_cancelled_transitions_status():
     """JobService.mark_cancelled() sets status to cancelled and records completed_at."""
-    from api.services.job_service import JobService, JobStatus
+    from api.services.job_service import JobService
     svc = JobService()
     job = svc.create(model="m1", operation="extract")
     svc.cancel(job.job_id)

@@ -112,8 +112,8 @@ def trigger(
     Returns immediately with a job ID. Poll ``GET /api/v1/jobs/{job_id}?model={model}``
     for status.  Use ``force=true`` to run regardless of schedule.
     """
-    from engine.extractor import find_extractor
     from batch.schedule import extractors_due
+    from engine.extractor import find_extractor
 
     model_dir = _get_model_dir_or_404(model)
 

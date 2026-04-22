@@ -4,7 +4,6 @@
 """Model registry: load/save registry.yaml, append to audit.log."""
 
 import getpass
-from datetime import UTC, datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------

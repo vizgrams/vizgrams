@@ -357,6 +357,7 @@ def reconcile_entity_feature(
 def validate_all(model_dir: Path) -> list[dict]:
     """Validate all feature artifacts in the DB; returns list of {file, valid, errors}."""
     import tempfile
+
     from semantic.feature import validate_feature_yaml
 
     results = []

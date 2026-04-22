@@ -15,10 +15,9 @@ Format: ``{EntityName}_{propertyName}`` (e.g. ``PullRequest_created_at``).
 
 from __future__ import annotations
 
-from rdflib import BNode, Graph, Literal, Namespace, OWL, RDF, RDFS, URIRef, XSD
+from rdflib import OWL, RDF, RDFS, XSD, BNode, Graph, Literal, Namespace, URIRef
 
 from semantic.types import Cardinality, ColumnType, EntityDef
-
 
 # Annotation-property namespace for vizgrams-specific metadata
 VZ_META = Namespace("https://w3id.org/vizgrams/meta#")

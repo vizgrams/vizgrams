@@ -70,6 +70,7 @@ def execute_view(
 def validate_view(model_dir: Path, view_name: str) -> dict:
     import shutil
     import tempfile
+
     from semantic.view import validate_view as _validate_view
 
     views_dir = model_dir / "views"
@@ -173,6 +174,7 @@ def _validate_app_views(model_dir: Path, view_names: list[str]) -> list:
     """Validate each view's declared columns exist in its query output."""
     import shutil
     import tempfile
+
     from core.validation import ValidationError
     from semantic.view import validate_view as _validate_view
 
