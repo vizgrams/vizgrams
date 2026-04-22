@@ -287,10 +287,10 @@ colorama = {version = "*", markers = "platform_system == \"Windows\""}
 name = "clickhouse-connect"
 version = "0.9.1"
 description = "ClickHouse Database Core Driver for Python, Pandas, and Superset"
-optional = true
+optional = false
 python-versions = "~=3.8"
 groups = ["main"]
-markers = "python_version >= \"3.14\" and extra == \"clickhouse\""
+markers = "python_version >= \"3.14\""
 files = [
     {file = "clickhouse_connect-0.9.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:8ca6cfcc64933d994de13ad55f1184298fe79eda908590800e2ee980ac544293"},
     {file = "clickhouse_connect-0.9.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:7dcfc3e953bd3b05deda6dab19f8714e950946e37d92c510b7c6f0c971b36243"},
@@ -386,10 +386,10 @@ tzlocal = ["tzlocal (>=4.0)"]
 name = "clickhouse-connect"
 version = "0.15.1"
 description = "ClickHouse Database Core Driver for Python, Pandas, and Superset"
-optional = true
+optional = false
 python-versions = "<3.15,>=3.9"
 groups = ["main"]
-markers = "python_version < \"3.14\" and extra == \"clickhouse\""
+markers = "python_version < \"3.14\""
 files = [
     {file = "clickhouse_connect-0.15.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:d75324bb3a611eeb8c22b7fdda7c2cbc6ddbcc3871c65624b97f219430ded282"},
     {file = "clickhouse_connect-0.15.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:d10e8f42bafa12d43dd280d157af1ca5a1743e0ca94e61de94c1d00cb1b2da2b"},
@@ -1038,10 +1038,9 @@ valkey = ["valkey (>=6)"]
 name = "lz4"
 version = "4.4.5"
 description = "LZ4 Bindings for Python"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"clickhouse\""
 files = [
     {file = "lz4-4.4.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:d221fa421b389ab2345640a508db57da36947a437dfe31aeddb8d5c7b646c22d"},
     {file = "lz4-4.4.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:7dc1e1e2dbd872f8fae529acd5e4839efd0b141eaa8ae7ce835a9fe80fbad89f"},
@@ -1681,10 +1680,9 @@ dev = ["black", "build", "freezegun", "mdx_truly_sane_lists", "mike", "mkdocs", 
 name = "pytz"
 version = "2026.1.post1"
 description = "World timezone definitions, modern and historical"
-optional = true
+optional = false
 python-versions = "*"
 groups = ["main"]
-markers = "extra == \"clickhouse\""
 files = [
     {file = "pytz-2026.1.post1-py2.py3-none-any.whl", hash = "sha256:f2fd16142fda348286a75e1a524be810bb05d444e5a081f37f7affc635035f7a"},
     {file = "pytz-2026.1.post1.tar.gz", hash = "sha256:3378dde6a0c3d26719182142c56e60c7f9af7e968076f31aae569d72a0358ee1"},
@@ -2616,10 +2614,9 @@ type = ["pytest-mypy"]
 name = "zstandard"
 version = "0.25.0"
 description = "Zstandard bindings for Python"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"clickhouse\""
 files = [
     {file = "zstandard-0.25.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:e59fdc271772f6686e01e1b3b74537259800f57e24280be3f29c8a0deb1904dd"},
     {file = "zstandard-0.25.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:4d441506e9b372386a5271c64125f72d5df6d2a8e8a2a45a0ae09b03cb781ef7"},
@@ -2725,10 +2722,7 @@ files = [
 [package.extras]
 cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and python_version < \"3.14\"", "cffi (>=2.0.0b) ; platform_python_implementation != \"PyPy\" and python_version >= \"3.14\""]
 
-[extras]
-clickhouse = ["clickhouse-connect"]
-
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "77ccd3c027706a53257b03c8491d1a234fec8c3fbf4bc3ee3e5ef762f18b3d9e"
+content-hash = "c957c4e4297faef9177a25ef03beb85fcf97e4ef28b6bbad07caee577098fbf0"

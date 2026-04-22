@@ -35,10 +35,7 @@ opentelemetry-instrumentation-fastapi = "*"
 opentelemetry-instrumentation-httpx = "*"
 opentelemetry-exporter-otlp-proto-http = "*"
 rdflib = "*"
-clickhouse-connect = { version = "*", optional = true }
-
-[tool.poetry.extras]
-clickhouse = ["clickhouse-connect"]
+clickhouse-connect = "*"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
