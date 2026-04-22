@@ -1,0 +1,46 @@
+name: pv_build_duration
+root: ProductVersion
+
+attributes:
+  - month_key: format_time(released_at, "YYYY-MM")
+  - product: Product.display_name
+
+measures:
+  - avg_build_duration:
+      expr: avg(build_duration)
+      format:
+        type: duration
+        unit: days
+        pattern: "0.1"
+  - avg_days_since_prev_version:
+      expr: avg(days_since_prev_version)
+      format:
+        type: duration
+        unit: days
+        pattern: "0.1"
+  - rolling_avg_days_since_prev_version:
+      expr: avg(days_since_prev_version)
+      format:
+        type: duration
+        unit: days
+        pattern: "0.1"
+      window:
+        method: weighted
+        unit: month
+        frame: 3
+  - cnt_build_duration:
+      expr: count(created_at)
+      format:
+        type: number
+        pattern: "0"
+  - pct_versions_lt_28d:
+      expr: sum(is_lt_28d) / count(product_version_key)
+      format:
+        type: percent
+        pattern: "0.0%"
+
+where:
+  - build_duration is not NULL
+
+order:
+  - month_key: asc

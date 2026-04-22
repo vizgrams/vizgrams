@@ -1,0 +1,28 @@
+entity: TeamSprint
+description: A team's participation in a sprint
+
+identity:
+  team_sprint_key:
+    type: STRING
+    semantic: PRIMARY_KEY
+  sprint_key:
+    type: STRING
+    semantic: RELATION
+    references: Sprint
+  team_key:
+    type: STRING
+attributes:
+  team_name:
+    type: STRING
+    semantic: IDENTIFIER
+relations:
+  sprint:
+    target: Sprint
+    via: sprint_key
+    cardinality: MANY_TO_ONE
+    inverse: team_sprints
+  sprint_issues:
+    target: SprintIssue
+    cardinality: ONE_TO_MANY
+    via: [team_key, sprint_key]
+    inverse: team_sprint

@@ -1,0 +1,7 @@
+{
+  "products": [
+    {"product_key": "p1", "display_name": "Alpha", "domain_key": "d1", "status": "active"},
+    {"product_key": "p2", "display_name": "Beta", "domain_key": "d1", "status": "active"},
+    {"product_key": "p3", "display_name": "Gamma", "domain_key": "d2", "status": "experimental"}
+  ]
+}

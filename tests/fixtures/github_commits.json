@@ -1,0 +1,57 @@
+[
+  {
+    "sha": "abc123def456",
+    "commit": {
+      "message": "feat: add user authentication endpoint",
+      "author": {
+        "name": "Alice Smith",
+        "email": "alice@example.com",
+        "date": "2025-01-20T10:30:00Z"
+      },
+      "committer": {
+        "name": "Alice Smith",
+        "email": "alice@example.com",
+        "date": "2025-01-20T10:30:00Z"
+      }
+    },
+    "author": {
+      "login": "alice",
+      "id": 1
+    },
+    "committer": {
+      "login": "alice",
+      "id": 1
+    },
+    "parents": [
+      {"sha": "parent111"}
+    ]
+  },
+  {
+    "sha": "def789ghi012",
+    "commit": {
+      "message": "Merge pull request #42 from feature/oauth",
+      "author": {
+        "name": "Bob Jones",
+        "email": "bob@example.com",
+        "date": "2025-01-21T14:00:00Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2025-01-21T14:00:00Z"
+      }
+    },
+    "author": {
+      "login": "bob",
+      "id": 2
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447
+    },
+    "parents": [
+      {"sha": "parent222"},
+      {"sha": "parent333"}
+    ]
+  }
+]

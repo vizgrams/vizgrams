@@ -1,0 +1,148 @@
+# JSON Schema (2020-12 draft) for ontology YAML configs.
+# Stored as YAML for consistency with the rest of the project.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Entity Definition
+description: Schema for semantic ontology entity YAML definitions.
+type: object
+required: [entity, identity]
+additionalProperties: false
+
+$defs:
+  attribute:
+    type: object
+    required: [type]
+    additionalProperties: false
+    properties:
+      type:
+        type: string
+        enum: [STRING, INTEGER, FLOAT]
+      semantic:
+        type: string
+        enum:
+          - PRIMARY_KEY
+          - IDENTIFIER
+          - RELATION
+          - SCD_FROM
+          - SCD_TO
+          - INSERTED_AT
+          - STATE
+          - TIMESTAMP
+          - ORDERING
+          - MEASURE
+          - ATTRIBUTE
+          - ENTITY
+      references:
+        type: string
+        pattern: "^[A-Z][a-zA-Z0-9]*$"
+      description:
+        type: string
+
+properties:
+  entity:
+    type: string
+    pattern: "^[A-Z][a-zA-Z0-9]*$"
+    description: PascalCase entity name.
+  description:
+    type: string
+  schedule:
+    type: object
+    additionalProperties: false
+    properties:
+      cron:
+        type: string
+        description: "Cron expression for scheduled materialization (e.g. '0 4 * * *' for daily at 04:00 UTC)."
+    required: [cron]
+  display:
+    type: object
+    additionalProperties: false
+    properties:
+      list:
+        type: array
+        items:
+          type: string
+      detail:
+        type: array
+        items:
+          type: string
+      order:
+        type: array
+        items:
+          type: object
+          minProperties: 1
+          maxProperties: 1
+          additionalProperties:
+            type: string
+            enum: [asc, desc]
+  identity:
+    type: object
+    minProperties: 1
+    additionalProperties:
+      $ref: "#/$defs/attribute"
+  attributes:
+    type: object
+    additionalProperties:
+      $ref: "#/$defs/attribute"
+  history:
+    type: object
+    required: [type]
+    additionalProperties:
+      $ref: "#/$defs/attribute"
+    properties:
+      type:
+        type: string
+        enum: [SCD2]
+      initial_valid_from:
+        type: string
+  events:
+    type: object
+    additionalProperties:
+      type: object
+      additionalProperties: false
+      properties:
+        description:
+          type: string
+        grain:
+          type: string
+        attributes:
+          type: object
+          minProperties: 1
+          additionalProperties:
+            $ref: "#/$defs/attribute"
+  relations:
+    type: object
+    additionalProperties:
+      type: object
+      required: [target, cardinality]
+      additionalProperties: false
+      properties:
+        target:
+          type: string
+          pattern: "^([A-Z][a-zA-Z0-9]*|dynamic\\([a-z][a-z0-9_]*\\))$"
+        via:
+          description: >
+            MANY_TO_ONE: FK column on this entity, optionally "local_col > target_col" when the
+            FK name differs from the target PK.
+            ONE_TO_MANY: "local_col > target_col" where local_col is on this entity and
+            target_col is the FK column on the target entity (e.g. "iata_code > airline_code").
+            Legacy array form [child_col, ...] is still accepted; child cols are joined to this
+            entity's primary key.
+          oneOf:
+            - type: string
+              pattern: "^[a-z][a-z0-9_]*(\\s*>\\s*[a-z][a-z0-9_]*)?$"
+            - type: array
+              items:
+                type: string
+                pattern: "^[a-z][a-z0-9_]*$"
+              minItems: 1
+        source:
+          type: string
+        cardinality:
+          type: string
+          enum: [ONE_TO_ONE, ONE_TO_MANY, MANY_TO_ONE, MANY_TO_MANY]
+        inverse:
+          type: string
+          description: >
+            Name of the corresponding relation on the target entity.
+            Required for all non-dynamic, non-asymmetric-via relations.
+        description:
+          type: string

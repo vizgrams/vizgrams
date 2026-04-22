@@ -1,0 +1,19 @@
+mapper: domain
+description: Map raw domain records to the Domain entity
+
+grain: dom
+
+sources:
+  - alias: dom
+    table: raw_file_domains
+    columns:
+      - domain_key
+      - display_name
+
+targets:
+  - entity: Domain
+    columns:
+      - name: domain_key
+        expr: dom.domain_key
+      - name: display_name
+        expr: dom.display_name

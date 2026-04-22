@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 213 33% 97%;       /* #F4F7FA — subtle off-white with cool blue tint */
+    --foreground: 214 60% 15%;       /* #0D2236 — deep navy for primary text */
+    --card: 0 0% 100%;               /* pure white cards */
+    --card-foreground: 214 60% 15%;
+    --muted: 210 28% 95%;            /* light grey for muted backgrounds */
+    --muted-foreground: 215 16% 47%; /* medium grey for secondary text */
+    --accent: 210 28% 95%;
+    --accent-foreground: 214 60% 15%;
+    --border: 214 20% 88%;           /* subtle cool grey borders */
+    --input: 214 20% 88%;
+    --ring: 243 75% 59%;
+    --primary: 243 75% 59%;          /* indigo — Stripe-like accent */
+    --primary-foreground: 0 0% 100%;
+    --radius: 0.375rem;              /* 6px — tighter than default */
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  html { font-size: 15px; }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+  }
+}

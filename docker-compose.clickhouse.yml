@@ -1,0 +1,53 @@
+# Copyright 2024-2026 Oliver Fenton
+# SPDX-License-Identifier: Apache-2.0
+#
+# ClickHouse overlay — attaches a local CH instance to the vizgrams stack for
+# development. Production deployments use a separately managed CH instance.
+#
+# Usage (via main Makefile):
+#   make clickhouse   → start CH only (for make dev)
+#   make up           → full stack including CH
+#
+# Interfaces (exposed to localhost only):
+#   HTTP:   http://localhost:8123   (clickhouse-connect / vizgrams API)
+#
+# Admin:
+#   make ch                          → interactive clickhouse-client shell
+#   make ch DB=<database>            → shell on a specific database
+
+services:
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+    ports:
+      - "127.0.0.1:8123:8123"   # expose to localhost for make dev / clickhouse-client
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      - ./config/clickhouse:/etc/clickhouse-server/config.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+
+volumes:
+  clickhouse_data:
+  clickhouse_logs:
+
+networks:
+  internal:

@@ -1,0 +1,28 @@
+# Copyright 2024-2026 Oliver Fenton
+# SPDX-License-Identifier: Apache-2.0
+#
+# Optional observability overlay — adds Jaeger all-in-one for local tracing.
+# Use via: make up-otel
+#
+# UI:   http://localhost:16686
+# OTLP: http://jaeger:4318  (reachable by api and batch on the internal network)
+
+services:
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # Jaeger UI
+    networks:
+      - internal
+
+  api:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+
+  batch:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318

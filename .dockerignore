@@ -1,0 +1,20 @@
+.git
+.env
+.env.*
+!.env.example
+
+# Python
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Node
+ui/node_modules
+ui/dist
+
+# Runtime data — mounted as a volume at deploy time
+models/
+logs/

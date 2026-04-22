@@ -1,0 +1,20 @@
+entity: Domain
+description: A business domain grouping products
+display:
+  list: [display_name]
+  detail: [display_name]
+
+identity:
+  domain_key:
+    type: STRING
+    semantic: PRIMARY_KEY
+attributes:
+  display_name:
+    type: STRING
+    semantic: IDENTIFIER
+relations:
+  products:
+    target: Product
+    cardinality: ONE_TO_MANY
+    via: [domain_key]
+    inverse: domain

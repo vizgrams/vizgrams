@@ -1,0 +1,22 @@
+[
+  {
+    "id": 2001,
+    "name": "Backend Engineers",
+    "slug": "backend-engineers",
+    "description": "Backend engineering team",
+    "privacy": "closed",
+    "permission": "push",
+    "members_count": 5,
+    "repos_count": 3
+  },
+  {
+    "id": 2002,
+    "name": "Frontend Engineers",
+    "slug": "frontend-engineers",
+    "description": "Frontend engineering team",
+    "privacy": "closed",
+    "permission": "push",
+    "members_count": 4,
+    "repos_count": 2
+  }
+]

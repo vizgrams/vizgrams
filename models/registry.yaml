@@ -1,0 +1,10 @@
+models:
+  example:
+    display_name: Example Model
+    description: Toy model for tests and quickstart — no credentials required
+    owner: open-source
+    created_at: '2026-01-01T00:00:00Z'
+    status: active
+    tags:
+      - example
+      - quickstart

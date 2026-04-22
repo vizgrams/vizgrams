@@ -1,0 +1,32 @@
+entity: Product
+description: A software product in the portfolio
+display:
+  list: [display_name]
+  detail: [display_name]
+
+identity:
+  product_key:
+    type: STRING
+    semantic: PRIMARY_KEY
+  domain_key:
+    type: STRING
+    semantic: RELATION
+    references: Domain
+attributes:
+  display_name:
+    type: STRING
+    semantic: IDENTIFIER
+  status:
+    type: STRING
+    semantic: STATE
+relations:
+  domain:
+    target: Domain
+    via: domain_key
+    cardinality: MANY_TO_ONE
+    inverse: products
+  product_versions:
+    target: ProductVersion
+    cardinality: ONE_TO_MANY
+    via: [product_key]
+    inverse: product

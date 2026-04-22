@@ -1,0 +1,45 @@
+# Dex layer — adds a local OIDC identity provider for development.
+# Layered on top of docker-compose.yml + docker-compose.auth.yml.
+#
+# Use 'make up-auth' rather than running directly.
+# Login: dev@example.com / password
+
+services:
+
+  dex:
+    image: dexidp/dex:v2.41.1
+    restart: unless-stopped
+    command: dex serve /etc/dex/config.yaml
+    volumes:
+      - ./config/dex/config.yaml:/etc/dex/config.yaml:ro
+    ports:
+      - "5556:5556"     # exposed so the browser can reach the login page
+    networks:
+      - proxy
+
+  # Override oauth2-proxy to point at Dex instead of a real provider.
+  # host.docker.internal resolves to the host machine from inside Docker Desktop
+  # (Mac/Windows). On Linux, the extra_hosts entry below handles it.
+  oauth2-proxy:
+    environment:
+      OAUTH2_PROXY_CLIENT_ID: "vizgrams"
+      OAUTH2_PROXY_CLIENT_SECRET: "dev-client-secret"
+      OAUTH2_PROXY_COOKIE_SECRET: "ZmFrZWNvb2tpZXNlY3JldGZvcmRldg=="
+      OAUTH2_PROXY_REDIRECT_URL: "http://localhost/oauth2/callback"
+      # Skip OIDC auto-discovery and specify all endpoints manually.
+      # This separates browser-facing URLs (localhost:5556, reachable by the user's
+      # browser via the exposed port) from container-internal URLs (dex:5556,
+      # reachable by service name on the proxy network).
+      #
+      # OIDC_ISSUER_URL is still required — oauth2-proxy uses it only for JWT `iss`
+      # claim validation, not for discovery when SKIP_OIDC_DISCOVERY is set.
+      OAUTH2_PROXY_OIDC_ISSUER_URL: "http://localhost:5556"
+      OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"
+      OAUTH2_PROXY_LOGIN_URL: "http://localhost:5556/auth"
+      OAUTH2_PROXY_REDEEM_URL: "http://dex:5556/token"
+      OAUTH2_PROXY_OIDC_JWKS_URL: "http://dex:5556/keys"
+      OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux compatibility
+    depends_on:
+      - dex

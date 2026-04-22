@@ -1,0 +1,36 @@
+entity: ProductVersion
+description: A released version of a product
+display:
+  list: [product_key, released_at]
+  detail: [product_key, released_at, build_duration]
+
+identity:
+  product_version_key:
+    type: STRING
+    semantic: PRIMARY_KEY
+  product_key:
+    type: STRING
+    semantic: RELATION
+    references: Product
+attributes:
+  released_at:
+    type: STRING
+    semantic: TIMESTAMP
+  created_at:
+    type: STRING
+    semantic: TIMESTAMP
+  build_duration:
+    type: FLOAT
+    semantic: MEASURE
+  days_since_prev_version:
+    type: FLOAT
+    semantic: MEASURE
+  is_lt_28d:
+    type: FLOAT
+    semantic: MEASURE
+relations:
+  product:
+    target: Product
+    via: product_key
+    cardinality: MANY_TO_ONE
+    inverse: product_versions

@@ -1,0 +1,8 @@
+feature_id: team_sprint.start_date
+name: Team Sprint Start Date
+description: Sprint start date for this team sprint
+entity_type: TeamSprint
+entity_key: team_sprint_key
+data_type: STRING
+materialization_mode: materialized
+expr: Sprint.start_date

@@ -1,0 +1,25 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Application Config
+description: Schema for application YAML files.
+type: object
+required: [name, views]
+properties:
+  name:
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+  views:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      pattern: "^[a-z][a-z0-9_]*$"
+  layout:
+    type: array
+    items:
+      type: object
+      required: [row]
+      properties:
+        row:
+          type: array
+          items:
+            type: string

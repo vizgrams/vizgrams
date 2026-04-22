@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.wt_context
+.vz_context
+# Legacy per-model metadata DB — replaced by central data/api.db (VG-100)
+**/scryglass-metadata.db
+.coverage
+.DS_Store
+.claude/settings.local.json
+logs/
+.env
+models/*/data/
+**/.write.lock
+backups

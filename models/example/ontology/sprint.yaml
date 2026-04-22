@@ -1,0 +1,17 @@
+entity: Sprint
+description: A sprint (iteration)
+
+identity:
+  sprint_key:
+    type: STRING
+    semantic: PRIMARY_KEY
+attributes:
+  name:
+    type: STRING
+    semantic: IDENTIFIER
+  start_date:
+    type: STRING
+    semantic: TIMESTAMP
+  end_date:
+    type: STRING
+    semantic: TIMESTAMP
