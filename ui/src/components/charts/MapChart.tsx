@@ -71,7 +71,7 @@ export function MapChart({
     }).addTo(map)
 
     map.on('click', () => setMenu(null))
-    map.on('contextmenu', (e) => L.DomEvent.preventDefault(e))
+    map.on('contextmenu', (e) => L.DomEvent.preventDefault(e as unknown as Event))
 
     const latIdx = columns.indexOf(latKey)
     const lonIdx = columns.indexOf(lonKey)

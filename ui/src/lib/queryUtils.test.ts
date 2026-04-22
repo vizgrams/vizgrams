@@ -108,6 +108,7 @@ const personCountsWeeklyDetail = {
   },
   where: ['created_at >= now() - 4w'],
   order_by: [{ field: 'week_key', direction: 'asc' }, { field: 'identity', direction: 'asc' }],
+  detail_attributes: [],
   compiled_sql: null,
   raw_yaml: null,
 }

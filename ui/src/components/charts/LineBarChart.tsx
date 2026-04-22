@@ -53,7 +53,7 @@ function CustomTooltip({ active, payload, label, formats, yKeys: _yKeys }: any) 
   return (
     <div style={{ fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', padding: '8px 12px' }}>
       <p style={{ marginBottom: 4, fontWeight: 500, color: '#374151' }}>{label}</p>
-      {payload.map((entry, i: number) => (
+      {payload.map((entry: { color: string; name: string; value: unknown; dataKey: string }, i: number) => (
         <p key={i} style={{ margin: '2px 0', color: entry.color }}>
           {entry.name}: {formatTooltipValue(entry.value, formats?.[entry.dataKey])}
         </p>
