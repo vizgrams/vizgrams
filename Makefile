@@ -52,9 +52,9 @@ docker-check: ## Verify the Docker daemon is reachable
 		exit 1; \
 	}
 
-env-check: ## Verify .env exists and WT_MODELS_DIR is set
+env-check: ## Verify .env exists and VZ_MODELS_DIR is set
 	@test -f .env || { echo "Error: .env not found — run: cp .env.example .env"; exit 1; }
-	@. ./.env && test -n "$$WT_MODELS_DIR" || { echo "Error: WT_MODELS_DIR not set in .env"; exit 1; }
+	@. ./.env && test -n "$$VZ_MODELS_DIR" || { echo "Error: VZ_MODELS_DIR not set in .env"; exit 1; }
 	@echo "✓ Environment looks good"
 
 env-check-dex: env-check ## Verify OAUTH2_COOKIE_SECRET is set (required for up-auth with local Dex)
