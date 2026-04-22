@@ -1,0 +1,6 @@
+{
+  "domains": [
+    {"domain_key": "d1", "display_name": "Engineering"},
+    {"domain_key": "d2", "display_name": "Data"}
+  ]
+}

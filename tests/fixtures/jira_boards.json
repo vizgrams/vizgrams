@@ -1,0 +1,35 @@
+{
+  "maxResults": 50,
+  "startAt": 0,
+  "isLast": true,
+  "values": [
+    {
+      "id": 1,
+      "self": "https://example.atlassian.net/rest/agile/1.0/board/1",
+      "name": "Engineering Board",
+      "type": "scrum",
+      "location": {
+        "projectId": 10001,
+        "displayName": "Engineering",
+        "projectName": "Engineering",
+        "projectKey": "ENG",
+        "projectTypeKey": "software",
+        "name": "Engineering Board"
+      }
+    },
+    {
+      "id": 2,
+      "self": "https://example.atlassian.net/rest/agile/1.0/board/2",
+      "name": "Data Team Board",
+      "type": "kanban",
+      "location": {
+        "projectId": 10002,
+        "displayName": "Data Team",
+        "projectName": "Data Team",
+        "projectKey": "DATA",
+        "projectTypeKey": "software",
+        "name": "Data Team Board"
+      }
+    }
+  ]
+}

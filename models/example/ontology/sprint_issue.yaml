@@ -1,0 +1,20 @@
+entity: SprintIssue
+description: An issue assigned to a sprint
+
+identity:
+  sprint_issue_key:
+    type: STRING
+    semantic: PRIMARY_KEY
+  team_key:
+    type: STRING
+  sprint_key:
+    type: STRING
+    semantic: RELATION
+    references: Sprint
+attributes:
+  outcome:
+    type: STRING
+    semantic: STATE
+  story_points:
+    type: FLOAT
+    semantic: MEASURE

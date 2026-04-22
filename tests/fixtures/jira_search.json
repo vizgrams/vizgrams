@@ -1,0 +1,118 @@
+{
+  "issues": [
+    {
+      "id": "10001",
+      "key": "ENG-101",
+      "self": "https://example.atlassian.net/rest/api/2/issue/10001",
+      "fields": {
+        "summary": "Implement login page",
+        "issuetype": {
+          "name": "Story"
+        },
+        "status": {
+          "name": "In Progress",
+          "id": "3",
+          "statusCategory": {
+            "name": "In Progress"
+          }
+        },
+        "resolution": null,
+        "priority": {
+          "name": "High"
+        },
+        "assignee": {
+          "displayName": "Alice Smith",
+          "emailAddress": "alice@example.com"
+        },
+        "reporter": {
+          "displayName": "Bob Jones"
+        },
+        "creator": {
+          "displayName": "Bob Jones"
+        },
+        "created": "2025-01-10T09:00:00.000+0000",
+        "updated": "2025-01-15T10:00:00.000+0000",
+        "resolutiondate": null,
+        "story_points": 5.0,
+        "sprint": {
+          "id": 101,
+          "name": "Sprint 1",
+          "state": "active"
+        },
+        "labels": ["backend", "auth"],
+        "components": [{"name": "api"}],
+        "fixVersions": [{"name": "v1.0"}],
+        "project": {
+          "key": "ENG"
+        }
+      },
+      "changelog": {
+        "startAt": 0,
+        "maxResults": 1,
+        "total": 1,
+        "histories": [
+          {
+            "id": "50001",
+            "created": "2025-01-15T10:00:00.000+0000",
+            "items": [
+              {
+                "field": "status",
+                "fromString": "To Do",
+                "toString": "In Progress"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "10002",
+      "key": "ENG-102",
+      "self": "https://example.atlassian.net/rest/api/2/issue/10002",
+      "fields": {
+        "summary": "Add unit tests for auth module",
+        "issuetype": {
+          "name": "Task"
+        },
+        "status": {
+          "name": "Done",
+          "id": "5",
+          "statusCategory": {
+            "name": "Done"
+          }
+        },
+        "resolution": {
+          "name": "Done"
+        },
+        "priority": {
+          "name": "Medium"
+        },
+        "assignee": null,
+        "reporter": {
+          "displayName": "Alice Smith"
+        },
+        "creator": {
+          "displayName": "Alice Smith"
+        },
+        "created": "2025-01-11T14:00:00.000+0000",
+        "updated": "2025-01-18T16:00:00.000+0000",
+        "resolutiondate": "2025-01-18T16:00:00.000+0000",
+        "story_points": 3.0,
+        "sprint": null,
+        "labels": [],
+        "components": [],
+        "fixVersions": [],
+        "project": {
+          "key": "ENG"
+        }
+      },
+      "changelog": {
+        "startAt": 0,
+        "maxResults": 0,
+        "total": 0,
+        "histories": []
+      }
+    }
+  ],
+  "isLast": true
+}

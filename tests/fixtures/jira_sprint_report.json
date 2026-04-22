@@ -1,0 +1,54 @@
+{
+  "sprint": {
+    "id": 101,
+    "name": "Sprint 1",
+    "state": "CLOSED",
+    "isoStartDate": "2025-01-06T00:00:00.000Z",
+    "isoEndDate": "2025-01-20T00:00:00.000Z",
+    "isoCompleteDate": "2025-01-20T10:00:00.000Z",
+    "goal": "Finish auth module"
+  },
+  "contents": {
+    "completedIssues": [
+      {
+        "key": "ENG-1",
+        "summary": "Login page",
+        "estimateStatistic": {
+          "statFieldId": "customfield_10016",
+          "statFieldValue": {"value": 5.0}
+        }
+      },
+      {
+        "key": "ENG-4",
+        "summary": "Hotfix added mid-sprint",
+        "estimateStatistic": {
+          "statFieldId": "customfield_10016",
+          "statFieldValue": {"value": 2.0}
+        }
+      }
+    ],
+    "issuesNotCompletedInCurrentSprint": [
+      {
+        "key": "ENG-2",
+        "summary": "Password reset",
+        "estimateStatistic": {
+          "statFieldId": "customfield_10016",
+          "statFieldValue": {"value": 3.0}
+        }
+      }
+    ],
+    "puntedIssues": [
+      {
+        "key": "ENG-3",
+        "summary": "OAuth integration",
+        "estimateStatistic": {
+          "statFieldId": "customfield_10016",
+          "statFieldValue": {"value": 8.0}
+        }
+      }
+    ],
+    "issueKeysAddedDuringSprint": {
+      "ENG-4": true
+    }
+  }
+}

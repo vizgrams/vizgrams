@@ -1,0 +1,40 @@
+tasks:
+  - name: file_products
+    tool: file
+    command: load
+    params:
+      path: input_data/products.json
+      format: json
+    output:
+      table: raw_file_products
+      write_mode: REPLACE
+      row_source:
+        mode: EXPLODE
+        json_path: $.products
+      columns:
+        - name: product_key
+          json_path: $.product_key
+        - name: display_name
+          json_path: $.display_name
+        - name: domain_key
+          json_path: $.domain_key
+        - name: status
+          json_path: $.status
+
+  - name: file_domains
+    tool: file
+    command: load
+    params:
+      path: input_data/domains.json
+      format: json
+    output:
+      table: raw_file_domains
+      write_mode: REPLACE
+      row_source:
+        mode: EXPLODE
+        json_path: $.domains
+      columns:
+        - name: domain_key
+          json_path: $.domain_key
+        - name: display_name
+          json_path: $.display_name

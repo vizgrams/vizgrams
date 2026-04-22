@@ -1,0 +1,78 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Pivot Config
+description: Schema for pivot YAML configuration files.
+type: object
+required: [pivot, entity, metrics]
+additionalProperties: false
+properties:
+  pivot:
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+  entity:
+    type: string
+    pattern: "^[A-Z][A-Za-z]+$"
+  slices:
+    type: array
+    items:
+      oneOf:
+        - type: string
+        - type: object
+          additionalProperties:
+            type: string
+            enum: [day, week, month, quarter]
+          minProperties: 1
+          maxProperties: 1
+  attributes:
+    type: array
+    items: {type: string}
+  metrics:
+    type: object
+    minProperties: 1
+    additionalProperties:
+      oneOf:
+        - type: object
+          required: [field, rollup]
+          additionalProperties: false
+          properties:
+            field: {type: string}
+            rollup: {type: string, enum: [sum, avg, min, max, count, count_distinct]}
+            window:
+              type: object
+              required: [method, unit]
+              additionalProperties: false
+              properties:
+                method: {type: string, enum: [weighted, simple, cumulative, lag, lead]}
+                unit:   {type: string, enum: [day, week, month, quarter, rows]}
+                frame:  {type: integer, minimum: 1}
+                offset: {type: integer, minimum: 1}
+        - type: object
+          required: [type, numerator, denominator]
+          additionalProperties: false
+          properties:
+            type: {type: string, enum: [ratio]}
+            numerator:
+              type: object
+              required: [field, rollup]
+              additionalProperties: false
+              properties:
+                field: {type: string}
+                rollup: {type: string, enum: [sum, avg, min, max, count, count_distinct]}
+            denominator:
+              type: object
+              required: [field, rollup]
+              additionalProperties: false
+              properties:
+                field: {type: string}
+                rollup: {type: string, enum: [sum, avg, min, max, count, count_distinct]}
+  filters:
+    type: array
+    items: {type: string}
+  sort:
+    type: array
+    items:
+      type: object
+      required: [field]
+      additionalProperties: false
+      properties:
+        field: {type: string}
+        direction: {type: string, enum: [asc, desc]}

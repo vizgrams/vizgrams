@@ -1,0 +1,36 @@
+[
+  {
+    "id": 1001,
+    "name": "api-gateway",
+    "full_name": "myorg/api-gateway",
+    "private": true,
+    "owner": {
+      "login": "myorg",
+      "id": 500
+    },
+    "html_url": "https://github.com/myorg/api-gateway",
+    "description": "API Gateway service",
+    "language": "Python",
+    "default_branch": "main",
+    "created_at": "2024-01-15T10:00:00Z",
+    "updated_at": "2025-01-20T15:30:00Z",
+    "archived": false
+  },
+  {
+    "id": 1002,
+    "name": "frontend-app",
+    "full_name": "myorg/frontend-app",
+    "private": false,
+    "owner": {
+      "login": "myorg",
+      "id": 500
+    },
+    "html_url": "https://github.com/myorg/frontend-app",
+    "description": "React frontend application",
+    "language": "TypeScript",
+    "default_branch": "main",
+    "created_at": "2024-03-01T08:00:00Z",
+    "updated_at": "2025-01-18T12:00:00Z",
+    "archived": false
+  }
+]

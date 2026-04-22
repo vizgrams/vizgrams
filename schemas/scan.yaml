@@ -1,0 +1,35 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Scan Config
+description: Schema for scan YAML configuration files.
+type: object
+required: [scan, entity, attributes]
+additionalProperties: false
+properties:
+  scan:
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+  entity:
+    type: string
+    pattern: "^[A-Z][A-Za-z]+$"
+  attributes:
+    type: array
+    minItems: 1
+    items: {type: string}
+  filters:
+    type: array
+    items: {type: string}
+  sort:
+    type: array
+    items:
+      type: object
+      required: [field]
+      additionalProperties: false
+      properties:
+        field:     {type: string}
+        direction: {type: string, enum: [asc, desc]}
+  pagination:
+    type: object
+    additionalProperties: false
+    properties:
+      page_size: {type: integer, minimum: 1}
+      page:      {type: integer, minimum: 1}

@@ -1,0 +1,7 @@
+feature_id: team_sprint.removed_sp
+name: Team Sprint Removed Story Points
+entity_type: TeamSprint
+entity_key: team_sprint_key
+data_type: FLOAT
+materialization_mode: materialized
+expr: "sum(case when outcome = 'punted' then SprintIssue.story_points end)"

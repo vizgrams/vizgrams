@@ -1,0 +1,26 @@
+{
+  "maxResults": 50,
+  "startAt": 0,
+  "isLast": true,
+  "values": [
+    {
+      "id": 101,
+      "self": "https://example.atlassian.net/rest/agile/1.0/sprint/101",
+      "state": "closed",
+      "name": "Sprint 1",
+      "startDate": "2025-01-06T00:00:00.000Z",
+      "endDate": "2025-01-20T00:00:00.000Z",
+      "completeDate": "2025-01-20T10:00:00.000Z",
+      "originBoardId": 1
+    },
+    {
+      "id": 102,
+      "self": "https://example.atlassian.net/rest/agile/1.0/sprint/102",
+      "state": "active",
+      "name": "Sprint 2",
+      "startDate": "2025-01-20T00:00:00.000Z",
+      "endDate": "2025-02-03T00:00:00.000Z",
+      "originBoardId": 1
+    }
+  ]
+}

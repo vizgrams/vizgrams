@@ -1,0 +1,157 @@
+# Copyright 2024-2026 Oliver Fenton
+# SPDX-License-Identifier: Apache-2.0
+#
+# Base stack — always works, no auth required.
+# Auth is a separate layer: docker-compose.auth.yml
+#
+# Modes (use 'make' targets — don't run docker compose directly):
+#   make up        → this file only  (no auth, DEV_USER identity)
+#   make up-auth   → this + docker-compose.auth.yml + docker-compose.dex.yml
+#   make up-prod   → this + docker-compose.auth.yml  (real OIDC provider)
+
+x-security: &security
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+
+services:
+
+  # ── Edge proxy ───────────────────────────────────────────────────────────────
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    <<: *security
+    command:
+      - --log.level=WARN
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.network=proxy
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    networks:
+      - proxy
+
+  # ── Main API ──────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    <<: *security
+    environment:
+      VZ_MODELS_DIR: /models
+      VZ_SECRETS_DIR: /run/secrets
+      BATCH_SERVICE_URL: http://batch:8001
+      BATCH_SERVICE_SECRET: "${BATCH_SERVICE_SECRET:-}"
+      ALLOWED_ORIGINS: "http://${HOST:-localhost}"
+      LOG_FORMAT: json
+      VZ_SYSTEM_ADMINS: "${VZ_SYSTEM_ADMINS:-}"
+      # DEV_USER provides a synthetic identity when auth layer is not active.
+      # Set in .env for local container testing. Never set in production.
+      DEV_USER: "${DEV_USER:-}"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+    volumes:
+      - ${VZ_MODELS_DIR:-./models}:/models
+      - ${HOME}/.secrets:/run/secrets:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.api.rule: PathPrefix(`/api`)
+      traefik.http.routers.api.entrypoints: web
+      traefik.http.routers.api.priority: "10"
+      traefik.http.services.api.loadbalancer.server.port: "8000"
+    networks:
+      - proxy
+      - internal
+    depends_on:
+      batch:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ── Batch service ─────────────────────────────────────────────────────────────
+  # Not internet-facing — only reachable from api via the internal network.
+  batch:
+    build:
+      context: .
+      dockerfile: Dockerfile.batch
+    restart: unless-stopped
+    <<: *security
+    environment:
+      VZ_MODELS_DIR: /models
+      VZ_SECRETS_DIR: /run/secrets
+      LOG_FORMAT: json
+      BATCH_WORKERS: "${BATCH_WORKERS:-4}"
+      BATCH_SERVICE_SECRET: "${BATCH_SERVICE_SECRET:-}"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+    volumes:
+      - ${VZ_MODELS_DIR:-./models}:/models
+      - ${HOME}/.secrets:/run/secrets:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      - internal
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ── Frontend ──────────────────────────────────────────────────────────────────
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    restart: unless-stopped
+    <<: *security
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/cache/nginx:size=32m,mode=1777
+      - /var/run:size=8m,mode=1777
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.ui.rule: PathPrefix(`/`)
+      traefik.http.routers.ui.entrypoints: web
+      traefik.http.routers.ui.priority: "1"
+      traefik.http.services.ui.loadbalancer.server.port: "8080"
+    networks:
+      - proxy
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  proxy:
+    driver: bridge
+    name: proxy          # fixed name — prevents docker compose project prefix
+  internal:
+    driver: bridge
+    name: vizgrams_internal
+    # Not marked internal: true — batch needs egress to reach external APIs
+    # (Jira, GitHub, etc). Isolation is provided by the absence of published
+    # ports and Traefik labels on the batch service.

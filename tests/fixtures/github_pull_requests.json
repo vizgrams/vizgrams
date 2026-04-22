@@ -1,0 +1,54 @@
+[
+  {
+    "id": 2001,
+    "number": 42,
+    "title": "Add OAuth2 support",
+    "state": "closed",
+    "user": {
+      "login": "alice",
+      "id": 1
+    },
+    "created_at": "2025-01-18T09:00:00Z",
+    "updated_at": "2025-01-21T14:00:00Z",
+    "merged_at": "2025-01-21T14:00:00Z",
+    "closed_at": "2025-01-21T14:00:00Z",
+    "additions": 350,
+    "deletions": 42,
+    "changed_files": 8,
+    "commits": 5,
+    "base": {
+      "ref": "main"
+    },
+    "head": {
+      "ref": "feature/oauth"
+    },
+    "merge_commit_sha": "def789ghi012",
+    "draft": false
+  },
+  {
+    "id": 2002,
+    "number": 43,
+    "title": "Update CI pipeline configuration",
+    "state": "open",
+    "user": {
+      "login": "bob",
+      "id": 2
+    },
+    "created_at": "2025-01-22T11:00:00Z",
+    "updated_at": "2025-01-22T15:30:00Z",
+    "merged_at": null,
+    "closed_at": null,
+    "additions": 25,
+    "deletions": 10,
+    "changed_files": 2,
+    "commits": 1,
+    "base": {
+      "ref": "main"
+    },
+    "head": {
+      "ref": "chore/ci-update"
+    },
+    "merge_commit_sha": null,
+    "draft": true
+  }
+]

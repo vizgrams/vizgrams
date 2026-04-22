@@ -1,0 +1,7 @@
+feature_id: team_sprint.not_completed_sp
+name: Team Sprint Not Completed Story Points
+entity_type: TeamSprint
+entity_key: team_sprint_key
+data_type: FLOAT
+materialization_mode: materialized
+expr: "sum(case when outcome = 'incomplete' then SprintIssue.story_points end)"

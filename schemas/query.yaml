@@ -1,0 +1,99 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Query Config
+description: Unified schema for query YAML files.
+type: object
+required: [name]
+anyOf:
+  - required: [entity]
+  - required: [root]
+$defs:
+  window:
+    type: object
+    required: [method, unit]
+    additionalProperties: false
+    properties:
+      method: {type: string, enum: [weighted, simple, cumulative, lag, lead]}
+      unit:   {type: string, enum: [day, week, month, quarter, rows]}
+      frame:  {type: integer, minimum: 1}
+      offset: {type: integer, minimum: 1}
+  thresholds:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [op, value, status]
+      additionalProperties: false
+      properties:
+        op:     {type: string, enum: ["<", "<=", ">", ">=", "==", "!="]}
+        value:  {type: number}
+        status: {type: string}
+  attribute_item:
+    type: object
+    minProperties: 1
+    additionalProperties: true
+  measure_item:
+    type: object
+    minProperties: 1
+    additionalProperties: true
+properties:
+  name:
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+  entity:
+    type: string
+    pattern: "^[A-Z][A-Za-z]+$"
+  root:
+    type: string
+    pattern: "^[A-Z][A-Za-z]+$"
+  attributes:
+    type: array
+    items:
+      oneOf:
+        - type: string
+        - {$ref: "#/$defs/attribute_item"}
+  filters:
+    type: array
+    items: {type: string}
+  where:
+    type: array
+    items: {type: string}
+  pagination:
+    type: object
+    additionalProperties: false
+    properties:
+      page_size: {type: integer, minimum: 1}
+      page:      {type: integer, minimum: 1}
+  measures:
+    oneOf:
+      - type: array
+        items: {$ref: "#/$defs/measure_item"}
+      - type: object
+        additionalProperties: true
+  params:
+    type: array
+    items:
+      type: object
+      required: [name, type]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*$"
+        type:
+          type: string
+          enum: [string, number, duration]
+        label:
+          type: string
+        default:
+          type: string
+        optional:
+          type: boolean
+  order:
+    type: array
+    items:
+      type: object
+      minProperties: 1
+      maxProperties: 1
+      additionalProperties:
+        type: string
+        enum: [asc, desc]

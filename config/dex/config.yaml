@@ -1,0 +1,50 @@
+# Dex local OIDC provider — for development only.
+# Provides a static username/password login screen so you can test the full
+# auth flow without a real identity provider.
+#
+# Login:    dev@example.com / password
+
+# Must match the URL the browser uses to reach Dex.
+# host.docker.internal resolves to the host machine from inside Docker Desktop.
+issuer: http://localhost:5556
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  skipApprovalScreen: true
+
+staticClients:
+  - id: vizgrams
+    redirectURIs:
+      - http://localhost/oauth2/callback
+    name: vizgrams
+    secret: dev-client-secret
+
+enablePasswordDB: true
+staticPasswords:
+  # Password for all accounts: "password"
+  # Generate a new hash: docker run --rm dexidp/dex:v2.41.1 dex bcrypt-hash password
+  - email: dev@example.com
+    hash: "$2b$10$K8mGXqDkPHREQ1gOmMoY2.kYvTcvkWgPI.w5zSmg0n/ar600OBsCu"
+    username: dev
+    userID: "1"
+  # RBAC test accounts — example model access:
+  #   admin@example.com   → ADMIN on example
+  #   operator@example.com → OPERATOR on example
+  #   viewer@example.com  → VIEWER on example
+  - email: admin@example.com
+    hash: "$2b$10$K8mGXqDkPHREQ1gOmMoY2.kYvTcvkWgPI.w5zSmg0n/ar600OBsCu"
+    username: admin
+    userID: "2"
+  - email: operator@example.com
+    hash: "$2b$10$K8mGXqDkPHREQ1gOmMoY2.kYvTcvkWgPI.w5zSmg0n/ar600OBsCu"
+    username: operator
+    userID: "3"
+  - email: viewer@example.com
+    hash: "$2b$10$K8mGXqDkPHREQ1gOmMoY2.kYvTcvkWgPI.w5zSmg0n/ar600OBsCu"
+    username: viewer
+    userID: "4"

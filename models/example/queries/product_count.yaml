@@ -1,0 +1,16 @@
+name: product_count
+root: Product
+
+attributes:
+  - domain: Domain.display_name
+  - status: status
+
+measures:
+  - count:
+      expr: count(product_key)
+      format:
+        type: number
+        pattern: "0"
+
+order:
+  - domain: asc

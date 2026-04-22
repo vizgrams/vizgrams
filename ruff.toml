@@ -1,0 +1,32 @@
+line-length = 120
+target-version = "py312"
+exclude = ["venv", "ui"]
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "UP",     # pyupgrade
+    "PERF",   # perflint
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "B008",    # FastAPI: Depends() in function default argument
+    "B905",    # zip() without strict= — internal code, not a safety concern
+    "E402",    # module-level import not at top (FastAPI router pattern)
+    "PERF401", # list.extend vs append loop — often less readable for complex objects
+    "SIM105",  # contextlib.suppress — try/except is clearer in most cases here
+    "SIM108",  # ternary operator — not always more readable
+]
+
+[lint.per-file-ignores]
+"tests/**" = [
+    "S101",   # assert statements are fine in tests
+    "F811",   # redefinition of fixtures is expected
+]
+"*/__init__.py" = [
+    "F401",   # re-exports in __init__.py are intentional
+]

@@ -1,0 +1,8 @@
+feature_id: product_sprint.start_date
+name: Product Sprint Start Date
+description: Sprint start date for this product sprint
+entity_type: ProductSprint
+entity_key: product_sprint_key
+data_type: STRING
+materialization_mode: materialized
+expr: Sprint.start_date

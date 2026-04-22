@@ -1,0 +1,202 @@
+# JSON Schema (2020-12 draft) for mapper YAML configs.
+# Stored as YAML for consistency with the rest of the project.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Mapper Config
+description: Schema for semantic layer mapper YAML definitions.
+type: object
+required: [mapper, sources, targets]
+additionalProperties: false
+
+$defs:
+  join_condition:
+    type: object
+    required: [left, right]
+    additionalProperties: false
+    properties:
+      left:
+        type: string
+        description: "alias.column reference"
+      right:
+        type: string
+        description: "alias.column reference"
+      operator:
+        type: string
+        enum: [eq, json_array_contains, scalar_or_array_contains]
+        description: "Join operator (default: eq)"
+      json_path:
+        type: string
+        pattern: "^\\$\\."
+        description: "JSON path for json_array_contains operator (e.g. $.jira)"
+      prefix:
+        type: string
+        description: "String prepended to left value before comparison (e.g. '@ORG/')"
+
+  target_column:
+    type: object
+    required: [name, expr]
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+        pattern: "^[a-z][a-z0-9_]*$"
+      expr:
+        type: string
+
+  filter_node:
+    oneOf:
+      - type: string
+      - type: object
+        additionalProperties: false
+        properties:
+          and:
+            type: array
+            minItems: 1
+            items:
+              $ref: "#/$defs/filter_node"
+          or:
+            type: array
+            minItems: 1
+            items:
+              $ref: "#/$defs/filter_node"
+          not:
+            $ref: "#/$defs/filter_node"
+
+properties:
+  mapper:
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+  description:
+    type: string
+  schedule:
+    type: object
+    additionalProperties: false
+    properties:
+      cron:
+        type: string
+        description: "Cron expression for scheduled execution (e.g. '0 2 * * *' for daily at 02:00 UTC)."
+    required: [cron]
+  depends_on:
+    type: array
+    items:
+      type: string
+      pattern: "^[a-z][a-z0-9_]*$"
+  grain:
+    type: string
+    description: "Source alias that defines the grain"
+  enums:
+    type: object
+    additionalProperties:
+      type: object
+      additionalProperties:
+        type: array
+        items:
+          type: string
+  sources:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [alias, columns]
+      additionalProperties: false
+      properties:
+        alias:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*$"
+        table:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*$"
+        union:
+          type: array
+          minItems: 2
+          items:
+            type: string
+            pattern: "^[a-z][a-z0-9_]*$"
+          description: "UNION ALL of multiple tables (mutually exclusive with table)"
+        columns:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            pattern: "^[a-z][a-z0-9_]*$"
+        filter:
+          $ref: "#/$defs/filter_node"
+        deduplicate:
+          type: array
+          items:
+            type: string
+            pattern: "^[a-z][a-z0-9_]*$"
+        static:
+          type: object
+          additionalProperties:
+            type: string
+  joins:
+    type: array
+    items:
+      type: object
+      required: [from, to, type, "on"]
+      additionalProperties: false
+      properties:
+        from:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*$"
+        to:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*$"
+        type:
+          type: string
+          enum: [left, inner]
+        "on":
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/$defs/join_condition"
+  targets:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [entity]
+      additionalProperties: false
+      properties:
+        entity:
+          type: string
+          pattern: "^[A-Z][a-zA-Z0-9]*$"
+        columns:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/$defs/target_column"
+        rows:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [from, columns]
+            additionalProperties: false
+            properties:
+              from:
+                type: string
+                pattern: "^[a-z][a-z0-9_]*$"
+              joins:
+                type: array
+                items:
+                  type: object
+                  required: [to, type, "on"]
+                  additionalProperties: false
+                  properties:
+                    to:
+                      type: string
+                      pattern: "^[a-z][a-z0-9_]*$"
+                    type:
+                      type: string
+                      enum: [left, inner]
+                    "on":
+                      type: array
+                      minItems: 1
+                      items:
+                        $ref: "#/$defs/join_condition"
+              columns:
+                type: array
+                minItems: 1
+                items:
+                  $ref: "#/$defs/target_column"

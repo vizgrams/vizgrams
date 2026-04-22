@@ -1,0 +1,20 @@
+[
+  {
+    "name": "v1.2.0",
+    "commit": {
+      "sha": "abc123def456",
+      "url": "https://api.github.com/repos/myorg/api-gateway/commits/abc123def456"
+    },
+    "zipball_url": "https://api.github.com/repos/myorg/api-gateway/zipball/refs/tags/v1.2.0",
+    "tarball_url": "https://api.github.com/repos/myorg/api-gateway/tarball/refs/tags/v1.2.0"
+  },
+  {
+    "name": "v1.1.0",
+    "commit": {
+      "sha": "old999sha888",
+      "url": "https://api.github.com/repos/myorg/api-gateway/commits/old999sha888"
+    },
+    "zipball_url": "https://api.github.com/repos/myorg/api-gateway/zipball/refs/tags/v1.1.0",
+    "tarball_url": "https://api.github.com/repos/myorg/api-gateway/tarball/refs/tags/v1.1.0"
+  }
+]

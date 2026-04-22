@@ -1,0 +1,11 @@
+database:
+  backend: clickhouse
+  host: env:CLICKHOUSE_HOST
+  port: 8123
+  database: example
+  username: default
+  password: env:CLICKHOUSE_PASSWORD
+
+tools:
+  file:
+    enabled: true

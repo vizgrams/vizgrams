@@ -1,0 +1,50 @@
+[tool.poetry]
+name = "vizgrams"
+version = "0.1.0"
+description = "Semantic data pipeline — extract, model, and query software lifecycle data."
+authors = ["Oliver Fenton"]
+license = "Apache-2.0"
+readme = "README.md"
+packages = [
+    { include = "api" },
+    { include = "core" },
+    { include = "engine" },
+    { include = "semantic" },
+    { include = "tools" },
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+atlassian-python-api = "*"
+garminconnect = "*"
+pyyaml = "*"
+click = "*"
+jsonschema = "*"
+sqlalchemy = "*"
+requests = "*"
+fastapi = "*"
+uvicorn = { extras = ["standard"], version = "*" }
+python-dotenv = "*"
+python-json-logger = "^4.1.0"
+croniter = "^6.2.2"
+httpx = "*"
+prometheus-fastapi-instrumentator = "*"
+slowapi = "*"
+opentelemetry-sdk = "*"
+opentelemetry-instrumentation-fastapi = "*"
+opentelemetry-instrumentation-httpx = "*"
+opentelemetry-exporter-otlp-proto-http = "*"
+rdflib = "*"
+clickhouse-connect = { version = "*", optional = true }
+
+[tool.poetry.extras]
+clickhouse = ["clickhouse-connect"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+pytest-cov = "*"
+ruff = "^0.15.8"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
