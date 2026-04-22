@@ -25,11 +25,9 @@ each normalised to [0, 10]:
 
 from __future__ import annotations
 
-import math
 import statistics
 from datetime import date, datetime
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Public API
