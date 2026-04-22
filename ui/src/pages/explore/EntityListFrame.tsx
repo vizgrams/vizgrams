@@ -40,7 +40,7 @@ function ColumnSelectorPanel({
   ]
 
   function toggle(id: string) {
-    setDraft((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
+    setDraft((prev) => { const next = new Set(prev); if (next.has(id)) { next.delete(id) } else { next.add(id) }; return next })
   }
 
   return (

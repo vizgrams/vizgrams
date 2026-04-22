@@ -2,12 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from fastapi import APIRouter, Depends, HTTPException
-
-from core.db import BackendUnavailableError
 from pydantic import BaseModel
 
 from api.dependencies import resolve_model_dir
 from api.services import expression_service
+from core.db import BackendUnavailableError
 
 router = APIRouter(prefix="/model/{model}/expression", tags=["expression"])
 

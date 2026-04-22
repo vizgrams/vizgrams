@@ -3,8 +3,6 @@
 
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-
-from core.db import BackendUnavailableError
 from fastapi import Path as PathParam
 
 from api.dependencies import get_job_service, resolve_entity, resolve_model_dir
@@ -14,6 +12,7 @@ from api.schemas.job import JobOut
 from api.services import feature_service
 from api.services.feature_service import FeatureValidationError
 from api.services.job_service import JobService
+from core.db import BackendUnavailableError
 from core.version_routes import make_version_routes
 
 router = APIRouter(prefix="/model/{model}/entity/{entity}/feature", tags=["features"])

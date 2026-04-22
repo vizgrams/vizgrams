@@ -527,7 +527,7 @@ def _prefix_raw_tables(sql: str, raw_tables: set) -> str:
     for table in raw_tables:
         sql = re.sub(
             rf'(\b(?:FROM|JOIN)\s+)({re.escape(table)})(\b)',
-            rf'\1raw_\2\3',
+            r'\1raw_\2\3',
             sql,
             flags=re.IGNORECASE,
         )
@@ -642,11 +642,7 @@ def run_mapper(
                         if eval_failed:
                             continue
 
-                        if use_bulk and ctx.strategy in ("UPSERT", "DEDUP"):
-                            if target.entity_name not in bulk_buffers:
-                                bulk_buffers[target.entity_name] = (ctx, stats, [])
-                            bulk_buffers[target.entity_name][2].append(candidate)
-                        elif use_bulk_scd2 and ctx.strategy == "SCD2":
+                        if use_bulk and ctx.strategy in ("UPSERT", "DEDUP") or use_bulk_scd2 and ctx.strategy == "SCD2":
                             if target.entity_name not in bulk_buffers:
                                 bulk_buffers[target.entity_name] = (ctx, stats, [])
                             bulk_buffers[target.entity_name][2].append(candidate)
@@ -723,7 +719,10 @@ def run_mapper(
         raise FanOutError(fan_out)
 
     try:
-        _process_rows(backend, config, write_contexts, row_dicts, parsed_exprs, enum_lookup, result, strict, dry_run=dry_run)
+        _process_rows(
+            backend, config, write_contexts, row_dicts, parsed_exprs,
+            enum_lookup, result, strict, dry_run=dry_run,
+        )
     except Exception:
         raise
 

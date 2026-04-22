@@ -5,9 +5,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
-from core.ranking import DIVERSITY_PENALTY, FRESHNESS_HALFLIFE_HOURS, rank_feed
+from core.ranking import FRESHNESS_HALFLIFE_HOURS, rank_feed
 
 
 def _item(id: str, significance: float, age_hours: float, dataset: str = "ds") -> dict:

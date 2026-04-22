@@ -422,6 +422,7 @@ class TestParseQueryYaml:
     def test_pv_build_duration_yaml_loads(self):
         """The migrated pv_build_duration query loads without errors and produces correct types."""
         import yaml as _yaml
+
         from core import metadata_db
         model_dir = Path(__file__).resolve().parent.parent / "models" / "example"
         metadata_db.seed_from_directory(model_dir)

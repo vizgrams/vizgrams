@@ -499,6 +499,7 @@ def _build_count_query(
     query: QueryDef,
     entities: dict[str, EntityDef],
     features_by_entity: dict | None = None,
+    dialect: str = "sqlite",
 ) -> str:
     """Build a COUNT(*) query with the same FROM/JOIN/WHERE as a detail query."""
     root_entity = entities[query.entity]

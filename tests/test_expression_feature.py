@@ -405,6 +405,7 @@ class TestCaseWhenExprIntegration:
 
     def setup_method(self):
         from pathlib import Path
+
         from core.metadata_db import seed_from_directory
         model_dir = Path(__file__).resolve().parent.parent / "models" / "example"
         seed_from_directory(model_dir)

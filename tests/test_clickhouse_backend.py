@@ -378,7 +378,8 @@ def test_truncate_idempotent_on_empty_table(ch):
 def test_get_backend_sem_namespace_uses_sem_database(tmp_path):
     """get_backend(namespace='sem') returns a backend pointing at the base database name."""
     import yaml
-    from core.db import get_backend, ClickHouseBackend
+
+    from core.db import ClickHouseBackend, get_backend
 
     config = {
         "database": {
@@ -400,7 +401,8 @@ def test_get_backend_sem_namespace_uses_sem_database(tmp_path):
 def test_get_backend_raw_namespace_uses_raw_database(tmp_path):
     """get_backend(namespace='raw') returns a backend pointing at {model}_raw."""
     import yaml
-    from core.db import get_backend, ClickHouseBackend
+
+    from core.db import ClickHouseBackend, get_backend
 
     config = {
         "database": {
@@ -422,7 +424,8 @@ def test_get_backend_raw_namespace_uses_raw_database(tmp_path):
 def test_get_backend_explicit_raw_sem_databases(tmp_path):
     """Explicit raw_database / sem_database fields override the derived names."""
     import yaml
-    from core.db import get_backend, ClickHouseBackend
+
+    from core.db import get_backend
 
     config = {
         "database": {

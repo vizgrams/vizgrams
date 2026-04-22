@@ -6,9 +6,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.dependencies import require_role, resolve_model_dir
-from core.rbac import ModelRole
 from api.schemas.tool import ToolConfigPatch, ToolConfigResponse, ToolConfigWrite
 from api.services import tool_config_service
+from core.rbac import ModelRole
 
 router = APIRouter(prefix="/model/{model}/config/tool", tags=["tool-config"])
 

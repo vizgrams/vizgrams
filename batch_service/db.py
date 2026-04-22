@@ -12,22 +12,35 @@ VG-108: consolidated from per-model scryglass-batch.db into the central batch.db
 
 from __future__ import annotations
 
-import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
 from core.batch_db import (
     append_batch_progress as append_progress,
+)
+from core.batch_db import (
     get_batch_db_path,
-    get_batch_job as get_job,
-    get_batch_progress as get_progress,
-    get_connection as _core_get_connection,
-    insert_batch_job as insert_job,
-    list_batch_jobs as list_jobs,
     list_schedules,
     mark_orphaned_batch_jobs,
-    update_batch_job as update_job,
     upsert_schedule,
+)
+from core.batch_db import (
+    get_batch_job as get_job,
+)
+from core.batch_db import (
+    get_batch_progress as get_progress,
+)
+from core.batch_db import (
+    get_connection as _core_get_connection,
+)
+from core.batch_db import (
+    insert_batch_job as insert_job,
+)
+from core.batch_db import (
+    list_batch_jobs as list_jobs,
+)
+from core.batch_db import (
+    update_batch_job as update_job,
 )
 
 __all__ = [

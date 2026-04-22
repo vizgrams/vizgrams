@@ -133,7 +133,10 @@ def next_run_times(model_dir: Path) -> list[dict]:
             "tool": name,
             "type": "entity",
             "cron": cron_expr,
-            "last_success": last_materialize_success.strftime("%Y-%m-%dT%H:%M:%SZ") if last_materialize_success else None,
+            "last_success": (
+                last_materialize_success.strftime("%Y-%m-%dT%H:%M:%SZ")
+                if last_materialize_success else None
+            ),
             "next_run": next_run.strftime("%Y-%m-%dT%H:%M:%SZ") if next_run else None,
             "due": next_run is not None and next_run <= now,
         })
@@ -219,8 +222,9 @@ def entities_due(model_dir: Path) -> list[str]:
 
     Returns entity names in discovery order.
     """
-    from core import metadata_db
     from datetime import timedelta
+
+    from core import metadata_db
 
     now = datetime.now(UTC)
     last_success = _last_materialize_success(model_dir)
@@ -280,8 +284,9 @@ def mappers_due(model_dir: Path) -> list[str]:
 
     Returns mapper names in discovery order.
     """
-    from core import metadata_db
     from datetime import timedelta
+
+    from core import metadata_db
 
     now = datetime.now(UTC)
     last_success = _last_mapper_success(model_dir)

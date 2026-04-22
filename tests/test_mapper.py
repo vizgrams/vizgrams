@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+
 from core.validation import validate_schema
 from engine.filter_compiler import (
     FilterCompileContext,
@@ -1268,7 +1269,8 @@ class TestExecution:
         # Use a 1-to-many JOIN to produce duplicate grain rows.
         # ClickHouse FINAL deduplicates identical rows, so fan-out must come
         # from a JOIN that multiplies rows for the same grain key.
-        backend.create_table("raw_table", {"product_key": "String", "display_name": "String"}, primary_keys=["product_key"])
+        backend.create_table(
+            "raw_table", {"product_key": "String", "display_name": "String"}, primary_keys=["product_key"])
         backend.bulk_upsert("raw_table", [{"product_key": "p1", "display_name": "Product A"}])
         backend.create_table("raw_lookup", {"lid": "String", "val": "String"}, primary_keys=["lid", "val"])
         backend.bulk_upsert("raw_lookup", [
@@ -1316,7 +1318,8 @@ class TestExecution:
         )
         backend = _setup_db(ch_backend_mapper, [product])
 
-        backend.create_table("raw_table", {"product_key": "String", "display_name": "String"}, primary_keys=["product_key"])
+        backend.create_table(
+            "raw_table", {"product_key": "String", "display_name": "String"}, primary_keys=["product_key"])
         backend.bulk_upsert("raw_table", [{"product_key": "p1", "display_name": "Product A"}])
         backend.create_table("raw_details", {"detail_id": "String", "detail": "String"}, primary_keys=["detail_id"])
         # No rows in raw_details
@@ -1365,7 +1368,8 @@ class TestExecution:
         product = _make_product_ontology()
         backend = _setup_db(ch_backend_mapper, [product])
 
-        backend.create_table("raw_table", {"product_key": "String", "display_name": "String"}, primary_keys=["product_key"])
+        backend.create_table(
+            "raw_table", {"product_key": "String", "display_name": "String"}, primary_keys=["product_key"])
         backend.bulk_upsert("raw_table", [{"product_key": "p1", "display_name": "Product A"}])
         backend.create_table("raw_lookup", {"lid": "String", "category": "String"}, primary_keys=["lid"])
         # Duplicate rows for the same key (simulates append-only extraction)
@@ -1400,9 +1404,14 @@ class TestExecution:
         )
         backend = _setup_db(ch_backend_mapper, [product])
 
-        backend.create_table("raw_table", {"product_key": "String", "display_name": "String"}, primary_keys=["product_key"])
+        backend.create_table(
+            "raw_table", {"product_key": "String", "display_name": "String"}, primary_keys=["product_key"])
         backend.bulk_upsert("raw_table", [{"product_key": "p1", "display_name": "Product A"}])
-        backend.create_table("raw_details", {"detail_id": "String", "detail": "String", "category": "String"}, primary_keys=["detail_id"])
+        backend.create_table(
+            "raw_details",
+            {"detail_id": "String", "detail": "String", "category": "String"},
+            primary_keys=["detail_id"],
+        )
         backend.bulk_upsert("raw_details", [
             {"detail_id": "p1", "detail": "Good detail", "category": "important"},
             {"detail_id": "p1", "detail": "Bad detail", "category": "irrelevant"},

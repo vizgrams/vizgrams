@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Activity, BarChart2, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Hash,
-  Layers, LayoutGrid, Loader2, Play, Save, SlidersHorizontal, Table, Upload,
+  Loader2, Play, Save, SlidersHorizontal, Table, Upload,
 } from 'lucide-react'
 import type { ViewSummary, ViewResult, ParamDef, EntitySummary, ApplicationSummary } from '@/api/client'
 import { publishVizgram, previewCaption } from '@/api/client'
@@ -756,9 +756,6 @@ export function ExploreShell() {
     reset({ kind: 'entity-list', entity })
   }
 
-  function selectApp(name: string) {
-    reset({ kind: 'app', name, params: {} })
-  }
 
   const handleNavigate = useCallback((frame: DrillFrame) => {
     push(frame)

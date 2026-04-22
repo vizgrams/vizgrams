@@ -3,20 +3,19 @@
 
 """Tests for core/caption_provider.py"""
 
-import os
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from core.caption_provider import (
-    NullProvider,
     AnthropicProvider,
     BedrockProvider,
+    NullProvider,
     OllamaProvider,
     build_caption_prompt,
     compute_snapshot_hash,
     get_caption_provider,
 )
-
 
 # ---------------------------------------------------------------------------
 # NullProvider

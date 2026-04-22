@@ -5,13 +5,12 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from core.db import BackendUnavailableError
-
 from api.dependencies import resolve_model_dir
 from api.schemas.application import ApplicationDetail, ApplicationSummary
 from api.schemas.common import ValidationResult, YAMLContent
 from api.services import application_service
 from api.services.application_service import ApplicationValidationError
+from core.db import BackendUnavailableError
 from core.version_routes import make_version_routes
 
 _log = logging.getLogger(__name__)

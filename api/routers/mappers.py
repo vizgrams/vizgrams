@@ -3,8 +3,6 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from core.db import BackendUnavailableError
-
 from api.batch_client import BatchServiceError, submit_mapper_job
 from api.dependencies import resolve_entity, resolve_model_dir
 from api.routers.jobs import _to_job_out
@@ -13,6 +11,7 @@ from api.schemas.job import JobOut
 from api.schemas.mapper import MapperOut
 from api.services import mapper_service
 from api.services.mapper_service import MapperValidationError
+from core.db import BackendUnavailableError
 from core.version_routes import make_version_routes
 
 router = APIRouter(prefix="/model/{model}/entity/{entity}/mapper", tags=["mappers"])

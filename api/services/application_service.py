@@ -53,6 +53,7 @@ def get_application(model_dir: Path, app_name: str) -> dict:
 def validate_application(model_dir: Path, app_name: str) -> dict:
     import shutil
     import tempfile
+
     from semantic.application import validate_application as _validate_application
 
     content = metadata_db.get_current_content(model_dir, "application", app_name)

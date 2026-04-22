@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from semantic.feature import FeatureDef, load_feature_yamls, reconcile, reconcile_with_backend
 from core.db import SQLiteBackend
+from semantic.feature import FeatureDef, load_feature_yamls, reconcile, reconcile_with_backend
 from semantic.types import AttributeDef, ColumnType, EntityDef, SemanticHint
 
 # ---------------------------------------------------------------------------
@@ -475,7 +475,6 @@ class TestReconcileWithBackend:
         backend.close()
 
         # reconnect and verify tables were created
-        b2 = SQLiteBackend(":memory:")
         # Tables are in-memory so we verify via the backend we used
         backend2 = _make_backend_with_widget()
         reconcile_with_backend([fd], {}, backend2)

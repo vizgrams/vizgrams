@@ -3,7 +3,6 @@
 
 """Tests for stable user identity (VG-005)."""
 
-import pytest
 from core.vizgrams_db import (
     add_engagement,
     create_vizgram,
@@ -12,7 +11,6 @@ from core.vizgrams_db import (
     migrate_email_ids,
     resolve_user,
 )
-
 
 # ---------------------------------------------------------------------------
 # resolve_user

@@ -47,6 +47,7 @@ def get_mapper(model_dir: Path, entity_name: str) -> dict:
 
 def validate_mapper(model_dir: Path, entity_name: str) -> dict:
     import tempfile
+
     from semantic.mapper import validate_mapper_yaml
 
     mc = _find_mapper_for_entity(model_dir, entity_name)
@@ -127,6 +128,7 @@ def create_or_replace_mapper(model_dir: Path, name: str, content: str) -> dict:
     import tempfile
 
     import yaml as _yaml
+
     from semantic.mapper import parse_mapper_dict, validate_mapper_yaml
 
     tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".yaml")
@@ -153,6 +155,7 @@ def create_or_replace_mapper(model_dir: Path, name: str, content: str) -> dict:
 def validate_all(model_dir: Path) -> list[dict]:
     """Validate all mapper artifacts in the DB; returns list of {file, valid, errors}."""
     import tempfile
+
     from semantic.mapper import validate_mapper_yaml
 
     results = []

@@ -100,6 +100,7 @@ except ImportError:
     pass
 
 import os as _otel_os
+
 if _otel_os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     FastAPIInstrumentor.instrument_app(app)
@@ -126,8 +127,8 @@ async def require_batch_secret(request, call_next):
     always exempt so container health checks continue to work without the
     secret.
     """
-    if _BATCH_SECRET and request.url.path not in {"/healthz", "/metrics"}:
-        if request.headers.get("X-Batch-Secret") != _BATCH_SECRET:
+    secret_required = _BATCH_SECRET and request.url.path not in {"/healthz", "/metrics"}
+    if secret_required and request.headers.get("X-Batch-Secret") != _BATCH_SECRET:
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
     return await call_next(request)

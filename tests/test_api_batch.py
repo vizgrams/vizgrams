@@ -8,7 +8,6 @@ Tests use the fake_batch_client fixture (from conftest.py) to avoid needing
 the batch service running.
 """
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 
