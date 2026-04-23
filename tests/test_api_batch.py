@@ -124,7 +124,7 @@ class TestGetSchedule:
         assert entry["cron"] == HOURLY
         assert entry["last_success"] is None
         assert entry["next_run"] is not None
-        assert entry["due"] is False  # never run → waits for next scheduled time
+        assert entry["due"] is True  # never run → 24h lookback, hourly cron is due
 
     def test_returns_multiple_entries(self, client_with_model):
         tc, _, _, model_dir = client_with_model
