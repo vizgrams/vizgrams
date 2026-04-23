@@ -231,11 +231,11 @@ class TestExtractorsDue:
         _write_extractor(model_dir / "extractors", "file")  # no cron
         assert extractors_due(model_dir) == []
 
-    def test_not_due_when_never_run(self, tmp_path):
+    def test_due_when_never_run(self, tmp_path):
         model_dir = self._setup_model(tmp_path)
-        # Never run → next run is in the future, not immediately due
+        # Never run → 24h lookback base, so a cron that has fired today is due
         _write_extractor(model_dir / "extractors", "file", cron=HOURLY)
-        assert extractors_due(model_dir) == []
+        assert extractors_due(model_dir) == ["file"]
 
     def test_due_when_overdue(self, tmp_path):
         model_dir = self._setup_model(tmp_path)
@@ -307,7 +307,7 @@ class TestNextRunTimes:
         assert entry["cron"] == HOURLY
         assert entry["last_success"] is None
         assert entry["next_run"] is not None
-        assert entry["due"] is False  # never run → waits for next scheduled occurrence
+        assert entry["due"] is True  # never run → 24h lookback, hourly cron is due
 
     def test_not_due_when_recently_completed(self, tmp_path):
         model_dir = self._setup_model(tmp_path)
