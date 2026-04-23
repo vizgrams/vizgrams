@@ -47,11 +47,15 @@
 
 ## Epic 4 — User Accounts (Public version)
 
+> Auth strategy: Dex as the OIDC hub (already in stack for local dev) federates multiple upstream providers into a single OIDC endpoint for oauth2-proxy. Self-hosters configure their own connectors; the hosted deployment uses Google + Apple.
+> Apple Sign In is mandatory for iOS App Store apps that offer any third-party OAuth.
+
 | ID | Title | Status |
 |---|---|---|
-| VG-030 | GitHub OAuth registration + login | todo |
-| VG-031 | Creator role self-service (register → auto-granted Creator role on public tier) | todo |
+| VG-030 | Google OAuth + Sign in with Apple — configure Dex production connectors; make Dex production-ready (persistent SQLite store, configurable issuer URL); update docker-compose for prod Dex | done |
+| VG-031 | Creator role self-service (register → auto-granted Creator role on public tier) | done |
 | VG-032 | Public user profile page (vizgrams authored, follower count) | todo |
+| VG-033 | Migrate auth layer from Dex to a managed service (Auth0, Clerk, or WorkOS) — swap `OIDC_ISSUER_URL` in oauth2-proxy config; migrate `users` table `(provider, external_id)` rows to new provider's user IDs; remove Dex from compose stacks. Trigger: when MFA, org-level SSO, or compliance requirements (SOC 2) make self-operating auth infrastructure impractical. | todo |
 
 ---
 

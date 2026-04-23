@@ -6,20 +6,22 @@
 # Explicit rather than relying on docker-compose.override.yml auto-detection,
 # so each target's intent is unambiguous.
 
-DC_BASE     := docker compose -f docker-compose.yml -f docker-compose.clickhouse.yml
-DC_AUTH_DEX := docker compose -f docker-compose.yml -f docker-compose.auth.yml -f docker-compose.dex.yml -f docker-compose.clickhouse.yml
-DC_PROD     := docker compose -f docker-compose.yml -f docker-compose.auth.yml -f docker-compose.clickhouse.yml
-DC_OTEL     := docker compose -f docker-compose.yml -f docker-compose.jaeger.yml -f docker-compose.clickhouse.yml
+DC_BASE         := docker compose -f docker-compose.yml -f docker-compose.clickhouse.yml
+DC_AUTH_DEX     := docker compose -f docker-compose.yml -f docker-compose.auth.yml -f docker-compose.dex.yml -f docker-compose.clickhouse.yml
+DC_PROD         := docker compose -f docker-compose.yml -f docker-compose.auth.yml -f docker-compose.clickhouse.yml
+DC_PROD_DEX     := docker compose -f docker-compose.yml -f docker-compose.auth.yml -f docker-compose.dex.prod.yml -f docker-compose.clickhouse.yml
+DC_OTEL         := docker compose -f docker-compose.yml -f docker-compose.jaeger.yml -f docker-compose.clickhouse.yml
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 .DEFAULT_GOAL := help
-.PHONY: help install lock docker-check env-check env-check-dex env-check-auth gen-cookie-secret gen-batch-secret \
+.PHONY: help install lock docker-check env-check env-check-dex env-check-auth env-check-dex-prod gen-cookie-secret gen-batch-secret gen-dex-secret \
         dev dev-api dev-batch dev-ui \
         test test-ui lint \
         build up down logs ps restart shell-api shell-batch \
         up-auth down-auth \
         up-prod down-prod \
+        up-prod-dex down-prod-dex logs-prod-dex \
         up-otel down-otel logs-otel \
         clean
 
@@ -68,10 +70,24 @@ env-check-auth: env-check ## Verify all OIDC variables are set (required for up-
 	@. ./.env && test -n "$$OAUTH2_COOKIE_SECRET" || { echo "Error: OAUTH2_COOKIE_SECRET not set (run: make gen-cookie-secret)"; exit 1; }
 	@echo "✓ OIDC environment looks good"
 
+env-check-dex-prod: env-check ## Verify all Dex production variables are set (required for up-prod-dex)
+	@. ./.env && test -n "$$DEX_CLIENT_SECRET"    || { echo "Error: DEX_CLIENT_SECRET not set (run: make gen-dex-secret)";       exit 1; }
+	@. ./.env && test -n "$$OAUTH2_COOKIE_SECRET" || { echo "Error: OAUTH2_COOKIE_SECRET not set (run: make gen-cookie-secret)"; exit 1; }
+	@. ./.env && test -n "$$GOOGLE_CLIENT_ID"     || { echo "Error: GOOGLE_CLIENT_ID not set";     exit 1; }
+	@. ./.env && test -n "$$GOOGLE_CLIENT_SECRET" || { echo "Error: GOOGLE_CLIENT_SECRET not set"; exit 1; }
+	@. ./.env && test -n "$$APPLE_CLIENT_ID"      || { echo "Error: APPLE_CLIENT_ID not set";      exit 1; }
+	@. ./.env && test -n "$$APPLE_TEAM_ID"        || { echo "Error: APPLE_TEAM_ID not set";        exit 1; }
+	@. ./.env && test -n "$$APPLE_KEY_ID"         || { echo "Error: APPLE_KEY_ID not set";         exit 1; }
+	@. ./.env && test -n "$$APPLE_PRIVATE_KEY"    || { echo "Error: APPLE_PRIVATE_KEY not set";    exit 1; }
+	@echo "✓ Dex production environment looks good"
+
 gen-cookie-secret: ## Generate a value for OAUTH2_COOKIE_SECRET
 	@python -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
 
 gen-batch-secret: ## Generate a value for BATCH_SERVICE_SECRET
+	@python -c "import secrets; print(secrets.token_hex(32))"
+
+gen-dex-secret: ## Generate a value for DEX_CLIENT_SECRET
 	@python -c "import secrets; print(secrets.token_hex(32))"
 
 # ── Local development (no containers) ─────────────────────────────────────────
@@ -194,6 +210,26 @@ down-prod: ## Stop production stack
 
 logs-prod: ## Follow logs from production stack
 	$(DC_PROD) logs -f
+
+# ── Docker — production with Dex (Google + Apple) ─────────────────────────────
+## Docker — production with Dex auth hub (Google + Sign in with Apple)
+## Requires DEX_CLIENT_SECRET, OAUTH2_COOKIE_SECRET, GOOGLE_CLIENT_ID,
+## GOOGLE_CLIENT_SECRET, APPLE_CLIENT_ID, APPLE_TEAM_ID, APPLE_KEY_ID,
+## and APPLE_PRIVATE_KEY set in .env.
+
+up-prod-dex: docker-check env-check-dex-prod ## Start production stack with Dex (Google + Apple login)
+	$(DC_PROD_DEX) up --build -d
+	@echo ""
+	@echo "  UI (login required): https://${HOST:-localhost}"
+	@echo "  Dex:                 https://${HOST:-localhost}/dex"
+	@echo "  Traefik dashboard:   http://localhost:8080"
+	@echo ""
+
+down-prod-dex: ## Stop production Dex stack
+	$(DC_PROD_DEX) down
+
+logs-prod-dex: ## Follow logs from production Dex stack
+	$(DC_PROD_DEX) logs -f
 
 # ── Docker — with Jaeger tracing ──────────────────────────────────────────────
 ## Docker — with Jaeger tracing
