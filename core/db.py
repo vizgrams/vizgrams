@@ -822,6 +822,10 @@ def get_backend(model_dir: Path, namespace: str = "sem") -> DBBackend:
         db_path = cfg.get("path", "data/data.db")
         return SQLiteBackend(db_path=Path(model_dir) / db_path)
 
+    if backend == "sqlite":
+        db_path = cfg.get("path", "data/data.db")
+        return SQLiteBackend(db_path=Path(model_dir) / db_path)
+
     if backend == "clickhouse":
         base_db = cfg.get("database", model_dir.name)
         raw_db = cfg.get("raw_database", f"{base_db}_raw")
