@@ -42,6 +42,7 @@ attributes:
 def model_dir(tmp_path):
     """A minimal model directory with data/ subdir (ontology now in DB)."""
     (tmp_path / "data").mkdir()
+    (tmp_path / "config.yaml").write_text("database:\n  backend: sqlite\n")
     return tmp_path
 
 

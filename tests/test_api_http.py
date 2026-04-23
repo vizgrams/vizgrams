@@ -78,7 +78,7 @@ def _scaffold_model(base_dir: Path, name: str) -> Path:
     model_dir = base_dir / "models" / name
     for sub in ("extractors", "ontology", "mappers", "features", "queries", "input_data", "data"):
         (model_dir / sub).mkdir(parents=True, exist_ok=True)
-    (model_dir / "config.yaml").write_text("")
+    (model_dir / "config.yaml").write_text("database:\n  backend: sqlite\n")
     return model_dir
 
 
