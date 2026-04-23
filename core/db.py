@@ -816,11 +816,7 @@ def get_backend(model_dir: Path, namespace: str = "sem") -> DBBackend:
     """
     from core.model_config import load_database_config  # noqa: PLC0415
     cfg = load_database_config(model_dir)
-    backend = cfg.get("backend", "sqlite")
-
-    if backend == "sqlite":
-        db_path = cfg.get("path", "data/data.db")
-        return SQLiteBackend(db_path=Path(model_dir) / db_path)
+    backend = cfg["backend"]
 
     if backend == "sqlite":
         db_path = cfg.get("path", "data/data.db")
