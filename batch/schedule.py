@@ -59,6 +59,8 @@ def extractors_due(model_dir: Path) -> list[str]:
     Returns:
         Tool names (strings) in discovery order.
     """
+    from datetime import timedelta
+
     from core import metadata_db
     now = datetime.now(UTC)
     due: list[str] = []
@@ -72,7 +74,16 @@ def extractors_due(model_dir: Path) -> list[str]:
             continue
 
         last_success = _last_success_time(model_dir, tool_name)
-        if _is_due(cron_expr, last_success, now, tool_name):
+        # When an extractor has never run, look back 24 h so the next scheduled
+        # slot that has already passed today is treated as due.  Using `now` as
+        # the base instead would compute next_run as tomorrow and miss forever.
+        base = last_success if last_success is not None else now - timedelta(hours=24)
+        next_run = _next_run_after(cron_expr, base)
+        if next_run is not None and next_run <= now:
+            _log.debug(
+                "Extractor due: tool=%s cron=%r last_success=%s next_run=%s",
+                tool_name, cron_expr, last_success, next_run,
+            )
             due.append(tool_name)
 
     return due
@@ -106,7 +117,7 @@ def next_run_times(model_dir: Path) -> list[dict]:
             continue
 
         last_success = _last_success_time(model_dir, tool_name)
-        base = last_success if last_success is not None else now
+        base = last_success if last_success is not None else now - timedelta(hours=24)
         next_run = _next_run_after(cron_expr, base)
 
         result.append({
