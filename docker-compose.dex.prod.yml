@@ -1,0 +1,55 @@
+# Production Dex layer — Google + Sign in with Apple connectors.
+#
+# Layered on top of docker-compose.yml + docker-compose.auth.yml:
+#
+#   make up-prod-dex
+#
+# Dex is exposed through Traefik at https://{HOST}/dex so that:
+#   - The browser can reach the Dex login page
+#   - Apple's redirect URI verification works (must be HTTPS + known domain)
+#
+# oauth2-proxy is overridden to point at this Dex instance instead of a
+# direct external OIDC provider.
+
+services:
+
+  dex:
+    image: dexidp/dex:v2.41.1
+    restart: unless-stopped
+    command: dex serve /etc/dex/config.yaml
+    volumes:
+      - ./config/dex/config.prod.yaml:/etc/dex/config.yaml:ro
+      - dex-data:/var/dex
+    environment:
+      DEX_HOST: ${DEX_HOST:-${HOST:-localhost}}
+      DEX_CLIENT_SECRET: ${DEX_CLIENT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID}
+      APPLE_TEAM_ID: ${APPLE_TEAM_ID}
+      APPLE_KEY_ID: ${APPLE_KEY_ID}
+      APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY}
+    networks:
+      - proxy
+    labels:
+      traefik.enable: "true"
+      traefik.http.services.dex.loadbalancer.server.port: "5556"
+      # Route /dex/* to Dex — browser-facing login and callback endpoints.
+      traefik.http.routers.dex.rule: PathPrefix(`/dex`)
+      traefik.http.routers.dex.entrypoints: web
+      traefik.http.routers.dex.priority: "30"
+      traefik.http.routers.dex.service: dex
+
+  # Point oauth2-proxy at this Dex instance rather than a direct OIDC provider.
+  oauth2-proxy:
+    environment:
+      OAUTH2_PROXY_CLIENT_ID: "vizgrams"
+      OAUTH2_PROXY_CLIENT_SECRET: ${DEX_CLIENT_SECRET}
+      OAUTH2_PROXY_OIDC_ISSUER_URL: https://${DEX_HOST:-${HOST:-localhost}}/dex
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_COOKIE_SECRET}
+      OAUTH2_PROXY_REDIRECT_URL: https://${DEX_HOST:-${HOST:-localhost}}/oauth2/callback
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+
+volumes:
+  dex-data:
+    driver: local
