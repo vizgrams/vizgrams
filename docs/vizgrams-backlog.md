@@ -225,7 +225,7 @@ Contains: jobs, pipeline runs, audit events.
 
 | ID | Title | Status |
 |---|---|---|
-| VG-120 | Create `vizgrams/vizgrams` monorepo (API + batch service + UI + core + docs) in the vizgrams GitHub org; start private, flip public after VG-124 CI is green | todo |
+| VG-120 | Create `vizgrams/vizgrams` monorepo (API + batch service + UI + core + docs) in the vizgrams GitHub org; start private, flip public after VG-124 CI is green | done |
 | VG-121 | Audit codebase for secrets, internal references, and internal-only config before first public push | done |
 | VG-122 | Add LICENSE (Apache-2.0 already in file headers), CONTRIBUTING.md, and public README | done |
 | VG-123 | Ensure no customer model data is included in the public repo (models live in external `VZ_MODELS_DIR`) | done |
