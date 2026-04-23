@@ -55,6 +55,7 @@
 | VG-030 | Google OAuth + Sign in with Apple — configure Dex production connectors; make Dex production-ready (persistent SQLite store, configurable issuer URL); update docker-compose for prod Dex | done |
 | VG-031 | Creator role self-service (register → auto-granted Creator role on public tier) | done |
 | VG-032 | Public user profile page (vizgrams authored, follower count) | todo |
+| VG-033 | Migrate auth layer from Dex to a managed service (Auth0, Clerk, or WorkOS) — swap `OIDC_ISSUER_URL` in oauth2-proxy config; migrate `users` table `(provider, external_id)` rows to new provider's user IDs; remove Dex from compose stacks. Trigger: when MFA, org-level SSO, or compliance requirements (SOC 2) make self-operating auth infrastructure impractical. | todo |
 
 ---
 
