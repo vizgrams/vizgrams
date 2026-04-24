@@ -88,64 +88,49 @@
 
 ## Epic 7 — AWS Cloud Deployment
 
-> Strategy: keep costs minimal until revenue. Single EC2 instance (Docker Compose) for compute;
-> S3 + CloudFront for UI. Scale to ECS when load warrants.
-
-### Dev environment
+> **All work in this epic lives in the private `vizgrams/ops` repo**, not this monorepo.
+> Deployment scripts, ClickHouse config, and prod CI/CD are bespoke operational infrastructure —
+> kept private to separate open-source application code from our specific deployment.
+>
+> Strategy: single prod EC2 running Docker Compose; local Docker Compose serves as dev environment (no cloud dev instance).
+> ClickHouse self-hosted in Docker on the same EC2 — cheapest option; EBS snapshots provide backup.
+> S3 + CloudFront for UI static files. Scale to ECS / dedicated ClickHouse when load warrants.
+> Dev = `make up-auth` locally. No separate cloud dev environment until staging is needed.
+>
+> Repo layout (`vizgrams/ops`):
+>   `deploy/`      — EC2 provisioning + deploy scripts
+>   `clickhouse/`  — CH init SQL, schema, model config
+>   `.github/workflows/deploy-prod.yml` — triggered after public repo pushes to ECR
 
 | ID | Title | Status |
 |---|---|---|
-| VG-060 | AWS account setup (IAM users, billing alerts, cost explorer) | todo |
+| VG-060 | AWS account setup (IAM user + MFA, billing alerts at $50/$100, cost explorer) | todo |
 | VG-061 | ECR repositories (api, batch-service, ui) | todo |
-| VG-062 | EC2 t3.small — dev instance, Docker Compose, EBS volume for model data | todo |
-| VG-063 | S3 bucket + CloudFront distribution for UI (dev) | todo |
-| VG-064 | SSM Parameter Store for secrets (DB paths, API keys, Dex config) | todo |
-| VG-065 | Route53 hosted zone + dev subdomain (`dev.vizgrams.com`) | todo |
-| VG-066 | ACM TLS certificate (dev subdomain) | todo |
-| VG-067 | GitHub Actions CI/CD pipeline → build images → push ECR → deploy to dev EC2 | todo |
+| VG-062 | EC2 t3.medium — prod, EBS 30GB gp3, Elastic IP, Docker Compose + self-hosted ClickHouse | todo |
+| VG-063 | S3 bucket + CloudFront distribution for UI (`vizgrams.com`) | todo |
+| VG-064 | SSM Parameter Store for secrets (ClickHouse password, API keys, Dex config, batch secret) | todo |
+| VG-065 | Route53 hosted zone + DNS — apex A record → Elastic IP; `api.vizgrams.com` A record → Elastic IP | todo |
+| VG-066 | ACM TLS certificate (apex, `www`, `api` subdomains) | todo |
+| VG-067 | GitHub Actions CI/CD — build images → push ECR → SSH deploy to EC2; manual approval gate on `main` | todo |
+| VG-073 | EBS snapshot schedule — AWS DLM daily snapshot, 7-day retention (covers SQLite + ClickHouse data) | todo |
+| VG-074 | CloudWatch alarms — CPU >80%, disk >75%, API 5xx error rate (CloudWatch agent for memory + disk metrics) | todo |
 
-### Prod environment
+### Estimated monthly cost
+| Resource | Cost |
+|---|---|
+| EC2 t3.medium | ~$33 |
+| EBS 30GB gp3 | ~$2.40 |
+| EBS snapshots (7-day retention, ~30GB incremental) | ~$1 |
+| S3 + CloudFront (UI) | ~$1 |
+| Route53 hosted zone | ~$0.50 |
+| ECR storage | ~$0.50 |
+| Elastic IP (attached, running) | free |
+| ClickHouse (self-hosted in Docker) | included in EC2 |
+| **Total** | **~$38/mo** |
 
-| ID | Title | Status |
-|---|---|---|
-| VG-070 | EC2 t3.small — prod instance (upgrade to t3.medium when needed) | todo |
-| VG-071 | S3 bucket + CloudFront distribution for UI (prod, `vizgrams.com`) | todo |
-| VG-072 | ACM TLS certificate (apex + www) | todo |
-| VG-073 | EBS snapshot schedule (automated daily backups of model data) | todo |
-| VG-074 | CloudWatch alarms (CPU, disk, error rate) | todo |
-| VG-075 | Prod deploy gate in CI/CD (manual approval, deploy from `main` only) | todo |
-
-### ClickHouse
-
-> Used as the analytical backend for public datasets (large-scale query workloads).
-> Not used for vizgrams metadata (posts, users, likes) — that stays on SQLite/Postgres.
-> Recommended approach: **ClickHouse Cloud** (managed, handles replication + backups automatically).
-> ClickHouse Cloud Development tier is free up to ~$0/mo at very low usage; scales to ~$60-150/mo for prod.
-> Alternative: self-managed ClickHouse in Docker on EC2 — cheaper at scale but operational burden.
-
-| ID | Title | Status |
-|---|---|---|
-| VG-076 | ClickHouse Cloud account + dev service (Development tier, free) | todo |
-| VG-077 | Connect ClickHouse Cloud dev service to vizgrams API (update model config, secrets) | todo |
-| VG-078 | ClickHouse Cloud prod service (Production tier, auto-scaling) | todo |
-| VG-079 | Automated ClickHouse backups — ClickHouse Cloud handles this natively; document retention policy | todo |
-| VG-079a | S3 bucket for manual ClickHouse backup exports (clickhouse-backup tool, weekly full + daily incremental) | todo |
-| VG-079b | CloudWatch / CH Cloud alerting on storage usage and query errors | todo |
-
-### Estimated monthly cost (at zero traffic)
-| Resource | Dev | Prod |
-|---|---|---|
-| EC2 t3.small | ~$15 | ~$15 |
-| EBS 20GB gp3 | ~$1.60 | ~$1.60 |
-| S3 + CloudFront | ~$0.50 | ~$0.50 |
-| S3 backup storage | ~$0.50 | ~$1.00 |
-| Route53 | ~$0.50 | — (same zone) |
-| ECR storage | ~$0.50 | — (shared) |
-| ClickHouse Cloud | ~$0 (free tier) | ~$60–150 |
-| **Total** | **~$18/mo** | **~$78–168/mo** |
-
-> Metadata DB (vizgrams, users, posts): SQLite on EBS initially. Add Postgres RDS only when concurrent write load demands it.
-> ClickHouse Cloud prod cost is the main variable — scales with data volume and query load. At low traffic, stay on Development tier for both envs until you need SLA guarantees.
+> Upgrade path: move to t3.large (~$66/mo) or dedicated ClickHouse instance when query load demands it.
+> Add Postgres RDS only when concurrent SQLite write contention becomes measurable.
+> ClickHouse Cloud Basic tier ($67/mo minimum) makes sense once operational burden outweighs cost savings.
 
 ---
 
