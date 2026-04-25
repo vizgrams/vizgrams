@@ -33,6 +33,8 @@ COPY --from=builder /venv /venv
 
 WORKDIR /app
 
+RUN mkdir -p /app/data && chown app:app /app/data
+
 COPY --chown=app:app batch_service/ batch_service/
 COPY --chown=app:app batch/         batch/
 COPY --chown=app:app core/          core/
