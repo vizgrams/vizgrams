@@ -76,7 +76,9 @@ jobs:
         run: npm run build
 
   # ---------------------------------------------------------------------------
-  # Docker: build all three images (no push — validates Dockerfiles)
+  # Docker: build all three images.
+  # On PRs: build only (validates Dockerfiles, no push).
+  # On push to main: build and push to ECR, tagged :latest and :<git-sha>.
   # ---------------------------------------------------------------------------
   docker:
     name: Docker build
@@ -89,32 +91,51 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3.10.0
 
-      - name: Build API image
+      - name: Configure AWS credentials
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Login to ECR
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push API image
         uses: docker/build-push-action@v6.15.0
         with:
           context: .
           file: Dockerfile.api
-          push: false
-          tags: vizgrams/api:ci
+          push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+          tags: |
+            ${{ steps.login-ecr.outputs.registry && format('{0}/api:latest', steps.login-ecr.outputs.registry) || 'vizgrams/api:ci' }}
+            ${{ steps.login-ecr.outputs.registry && format('{0}/api:{1}', steps.login-ecr.outputs.registry, github.sha) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build batch image
+      - name: Build and push batch image
         uses: docker/build-push-action@v6.15.0
         with:
           context: .
           file: Dockerfile.batch
-          push: false
-          tags: vizgrams/batch:ci
+          push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+          tags: |
+            ${{ steps.login-ecr.outputs.registry && format('{0}/batch-service:latest', steps.login-ecr.outputs.registry) || 'vizgrams/batch:ci' }}
+            ${{ steps.login-ecr.outputs.registry && format('{0}/batch-service:{1}', steps.login-ecr.outputs.registry, github.sha) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build UI image
+      - name: Build and push UI image
         uses: docker/build-push-action@v6.15.0
         with:
           context: .
           file: Dockerfile.ui
-          push: false
-          tags: vizgrams/ui:ci
+          push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+          tags: |
+            ${{ steps.login-ecr.outputs.registry && format('{0}/ui:latest', steps.login-ecr.outputs.registry) || 'vizgrams/ui:ci' }}
+            ${{ steps.login-ecr.outputs.registry && format('{0}/ui:{1}', steps.login-ecr.outputs.registry, github.sha) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
