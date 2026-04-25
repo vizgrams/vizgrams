@@ -65,6 +65,7 @@ services:
     volumes:
       - ${VZ_MODELS_DIR:-./models}:/models
       - ${HOME}/.secrets:/run/secrets:ro
+      - app_data:/app/data
     tmpfs:
       - /tmp:size=64m,mode=1777
     labels:
@@ -108,6 +109,7 @@ services:
     volumes:
       - ${VZ_MODELS_DIR:-./models}:/models
       - ${HOME}/.secrets:/run/secrets:ro
+      - app_data:/app/data
     tmpfs:
       - /tmp:size=64m,mode=1777
     networks:
@@ -144,6 +146,9 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+volumes:
+  app_data:    # shared writable volume for api.db and batch.db (container fs is read-only)
 
 networks:
   proxy:
