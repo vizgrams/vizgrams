@@ -40,6 +40,10 @@ COPY --from=builder /venv /venv
 
 WORKDIR /app
 
+# Pre-create the data directory with app ownership so the named volume
+# (app_data:/app/data) is initialised with the correct permissions on first mount.
+RUN mkdir -p /app/data && chown app:app /app/data
+
 # Copy application source, owned by the runtime user
 COPY --chown=app:app api/      api/
 COPY --chown=app:app batch/    batch/
