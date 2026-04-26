@@ -45,6 +45,10 @@ services:
       OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
       OAUTH2_PROXY_PASS_ACCESS_TOKEN: "false"
       OAUTH2_PROXY_REDIRECT_URL: "http://${HOST:-localhost}/oauth2/callback"
+      # Chain logout to the upstream IdP so the provider session is also terminated.
+      # For Auth0: https://vizgrams.eu.auth0.com/v2/logout?client_id=...&returnTo=...
+      # Leave blank (default) for local dev — oauth2-proxy-only logout is sufficient.
+      OAUTH2_PROXY_OIDC_LOGOUT_URL: "${OIDC_LOGOUT_URL:-}"
       # Skip the intermediate "Sign In" button — go straight to the IdP.
       OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
     tmpfs:
@@ -61,7 +65,7 @@ services:
       # ForwardAuth middleware — used only by the API router
       traefik.http.middlewares.auth.forwardauth.address: "http://oauth2-proxy:4180/oauth2/auth"
       traefik.http.middlewares.auth.forwardauth.trustforwardheader: "true"
-      traefik.http.middlewares.auth.forwardauth.authresponseheaders: "X-Auth-Request-User,X-Auth-Request-Email"
+      traefik.http.middlewares.auth.forwardauth.authresponseheaders: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
     networks:
       - proxy
 

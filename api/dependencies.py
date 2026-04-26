@@ -55,7 +55,7 @@ def _resolve_identity(request: Request) -> tuple[str, str, str | None, str | Non
     if not external_id:
         return "", "", None, None
 
-    provider = os.environ.get("VZ_AUTH_PROVIDER", "dex")
+    provider = os.environ.get("VZ_AUTH_PROVIDER", "auth0")
     return provider, external_id, email, display_name
 
 

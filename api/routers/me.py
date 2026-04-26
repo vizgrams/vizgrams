@@ -14,18 +14,30 @@ router = APIRouter(prefix="/me", tags=["auth"])
 def get_me(request: Request):
     """Return the identity and system role of the current user.
 
-    In auth mode the ForwardAuth middleware sets X-Auth-Request-Email before
-    the request reaches FastAPI.  In no-auth / local dev mode, DEV_USER is
-    used as a fallback.  Returns ``{"email": null}`` when neither is present.
+    In auth mode the ForwardAuth middleware sets X-Auth-Request-Email and
+    X-Auth-Request-Preferred-Username before the request reaches FastAPI.
+    In no-auth / local dev mode, DEV_USER is used as a fallback.
+    Returns ``{"email": null}`` when neither is present.
     """
     email = request.headers.get("X-Auth-Request-Email")
+    display_name = request.headers.get("X-Auth-Request-Preferred-Username")
+    provider = os.environ.get("VZ_AUTH_PROVIDER", "auth0")
+
     if not email:
-        email = os.environ.get("DEV_USER") or None
+        dev_user = os.environ.get("DEV_USER") or None
+        email = dev_user
+        provider = "dev" if dev_user else provider
+
+    if not display_name and email:
+        display_name = email.split("@")[0]
+
     admin = is_system_admin(email) if email else False
     creator = is_creator(email) if email else False
     role = "admin" if admin else "creator" if creator else "viewer"
     return {
         "email": email,
+        "display_name": display_name,
+        "provider": provider,
         "is_system_admin": admin,
         "is_creator": creator,
         "role": role,

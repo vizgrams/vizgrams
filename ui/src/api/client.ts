@@ -500,7 +500,14 @@ export interface FunctionDoc {
 
 export const listModels = () => get<ModelSummary[]>('/api/v1/model')
 export type PlatformRole = 'admin' | 'creator' | 'viewer'
-export type MeResponse = { email: string | null; is_system_admin: boolean; is_creator: boolean; role: PlatformRole }
+export type MeResponse = {
+  email: string | null
+  display_name: string | null
+  provider: string
+  is_system_admin: boolean
+  is_creator: boolean
+  role: PlatformRole
+}
 export const getMe = () => get<MeResponse>('/api/v1/me')
 
 export interface VizgramSummary {
