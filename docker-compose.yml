@@ -6,8 +6,7 @@
 #
 # Modes (use 'make' targets — don't run docker compose directly):
 #   make up        → this file only  (no auth, DEV_USER identity)
-#   make up-auth   → this + docker-compose.auth.yml + docker-compose.dex.yml
-#   make up-prod   → this + docker-compose.auth.yml  (real OIDC provider)
+#   make up-auth   → this + docker-compose.auth.yml  (real OIDC provider)
 
 x-security: &security
   security_opt:
