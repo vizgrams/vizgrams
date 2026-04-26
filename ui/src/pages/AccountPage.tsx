@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
-import { LogOut, Shield, Pencil, Star, Eye } from 'lucide-react'
+import { LogOut, Shield, Pencil, Eye } from 'lucide-react'
 import { getMe, type MeResponse, type PlatformRole } from '@/api/client'
 
 const ROLE_CONFIG: Record<PlatformRole, { label: string; icon: React.ElementType; className: string }> = {
