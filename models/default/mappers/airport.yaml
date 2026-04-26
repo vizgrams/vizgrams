@@ -1,0 +1,40 @@
+mapper: airport
+description: Map raw OpenFlights airport records to the Airport entity
+
+grain: ap
+
+sources:
+  - alias: ap
+    table: raw_airports
+    columns:
+      - iata_code
+      - icao_code
+      - name
+      - city
+      - country
+      - latitude
+      - longitude
+      - altitude_ft
+      - timezone
+
+targets:
+  - entity: Airport
+    columns:
+      - name: iata_code
+        expr: ap.iata_code
+      - name: icao_code
+        expr: ap.icao_code
+      - name: name
+        expr: ap.name
+      - name: city
+        expr: ap.city
+      - name: country
+        expr: ap.country
+      - name: latitude
+        expr: ap.latitude
+      - name: longitude
+        expr: ap.longitude
+      - name: altitude_ft
+        expr: ap.altitude_ft
+      - name: timezone
+        expr: ap.timezone

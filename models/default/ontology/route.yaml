@@ -1,0 +1,50 @@
+entity: Route
+description: A non-stop flight route operated by an airline between two airports
+display:
+  list: [airline_code, source_airport_code, dest_airport_code]
+  detail: [airline_code, source_airport_code, dest_airport_code, stops, codeshare, equipment]
+
+identity:
+  route_id:
+    type: STRING
+    semantic: PRIMARY_KEY
+  airline_code:
+    type: STRING
+    semantic: RELATION
+    references: Airline
+  source_airport_code:
+    type: STRING
+    semantic: RELATION
+    references: Airport
+  dest_airport_code:
+    type: STRING
+    semantic: RELATION
+    references: Airport
+
+attributes:
+  codeshare:
+    type: BOOLEAN
+    semantic: FLAG
+  stops:
+    type: INTEGER
+    semantic: MEASURE
+  equipment:
+    type: STRING
+    semantic: DIMENSION
+
+relations:
+  airline:
+    target: Airline
+    cardinality: MANY_TO_ONE
+    via: airline_code
+    inverse: routes
+  source_airport:
+    target: Airport
+    cardinality: MANY_TO_ONE
+    via: source_airport_code
+    inverse: departing_routes
+  dest_airport:
+    target: Airport
+    cardinality: MANY_TO_ONE
+    via: dest_airport_code
+    inverse: arriving_routes

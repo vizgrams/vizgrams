@@ -1,0 +1,18 @@
+name: routes_per_airline
+root: Route
+description: Number of routes per airline, limited to active airlines
+
+attributes:
+  - airline_code: airline_code
+  - airline_name: Airline.name
+  - airline_country: Airline.country
+
+measures:
+  - route_count:
+      expr: count(route_id)
+      format:
+        type: number
+        pattern: "0,0"
+
+order:
+  - route_count: desc

@@ -18,6 +18,7 @@ from tools.garmin.tool import GarminTool
 from tools.git.tool import GitHubTool
 from tools.git_codeowners.tool import CodeownersTool
 from tools.jira.tool import JiraTool
+from tools.openflights.tool import OpenFlightsTool
 
 _CREDENTIAL_KEYS = frozenset({"api_token", "token", "password", "secret", "api_key"})
 
@@ -27,6 +28,7 @@ BUILTIN_REGISTRY: dict[str, type] = {
     "git_codeowners": CodeownersTool,
     "file": FileTool,
     "garmin": GarminTool,
+    "openflights": OpenFlightsTool,
 }
 
 

@@ -1,0 +1,34 @@
+mapper: route
+description: Map raw OpenFlights route records to the Route entity
+
+grain: ro
+
+sources:
+  - alias: ro
+    table: raw_routes
+    columns:
+      - route_id
+      - airline_code
+      - source_airport_code
+      - dest_airport_code
+      - codeshare
+      - stops
+      - equipment
+
+targets:
+  - entity: Route
+    columns:
+      - name: route_id
+        expr: ro.route_id
+      - name: airline_code
+        expr: ro.airline_code
+      - name: source_airport_code
+        expr: ro.source_airport_code
+      - name: dest_airport_code
+        expr: ro.dest_airport_code
+      - name: codeshare
+        expr: ro.codeshare
+      - name: stops
+        expr: ro.stops
+      - name: equipment
+        expr: ro.equipment

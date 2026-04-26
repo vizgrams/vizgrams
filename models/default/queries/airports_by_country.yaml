@@ -1,0 +1,16 @@
+name: airports_by_country
+root: Airport
+description: Number of airports per country, sorted by count
+
+attributes:
+  - country: country
+
+measures:
+  - airport_count:
+      expr: count(iata_code)
+      format:
+        type: number
+        pattern: "0,0"
+
+order:
+  - airport_count: desc

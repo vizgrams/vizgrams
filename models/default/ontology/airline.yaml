@@ -1,0 +1,34 @@
+entity: Airline
+description: A commercial airline with an IATA code
+display:
+  list: [name, country, iata_code]
+  detail: [name, country, iata_code, icao_code, callsign, active]
+
+identity:
+  iata_code:
+    type: STRING
+    semantic: PRIMARY_KEY
+
+attributes:
+  icao_code:
+    type: STRING
+    semantic: IDENTIFIER
+  name:
+    type: STRING
+    semantic: IDENTIFIER
+  callsign:
+    type: STRING
+    semantic: IDENTIFIER
+  country:
+    type: STRING
+    semantic: DIMENSION
+  active:
+    type: STRING
+    semantic: STATE
+
+relations:
+  routes:
+    target: Route
+    cardinality: ONE_TO_MANY
+    via: [iata_code]
+    inverse: airline

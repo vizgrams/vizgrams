@@ -1,0 +1,48 @@
+entity: Airport
+description: An airport with an IATA code
+display:
+  list: [name, city, country]
+  detail: [name, city, country, iata_code, icao_code, latitude, longitude, altitude_ft, timezone]
+
+identity:
+  iata_code:
+    type: STRING
+    semantic: PRIMARY_KEY
+
+attributes:
+  icao_code:
+    type: STRING
+    semantic: IDENTIFIER
+  name:
+    type: STRING
+    semantic: IDENTIFIER
+  city:
+    type: STRING
+    semantic: DIMENSION
+  country:
+    type: STRING
+    semantic: DIMENSION
+  latitude:
+    type: FLOAT
+    semantic: MEASURE
+  longitude:
+    type: FLOAT
+    semantic: MEASURE
+  altitude_ft:
+    type: INTEGER
+    semantic: MEASURE
+  timezone:
+    type: STRING
+    semantic: DIMENSION
+
+relations:
+  departing_routes:
+    target: Route
+    cardinality: ONE_TO_MANY
+    via: [iata_code]
+    inverse: source_airport
+  arriving_routes:
+    target: Route
+    cardinality: ONE_TO_MANY
+    via: [iata_code]
+    inverse: dest_airport

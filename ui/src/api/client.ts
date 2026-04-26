@@ -570,4 +570,4 @@ export const previewCaption = (body: Omit<PublishVizgramRequest, 'caption'>) =>
   post<{ caption: string | null; cached: boolean; error?: string }>('/api/v1/vizgrams/preview-caption', body)
 
 // Default fallback (used before context is available)
-export const DEFAULT_MODEL = import.meta.env.VITE_MODEL as string ?? 'example'
+export const DEFAULT_MODEL = import.meta.env.VITE_MODEL as string ?? 'default'

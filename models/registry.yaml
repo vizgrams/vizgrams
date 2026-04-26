@@ -1,4 +1,13 @@
 models:
+  default:
+    display_name: Flights
+    description: Global airports, airlines, and flight routes from OpenFlights
+    owner: vizgrams
+    created_at: '2026-01-01T00:00:00Z'
+    status: active
+    tags:
+      - aviation
+      - openflights
   example:
     display_name: Example Model
     description: Toy model for tests and quickstart — no credentials required

@@ -1,0 +1,31 @@
+mapper: airline
+description: Map raw OpenFlights airline records to the Airline entity
+
+grain: al
+
+sources:
+  - alias: al
+    table: raw_airlines
+    columns:
+      - iata_code
+      - icao_code
+      - name
+      - callsign
+      - country
+      - active
+
+targets:
+  - entity: Airline
+    columns:
+      - name: iata_code
+        expr: al.iata_code
+      - name: icao_code
+        expr: al.icao_code
+      - name: name
+        expr: al.name
+      - name: callsign
+        expr: al.callsign
+      - name: country
+        expr: al.country
+      - name: active
+        expr: al.active

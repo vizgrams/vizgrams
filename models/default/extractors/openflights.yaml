@@ -1,0 +1,68 @@
+tasks:
+  - name: airports
+    tool: openflights
+    command: airports
+    output:
+      table: raw_airports
+      write_mode: REPLACE
+      columns:
+        - name: iata_code
+          json_path: $.iata_code
+        - name: icao_code
+          json_path: $.icao_code
+        - name: name
+          json_path: $.name
+        - name: city
+          json_path: $.city
+        - name: country
+          json_path: $.country
+        - name: latitude
+          json_path: $.latitude
+        - name: longitude
+          json_path: $.longitude
+        - name: altitude_ft
+          json_path: $.altitude_ft
+        - name: timezone
+          json_path: $.timezone
+
+  - name: airlines
+    tool: openflights
+    command: airlines
+    output:
+      table: raw_airlines
+      write_mode: REPLACE
+      columns:
+        - name: iata_code
+          json_path: $.iata_code
+        - name: icao_code
+          json_path: $.icao_code
+        - name: name
+          json_path: $.name
+        - name: callsign
+          json_path: $.callsign
+        - name: country
+          json_path: $.country
+        - name: active
+          json_path: $.active
+
+  - name: routes
+    tool: openflights
+    command: routes
+    output:
+      table: raw_routes
+      write_mode: REPLACE
+      columns:
+        - name: route_id
+          json_path: $.route_id
+        - name: airline_code
+          json_path: $.airline_code
+        - name: source_airport_code
+          json_path: $.source_airport_code
+        - name: dest_airport_code
+          json_path: $.dest_airport_code
+        - name: codeshare
+          json_path: $.codeshare
+        - name: stops
+          json_path: $.stops
+        - name: equipment
+          json_path: $.equipment

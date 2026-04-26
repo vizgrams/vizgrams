@@ -1,0 +1,12 @@
+# Copyright 2024-2026 Oliver Fenton
+# SPDX-License-Identifier: Apache-2.0
+
+# Access: all authenticated users can view and run queries.
+# System admins always receive ADMIN access regardless of this block.
+access:
+  - email: "*"
+    role: VIEWER
+
+tools:
+  openflights:
+    enabled: true
