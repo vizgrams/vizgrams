@@ -8,7 +8,7 @@ import {
   Download, Shuffle, Sparkles,
   Layers, BarChart2, Share2,
   Compass, LayoutGrid,
-  Clock, LogOut, Settings, User, Database, Rss, Bookmark,
+  Clock, Settings, User, Database, Rss, Bookmark,
 } from 'lucide-react'
 import { listModels } from '@/api/client'
 import type { ModelSummary, ApplicationSummary } from '@/api/client'
@@ -152,34 +152,25 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
       <div className={cn('border-t border-white/10 py-2 space-y-0.5', collapsed ? 'px-1.5' : 'px-2')}>
         <NavItem disabled icon={<Settings className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Settings</NavItem>
         {userEmail ? (
-          <div className={cn('flex items-center', collapsed ? 'flex-col gap-1' : 'gap-1')}>
-            <Link
-              to="/account"
-              className={cn(
-                'flex items-center rounded-md text-sm text-white/55 hover:bg-white/[0.07] hover:text-white/90 transition-colors min-w-0',
-                collapsed ? 'justify-center p-2' : 'flex-1 gap-2 px-2 py-1.5',
-              )}
-              title={collapsed ? userEmail : undefined}
-            >
-              {collapsed ? (
-                <span className="h-5 w-5 rounded-full bg-white/15 flex items-center justify-center text-[10px] font-semibold text-white/70 shrink-0">
-                  {userEmail[0].toUpperCase()}
-                </span>
-              ) : (
-                <>
-                  <User className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate text-xs">{userEmail}</span>
-                </>
-              )}
-            </Link>
-            <a
-              href="/oauth2/sign_out"
-              title="Sign out"
-              className="flex items-center justify-center rounded-md p-2 text-white/30 hover:bg-white/[0.07] hover:text-white/70 transition-colors shrink-0"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-            </a>
-          </div>
+          <Link
+            to="/account"
+            className={cn(
+              'flex items-center rounded-md text-sm text-white/55 hover:bg-white/[0.07] hover:text-white/90 transition-colors min-w-0',
+              collapsed ? 'justify-center p-2' : 'gap-2 px-2 py-1.5',
+            )}
+            title={collapsed ? userEmail : undefined}
+          >
+            {collapsed ? (
+              <span className="h-5 w-5 rounded-full bg-white/15 flex items-center justify-center text-[10px] font-semibold text-white/70 shrink-0">
+                {userEmail[0].toUpperCase()}
+              </span>
+            ) : (
+              <>
+                <User className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate text-xs">{userEmail}</span>
+              </>
+            )}
+          </Link>
         ) : (
           <NavItem disabled icon={<User className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Account</NavItem>
         )}

@@ -34,6 +34,10 @@ def get_me(request: Request):
     admin = is_system_admin(email) if email else False
     creator = is_creator(email) if email else False
     role = "admin" if admin else "creator" if creator else "viewer"
+    # VZ_HARD_LOGOUT_URL is the IdP-level logout URL (e.g. Auth0 /v2/logout).
+    # The UI uses it to construct /oauth2/sign_out?rd=<encoded> for "sign out
+    # of all devices". Empty in local dev — cookie-only sign-out is used instead.
+    hard_logout_url = os.environ.get("VZ_HARD_LOGOUT_URL", "")
     return {
         "email": email,
         "display_name": display_name,
@@ -41,4 +45,5 @@ def get_me(request: Request):
         "is_system_admin": admin,
         "is_creator": creator,
         "role": role,
+        "hard_logout_url": hard_logout_url,
     }

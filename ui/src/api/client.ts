@@ -507,6 +507,7 @@ export type MeResponse = {
   is_system_admin: boolean
   is_creator: boolean
   role: PlatformRole
+  hard_logout_url: string
 }
 export const getMe = () => get<MeResponse>('/api/v1/me')
 
