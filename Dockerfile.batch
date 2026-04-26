@@ -8,10 +8,16 @@ ENV VIRTUAL_ENV=/venv \
     POETRY_NO_INTERACTION=1 \
     POETRY_CACHE_DIR=/tmp/poetry_cache
 
+# Install poetry into the system Python BEFORE activating the app venv.
+# If poetry is installed into the venv, its deps (certifi, idna, …) land there
+# too — then poetry tries to downgrade them to lock-file versions and pip
+# crashes with FileNotFoundError on the dist-info directories it just removed.
+RUN pip install --no-cache-dir "poetry>=1.8,<2"
+
+# Create the app venv and activate it. Poetry will detect VIRTUAL_ENV and
+# install application packages here, not into the system Python.
 RUN python -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
-RUN pip install --no-cache-dir "poetry>=1.8,<2"
 
 COPY pyproject.toml poetry.lock ./
 RUN poetry config virtualenvs.create false && \
