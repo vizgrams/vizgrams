@@ -61,6 +61,7 @@ services:
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: "8123"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+      VZ_TOOLS_DIR: "${VZ_TOOLS_DIR:-}"
     volumes:
       - ${VZ_MODELS_DIR:-./models}:/models
       - ${HOME}/.secrets:/run/secrets:ro
@@ -105,6 +106,7 @@ services:
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: "8123"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+      VZ_TOOLS_DIR: "${VZ_TOOLS_DIR:-}"
     volumes:
       - ${VZ_MODELS_DIR:-./models}:/models
       - ${HOME}/.secrets:/run/secrets:ro

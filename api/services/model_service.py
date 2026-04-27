@@ -202,14 +202,27 @@ def set_access_rules(models_dir: Path, model_name: str, rules: list[dict] | None
 
 
 def get_model_config(models_dir: Path, model_name: str) -> dict:
-    """Return the model config with credential values masked."""
+    """Return the model config with credential references masked (not resolved).
+
+    Returns raw config from the DB (or config.yaml fallback) so that the
+    masked values are round-trippable — e.g. ``env:CLICKHOUSE_PASSWORD``
+    becomes ``env:***``, not ``***`` (which would fail PUT validation).
+    """
     registry = load_registry(models_dir)
     if model_name not in registry:
         raise KeyError(f"Model '{model_name}' not found in registry.")
-    from core.model_config import load_database_config, load_model_config
-    model_dir = models_dir / model_name
-    tools = load_model_config(model_dir) or {}
-    db_cfg = load_database_config(model_dir)
+    from core.vizgrams_db import load_database_config_from_db, load_model_config_from_db
+    # Read raw (unresolved) config — DB first, then config.yaml fallback
+    tools = load_model_config_from_db(model_name)
+    db_cfg = load_database_config_from_db(model_name)
+    if tools is None or db_cfg is None:
+        from core.model_config import load_config_yaml
+        model_dir = models_dir / model_name
+        yaml_data = load_config_yaml(model_dir) if (model_dir / "config.yaml").exists() else {}
+        if tools is None:
+            tools = yaml_data.get("tools", {})
+        if db_cfg is None:
+            db_cfg = yaml_data.get("database", {})
     return {
         "tools": _mask_credentials(tools),
         "database": _mask_credential_values(db_cfg),

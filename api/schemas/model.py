@@ -100,3 +100,16 @@ class ModelConfigUpdate(BaseModel):
     """PUT /model/{model}/config — update tools and/or database config."""
     tools: dict[str, Any] | None = None
     database: dict[str, Any] | None = None
+
+
+class ToolParamInfo(BaseModel):
+    required: bool = False
+    description: str = ""
+    credential: bool = False
+    default: Any = None
+
+
+class ToolInfo(BaseModel):
+    name: str
+    source: str  # "builtin" | "system"
+    params: dict[str, ToolParamInfo] = {}

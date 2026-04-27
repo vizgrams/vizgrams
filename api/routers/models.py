@@ -25,6 +25,7 @@ from api.schemas.model import (
     ModelPatch,
     ModelSummary,
     SetActiveResponse,
+    ToolInfo,
 )
 from api.services import model_service
 from core.rbac import ModelRole, get_model_role
@@ -187,3 +188,21 @@ def update_config(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Tool registry (system-level)
+# ---------------------------------------------------------------------------
+
+# This endpoint is outside the /model/{model} path — it lists all tools
+# available to the platform, not specific to a model.
+tools_router = APIRouter(prefix="/tools", tags=["tools"])
+
+
+@tools_router.get("", response_model=list[ToolInfo])
+def list_available_tools(
+    _=Depends(require_system_admin),
+):
+    """Return all registered tools (builtin + system) with parameter metadata."""
+    from core.tool_service import list_available_tools
+    return list_available_tools()
