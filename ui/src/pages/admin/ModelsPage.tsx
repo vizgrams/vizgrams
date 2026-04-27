@@ -8,17 +8,25 @@ import {
 } from '@/api/client'
 import type { ModelSummary, ModelDetail, AccessRule, ModelCreate, ModelPatch } from '@/api/client'
 import { Badge, ErrorMessage, Spinner } from '@/components/Layout'
+import { useModel } from '@/context/ModelContext'
 import { cn } from '@/lib/utils'
 
 const STATUS_STYLE: Record<string, string> = {
-  active:       'border-green-200 bg-green-50 text-green-700',
+  active:       'border-blue-200 bg-blue-50 text-blue-700',
   experimental: 'border-yellow-200 bg-yellow-50 text-yellow-700',
   archived:     'border-gray-200 bg-gray-50 text-gray-500',
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  active:       'live',
+  experimental: 'experimental',
+  archived:     'archived',
 }
 
 const ROLES = ['VIEWER', 'OPERATOR', 'ADMIN'] as const
 
 export function ModelsPage() {
+  const { refresh: refreshActiveModel } = useModel()
   const [models, setModels] = useState<ModelSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [listError, setListError] = useState<string | null>(null)
@@ -126,9 +134,9 @@ export function ModelsPage() {
             {/* Toolbar */}
             <div className="shrink-0 border-b px-6 py-3 flex items-center gap-3">
               <h1 className="text-lg font-semibold flex-1">{detail.display_name}</h1>
-              <Badge className={STATUS_STYLE[detail.status] ?? ''}>{detail.status}</Badge>
+              <Badge className={STATUS_STYLE[detail.status] ?? ''}>{STATUS_LABEL[detail.status] ?? detail.status}</Badge>
               {!detail.is_active && detail.status !== 'archived' && (
-                <SetActiveButton model={detail} onActivated={() => reloadList(detail.name)} />
+                <SetActiveButton model={detail} onActivated={() => { refreshActiveModel(); reloadList(detail.name) }} />
               )}
               {detail.is_active && (
                 <span className="flex items-center gap-1 text-xs text-green-600 font-medium">

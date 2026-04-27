@@ -5,12 +5,14 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Rss } from 'lucide-react'
 import type { VizgramSummary } from '@/api/client'
 import { listFeed } from '@/api/client'
+import { useModel } from '@/context/ModelContext'
 import { VizgramCard } from '@/components/VizgramCard'
 import { Spinner, ErrorMessage } from '@/components/Layout'
 
 const PAGE_SIZE = 20
 
 export function FeedPage() {
+  const { model } = useModel()
   const [items, setItems] = useState<VizgramSummary[]>([])
   const [offset, setOffset] = useState(0)
   const [hasMore, setHasMore] = useState(true)
@@ -25,7 +27,7 @@ export function FeedPage() {
     loadingRef.current = true
     setLoading(true)
     try {
-      const page = await listFeed({ limit: PAGE_SIZE, offset: pageOffset })
+      const page = await listFeed({ limit: PAGE_SIZE, offset: pageOffset, dataset_ref: model || undefined })
       setItems((prev) => pageOffset === 0 ? page : [...prev, ...page])
       setOffset(pageOffset + page.length)
       setHasMore(page.length === PAGE_SIZE)
@@ -36,12 +38,18 @@ export function FeedPage() {
       loadingRef.current = false
       if (pageOffset === 0) setInitialLoading(false)
     }
-  }, [])
+  }, [model])
 
-  // Initial load
+  // Reset and reload when model changes
   useEffect(() => {
+    setItems([])
+    setOffset(0)
+    setHasMore(true)
+    setInitialLoading(true)
+    setError(null)
+    loadingRef.current = false
     fetchPage(0)
-  }, [fetchPage])
+  }, [model])
 
   // Sentinel observer — triggers next page when bottom comes into view
   useEffect(() => {

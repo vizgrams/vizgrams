@@ -7,6 +7,7 @@ import { makeApi, listModels } from '@/api/client'
 interface ModelContextValue {
   model: string
   api: ReturnType<typeof makeApi>
+  refresh: () => void
 }
 
 const ModelContext = createContext<ModelContextValue | null>(null)
@@ -15,20 +16,23 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   const [model, setModel] = useState<string>('')
   const [ready, setReady] = useState(false)
 
-  useEffect(() => {
-    listModels()
+  function fetchActive() {
+    return listModels()
       .then(models => {
         const active = models.find(m => m.is_active)?.name ?? models[0]?.name ?? ''
         setModel(active)
       })
       .catch(() => {})
-      .finally(() => setReady(true))
+  }
+
+  useEffect(() => {
+    fetchActive().finally(() => setReady(true))
   }, [])
 
   if (!ready) return null
 
   return (
-    <ModelContext.Provider value={{ model, api: makeApi(model) }}>
+    <ModelContext.Provider value={{ model, api: makeApi(model), refresh: fetchActive }}>
       {children}
     </ModelContext.Provider>
   )
