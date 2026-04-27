@@ -72,8 +72,8 @@ def create_model(
         logger.error("Permission denied creating model %r: %s", data.name, exc)
         raise HTTPException(
             status_code=500,
-            detail=f"Permission denied: cannot write to models directory. "
-            f"Ensure the models volume is writable by the application user.",
+            detail="Permission denied: cannot write to models directory. "
+            "Ensure the models volume is writable by the application user.",
         ) from exc
     except Exception:
         logger.exception("Unexpected error creating model %r", data.name)
