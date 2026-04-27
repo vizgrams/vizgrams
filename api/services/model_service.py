@@ -212,8 +212,12 @@ def _get_config_summary(model_dir: Path) -> dict | None:
 
 def _get_db_stats(model_dir: Path) -> dict:
     db_path = model_dir / "data" / "data.db"
+    try:
+        display_path = str(db_path.relative_to(model_dir.parent.parent))
+    except ValueError:
+        display_path = str(db_path)
     stats: dict = {
-        "path": str(db_path.relative_to(model_dir.parent.parent)),
+        "path": display_path,
         "present": db_path.exists(),
         "raw_tables": 0,
         "raw_row_count": 0,

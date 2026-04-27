@@ -194,6 +194,17 @@ def test_create_model_raises_on_duplicate(models_dir, base_dir):
         create_model(models_dir, base_dir, data)
 
 
+def test_create_model_cleans_orphaned_directory(models_dir, base_dir):
+    """An orphaned model directory (not in registry) is cleaned up on create."""
+    orphan_dir = models_dir / "orphan"
+    orphan_dir.mkdir(parents=True)
+    (orphan_dir / "stale.txt").write_text("leftover")
+    data = {"name": "orphan", "display_name": "Orphan", "description": "", "owner": "test"}
+    result = create_model(models_dir, base_dir, data)
+    assert result["name"] == "orphan"
+    assert not (orphan_dir / "stale.txt").exists()
+
+
 def test_create_model_set_active(models_dir, base_dir):
     data = {
         "name": "newmodel",
@@ -205,6 +216,22 @@ def test_create_model_set_active(models_dir, base_dir):
     create_model(models_dir, base_dir, data)
     ctx = (base_dir / ".vz_context").read_text().strip()
     assert ctx == "newmodel"
+
+
+def test_create_model_returns_valid_model_detail(models_dir, base_dir):
+    """Ensure create_model returns a dict that passes ModelDetail validation."""
+    from api.schemas.model import ModelDetail
+    data = {
+        "name": "newmodel",
+        "display_name": "New Model",
+        "description": "desc",
+        "owner": "test",
+    }
+    result = create_model(models_dir, base_dir, data)
+    detail = ModelDetail.model_validate(result)
+    assert detail.name == "newmodel"
+    assert detail.status.value == "experimental"
+    assert detail.database.present is False
 
 
 # ---------------------------------------------------------------------------
