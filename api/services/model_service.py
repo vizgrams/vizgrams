@@ -3,6 +3,7 @@
 
 """Model service: CRUD operations on the model registry and directory scaffold."""
 
+import shutil
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,11 +72,17 @@ def create_model(models_dir: Path, base_dir: Path, data: dict) -> dict:
     name = data["name"]
     registry = load_registry(models_dir)
     if name in registry:
-        raise ValueError(f"Model '{name}' already exists in registry.")
+        status = registry[name].get("status", "unknown")
+        raise ValueError(
+            f"Model '{name}' already exists (status: {status}). "
+            "Archive or delete it before recreating."
+        )
 
     model_dir = models_dir / name
     if model_dir.exists():
-        raise ValueError(f"Directory {name}/ already exists in models dir.")
+        # Orphaned directory — model was removed from registry without deleting files.
+        # Remove it so the create can proceed cleanly.
+        shutil.rmtree(model_dir)
 
     # Create directories
     for subdir in _SCAFFOLD_DIRS:
@@ -152,8 +159,6 @@ def set_active(models_dir: Path, base_dir: Path, model_name: str) -> str:
 
 def delete_model(models_dir: Path, model_name: str, delete_files: bool = False) -> None:
     """Remove model from registry; optionally delete its directory."""
-    import shutil
-
     registry = load_registry(models_dir)
     if model_name not in registry:
         raise KeyError(f"Model '{model_name}' not found in registry.")
