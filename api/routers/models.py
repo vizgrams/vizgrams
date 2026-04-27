@@ -1,7 +1,11 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+logger = logging.getLogger(__name__)
 
 from api.dependencies import (
     get_base_dir,
@@ -64,6 +68,16 @@ def create_model(
         return model_service.create_model(models_dir, base_dir, data.model_dump(mode="json"))
     except (FileExistsError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PermissionError as exc:
+        logger.error("Permission denied creating model %r: %s", data.name, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Permission denied: cannot write to models directory. "
+            "Ensure the models volume is writable by the application user.",
+        ) from exc
+    except Exception:
+        logger.exception("Unexpected error creating model %r", data.name)
+        raise
 
 
 @router.patch("/{model}", response_model=ModelDetail)
