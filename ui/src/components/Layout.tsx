@@ -1,17 +1,16 @@
 // Copyright 2024-2026 Oliver Fenton
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import {
-  ChevronDown, PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen,
   Download, Shuffle, Sparkles,
   Layers, BarChart2, Share2,
   Compass, LayoutGrid,
   Clock, Settings, User, Database, Rss, Bookmark, Box,
 } from 'lucide-react'
-import { listModels } from '@/api/client'
-import type { ModelSummary, ApplicationSummary } from '@/api/client'
+import type { ApplicationSummary } from '@/api/client'
 import { useModel } from '@/context/ModelContext'
 import { useRole } from '@/context/RoleContext'
 import { cn } from '@/lib/utils'
@@ -104,15 +103,13 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </button>
       </div>
 
-      {/* Model switcher */}
-      {!collapsed && (
-        <div className="px-3 py-2 border-b border-white/10">
-          <ModelSwitcher dark />
-        </div>
-      )}
-      {collapsed && (
-        <div className="flex justify-center py-2 border-b border-white/10">
-          <ModelSwitcherIcon dark />
+      {/* Active model label */}
+      {model && (
+        <div className={cn('border-b border-white/10', collapsed ? 'flex justify-center py-2' : 'px-3 py-2')}>
+          {collapsed
+            ? <span title={model}><Database className="h-3.5 w-3.5 text-white/40" /></span>
+            : <p className="font-mono text-[11px] text-white/45 truncate">{model}</p>
+          }
         </div>
       )}
 
@@ -299,131 +296,6 @@ function Breadcrumbs({ pathname }: { pathname: string }) {
         </span>
       ))}
     </nav>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Model switcher (full)
-// ---------------------------------------------------------------------------
-
-function ModelSwitcher({ dark }: { dark?: boolean }) {
-  const { model, setModel } = useModel()
-  const navigate = useNavigate()
-  const [open, setOpen] = useState(false)
-  const [models, setModels] = useState<ModelSummary[]>([])
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    listModels().then(setModels).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
-
-  function select(name: string) {
-    setOpen(false)
-    if (name !== model) { setModel(name); navigate('/explore') }
-  }
-
-  const current = models.find((m) => m.name === model)
-  const label = current?.display_name || model
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          'flex items-center gap-1.5 w-full text-xs font-mono px-2 py-1 rounded transition-colors',
-          dark ? 'bg-white/10 text-white/75 hover:bg-white/[0.15]' : 'bg-muted hover:bg-muted/70',
-        )}
-      >
-        <span className="truncate flex-1 text-left">{label}</span>
-        <ChevronDown className={cn('h-3 w-3 shrink-0 transition-transform', open && 'rotate-180')} />
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 min-w-44 rounded-md border bg-card shadow-md py-1">
-          {models.map((m) => (
-            <button
-              key={m.name}
-              onClick={() => select(m.name)}
-              className={cn(
-                'w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors',
-                m.name === model ? 'font-medium text-foreground' : 'text-muted-foreground',
-              )}
-            >
-              {m.display_name || m.name}
-              <span className="ml-2 font-mono text-xs opacity-50">{m.name}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Model switcher (icon-only, collapsed sidebar)
-// ---------------------------------------------------------------------------
-
-function ModelSwitcherIcon({ dark }: { dark?: boolean }) {
-  const { model, setModel } = useModel()
-  const navigate = useNavigate()
-  const [open, setOpen] = useState(false)
-  const [models, setModels] = useState<ModelSummary[]>([])
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    listModels().then(setModels).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
-
-  function select(name: string) {
-    setOpen(false)
-    if (name !== model) { setModel(name); navigate('/explore') }
-  }
-
-  const current = models.find((m) => m.name === model)
-  const label = current?.display_name || model
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title={label}
-        className={cn(dark ? 'text-white/40 hover:text-white/80' : 'text-muted-foreground hover:text-foreground', 'transition-colors p-1')}
-      >
-        <Database className="h-3.5 w-3.5" />
-      </button>
-      {open && (
-        <div className="absolute left-full top-0 ml-2 z-50 min-w-44 rounded-md border bg-card shadow-md py-1">
-          {models.map((m) => (
-            <button
-              key={m.name}
-              onClick={() => select(m.name)}
-              className={cn(
-                'w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors',
-                m.name === model ? 'font-medium text-foreground' : 'text-muted-foreground',
-              )}
-            >
-              {m.display_name || m.name}
-              <span className="ml-2 font-mono text-xs opacity-50">{m.name}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   )
 }
 

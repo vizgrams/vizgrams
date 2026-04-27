@@ -568,6 +568,8 @@ export const updateModel = (name: string, data: ModelPatch) => patch<ModelDetail
 export const archiveModel = (name: string, reason?: string) =>
   post<ModelDetail>(`/api/v1/model/${name}/archive`, { reason: reason ?? null })
 export const deleteModel = (name: string) => del(`/api/v1/model/${name}`)
+export const setActiveModel = (name: string) =>
+  post<{ active: string }>(`/api/v1/model/${name}/set-active`, {})
 export const getModelAccess = (name: string) => get<AccessRule[] | null>(`/api/v1/model/${name}/access`)
 export const setModelAccess = (name: string, rules: AccessRule[] | null) =>
   put<AccessRule[] | null>(`/api/v1/model/${name}/access`, { rules })
