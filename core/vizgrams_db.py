@@ -639,7 +639,8 @@ def seed_model_registry(models_dir: Path, db_path: Path | None = None) -> int:
 
         with _connect(db_path) as conn:
             conn.execute(
-                """INSERT INTO models (id, display_name, description, owner, created_at, updated_at, status, tags, access_rules)
+                """INSERT INTO models
+                       (id, display_name, description, owner, created_at, updated_at, status, tags, access_rules)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO NOTHING""",
                 (

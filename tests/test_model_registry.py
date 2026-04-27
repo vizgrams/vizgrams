@@ -4,8 +4,6 @@
 """Tests for the model registry DB helpers in core/vizgrams_db.py
 and the DB-backed load_registry / save_registry in core/registry.py."""
 
-import json
-
 import pytest
 import yaml
 
@@ -235,7 +233,9 @@ class TestRegistryDbIntegration:
             lambda db_path=None: {},
         )
         yaml_path = tmp_path / "registry.yaml"
-        yaml_path.write_text(yaml.dump({"models": {"yamlmodel": {"display_name": "YAML Model", "status": "active", "tags": []}}}))
+        yaml_path.write_text(yaml.dump({
+            "models": {"yamlmodel": {"display_name": "YAML Model", "status": "active", "tags": []}},
+        }))
         from core.registry import load_registry
         reg = load_registry(tmp_path)
         assert "yamlmodel" in reg
