@@ -121,7 +121,7 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <NavSection label="Creator" collapsed={collapsed} dark>
             <NavItem to="/features" icon={<Sparkles className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Features</NavItem>
             <NavItem to="/queries" icon={<BarChart2 className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Query Builder</NavItem>
-            <NavItem to="/explore" matchExact icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>View Builder</NavItem>
+            <NavItem to="/views" icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>View Builder</NavItem>
             <NavItem to="/graph" icon={<Share2 className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Graph</NavItem>
           </NavSection>
         )}
