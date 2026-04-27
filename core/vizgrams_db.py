@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS models (
     updated_at   TEXT,
     status       TEXT NOT NULL DEFAULT 'experimental',
     tags         TEXT NOT NULL DEFAULT '[]',
-    access_rules TEXT
+    access_rules TEXT,
+    is_active    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -140,14 +141,26 @@ def _connect(db_path: Path | None = None) -> Generator[sqlite3.Connection, None,
 
 def _run_migrations(conn: sqlite3.Connection) -> None:
     """Apply additive schema changes to existing databases."""
-    existing = {
+    vg_cols = {
         row[0]
         for row in conn.execute(
             "SELECT name FROM pragma_table_info('vizgrams')"
         ).fetchall()
     }
-    if "author_display_name" not in existing:
+    if "author_display_name" not in vg_cols:
         conn.execute("ALTER TABLE vizgrams ADD COLUMN author_display_name TEXT")
+        conn.commit()
+
+    model_cols = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM pragma_table_info('models')"
+        ).fetchall()
+    }
+    if "is_active" not in model_cols:
+        conn.execute(
+            "ALTER TABLE models ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0"
+        )
         conn.commit()
 
 
@@ -545,8 +558,19 @@ def load_registry_from_db(db_path: Path | None = None) -> dict[str, dict]:
             "created_at": d["created_at"],
             "status": d["status"],
             "tags": json.loads(d["tags"] or "[]"),
+            "is_active": bool(d.get("is_active", 0)),
         }
     return result
+
+
+def set_model_active(model_id: str, db_path: Path | None = None) -> None:
+    """Set one model as active, clearing the flag on all others."""
+    with _connect(db_path) as conn:
+        conn.execute("UPDATE models SET is_active = 0")
+        conn.execute(
+            "UPDATE models SET is_active = 1, updated_at = ? WHERE id = ?",
+            (_now(), model_id),
+        )
 
 
 def upsert_model_in_db(model_id: str, fields: dict, db_path: Path | None = None) -> None:

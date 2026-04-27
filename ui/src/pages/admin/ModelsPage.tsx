@@ -2,23 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
-import { Plus, Trash2, Archive } from 'lucide-react'
+import { Plus, Trash2, Archive, CircleDot } from 'lucide-react'
 import {
-  listModels, getModel, createModel, updateModel, archiveModel, deleteModel, setModelAccess,
+  listModels, getModel, createModel, updateModel, archiveModel, deleteModel, setActiveModel, setModelAccess,
 } from '@/api/client'
 import type { ModelSummary, ModelDetail, AccessRule, ModelCreate, ModelPatch } from '@/api/client'
 import { Badge, ErrorMessage, Spinner } from '@/components/Layout'
+import { useModel } from '@/context/ModelContext'
 import { cn } from '@/lib/utils'
 
 const STATUS_STYLE: Record<string, string> = {
-  active:       'border-green-200 bg-green-50 text-green-700',
+  active:       'border-blue-200 bg-blue-50 text-blue-700',
   experimental: 'border-yellow-200 bg-yellow-50 text-yellow-700',
   archived:     'border-gray-200 bg-gray-50 text-gray-500',
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  active:       'live',
+  experimental: 'experimental',
+  archived:     'archived',
 }
 
 const ROLES = ['VIEWER', 'OPERATOR', 'ADMIN'] as const
 
 export function ModelsPage() {
+  const { refresh: refreshActiveModel } = useModel()
   const [models, setModels] = useState<ModelSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [listError, setListError] = useState<string | null>(null)
@@ -100,7 +108,10 @@ export function ModelsPage() {
                 m.status === 'archived' && 'opacity-50',
               )}
             >
-              <div className="line-clamp-1">{m.display_name}</div>
+              <div className="flex items-center gap-1.5">
+                {m.is_active && <CircleDot className="h-3 w-3 text-green-500 shrink-0" />}
+                <span className="line-clamp-1">{m.display_name}</span>
+              </div>
               <div className="text-[10px] font-mono text-muted-foreground/60 mt-0.5">{m.name}</div>
             </button>
           ))}
@@ -123,7 +134,15 @@ export function ModelsPage() {
             {/* Toolbar */}
             <div className="shrink-0 border-b px-6 py-3 flex items-center gap-3">
               <h1 className="text-lg font-semibold flex-1">{detail.display_name}</h1>
-              <Badge className={STATUS_STYLE[detail.status] ?? ''}>{detail.status}</Badge>
+              <Badge className={STATUS_STYLE[detail.status] ?? ''}>{STATUS_LABEL[detail.status] ?? detail.status}</Badge>
+              {!detail.is_active && detail.status !== 'archived' && (
+                <SetActiveButton model={detail} onActivated={() => { refreshActiveModel(); reloadList(detail.name) }} />
+              )}
+              {detail.is_active && (
+                <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                  <CircleDot className="h-3.5 w-3.5" /> Active
+                </span>
+              )}
               {detail.status !== 'archived' && (
                 <ArchiveButton model={detail} onArchived={handleArchived} />
               )}
@@ -159,6 +178,26 @@ export function ModelsPage() {
 // ---------------------------------------------------------------------------
 // Toolbar actions
 // ---------------------------------------------------------------------------
+
+function SetActiveButton({ model, onActivated }: { model: ModelDetail; onActivated: () => void }) {
+  const [busy, setBusy] = useState(false)
+  async function handle() {
+    setBusy(true)
+    try { await setActiveModel(model.name); onActivated() }
+    catch (e) { alert(String(e)) }
+    finally { setBusy(false) }
+  }
+  return (
+    <button
+      onClick={handle}
+      disabled={busy}
+      className="flex items-center gap-1.5 border border-green-200 rounded-md px-2.5 py-1.5 text-xs hover:bg-green-50 text-green-700 transition-colors disabled:opacity-40"
+    >
+      <CircleDot className="h-3.5 w-3.5" />
+      {busy ? 'Setting…' : 'Set as active'}
+    </button>
+  )
+}
 
 function ArchiveButton({ model, onArchived }: { model: ModelDetail; onArchived: () => void }) {
   const [busy, setBusy] = useState(false)
@@ -322,7 +361,6 @@ function MetadataSection({ model, onSaved }: { model: ModelDetail; onSaved: () =
 
 function AccessRulesSection({ model, onSaved }: { model: ModelDetail; onSaved: () => void }) {
   const [rules, setRules] = useState<AccessRule[]>(model.access_rules ?? [])
-  const [usingDb, setUsingDb] = useState(model.access_rules !== null)
   const [newEmail, setNewEmail] = useState('')
   const [newRole, setNewRole] = useState('VIEWER')
   const [saving, setSaving] = useState(false)
@@ -331,7 +369,6 @@ function AccessRulesSection({ model, onSaved }: { model: ModelDetail; onSaved: (
 
   useEffect(() => {
     setRules(model.access_rules ?? [])
-    setUsingDb(model.access_rules !== null)
     setError(null); setSaved(false)
   }, [model.name])
 
@@ -348,7 +385,7 @@ function AccessRulesSection({ model, onSaved }: { model: ModelDetail; onSaved: (
   async function handleSave() {
     setSaving(true); setError(null)
     try {
-      await setModelAccess(model.name, usingDb ? rules : null)
+      await setModelAccess(model.name, rules)
       setSaved(true); setTimeout(() => setSaved(false), 2000)
       onSaved()
     } catch (e) { setError(String(e)) }
@@ -357,56 +394,44 @@ function AccessRulesSection({ model, onSaved }: { model: ModelDetail; onSaved: (
 
   return (
     <section className="space-y-3 pt-4 border-t">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Access rules</h2>
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-          <input type="checkbox" checked={usingDb} onChange={(e) => setUsingDb(e.target.checked)} className="rounded" />
-          Manage in UI
-        </label>
-      </div>
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Access rules</h2>
 
       {error && <ErrorMessage message={error} />}
 
-      {!usingDb ? (
-        <p className="text-sm text-muted-foreground">
-          Controlled by <code className="font-mono text-xs">config.yaml</code> on disk. Enable "Manage in UI" to override.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {rules.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No rules — all authenticated users have admin access.</p>
-          ) : (
-            <div className="rounded border divide-y">
-              {rules.map((r, i) => (
-                <div key={i} className="flex items-center gap-2 px-3 py-2">
-                  <span className="flex-1 text-sm font-mono">{r.email}</span>
-                  <select value={r.role} onChange={(e) => updateRole(i, e.target.value)}
-                    className="border rounded px-2 py-1 text-xs bg-background">
-                    {ROLES.map((ro) => <option key={ro}>{ro}</option>)}
-                  </select>
-                  <button onClick={() => removeRule(i)}
-                    className="p-1 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="flex gap-1.5">
-            <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRule() } }}
-              placeholder="user@example.com  or  *@domain.com  or  *"
-              className="flex-1 border rounded px-2.5 py-1.5 text-sm bg-background" />
-            <select value={newRole} onChange={(e) => setNewRole(e.target.value)}
-              className="border rounded px-2 py-1.5 text-sm bg-background">
-              {ROLES.map((r) => <option key={r}>{r}</option>)}
-            </select>
-            <button onClick={addRule}
-              className="px-2.5 py-1.5 border rounded text-sm hover:bg-muted transition-colors">Add</button>
+      <div className="space-y-2">
+        {rules.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No rules — all authenticated users have admin access.</p>
+        ) : (
+          <div className="rounded border divide-y">
+            {rules.map((r, i) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-2">
+                <span className="flex-1 text-sm font-mono">{r.email}</span>
+                <select value={r.role} onChange={(e) => updateRole(i, e.target.value)}
+                  className="border rounded px-2 py-1 text-xs bg-background">
+                  {ROLES.map((ro) => <option key={ro}>{ro}</option>)}
+                </select>
+                <button onClick={() => removeRule(i)}
+                  className="p-1 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
           </div>
+        )}
+
+        <div className="flex gap-1.5">
+          <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRule() } }}
+            placeholder="user@example.com  or  *@domain.com  or  *"
+            className="flex-1 border rounded px-2.5 py-1.5 text-sm bg-background" />
+          <select value={newRole} onChange={(e) => setNewRole(e.target.value)}
+            className="border rounded px-2 py-1.5 text-sm bg-background">
+            {ROLES.map((r) => <option key={r}>{r}</option>)}
+          </select>
+          <button onClick={addRule}
+            className="px-2.5 py-1.5 border rounded text-sm hover:bg-muted transition-colors">Add</button>
         </div>
-      )}
+      </div>
 
       <div className="flex justify-end">
         <button onClick={handleSave} disabled={saving}
