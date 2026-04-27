@@ -13,6 +13,24 @@ class BaseTool(ABC):
     Each tool connects to an external system and yields raw records.
     """
 
+    PARAMS: dict[str, dict] = {}
+    """Declare configuration parameters for this tool.
+
+    Keys are parameter names; values are descriptor dicts with:
+      required    — bool, whether the parameter must be provided (default False)
+      description — str, human-readable description
+      credential  — bool, if True the value must use env:/file: format (default False)
+      default     — optional default value
+
+    Example::
+
+        PARAMS = {
+            "org":   {"required": True, "description": "GitHub organization"},
+            "token": {"required": True, "description": "API token", "credential": True},
+            "host":  {"required": False, "description": "API host", "default": "github.com"},
+        }
+    """
+
     @abstractmethod
     def run(self, command: str, params: dict | None = None) -> Iterator[dict]:
         """Execute a command and yield raw records."""
