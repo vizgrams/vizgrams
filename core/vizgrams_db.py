@@ -743,6 +743,66 @@ def seed_model_registry(models_dir: Path, db_path: Path | None = None) -> int:
     return seeded
 
 
+def seed_model_config(models_dir: Path, db_path: Path | None = None) -> int:
+    """Seed tools_config and database_config from config.yaml for registered models.
+
+    Only populates columns that are currently NULL — never overwrites DB config
+    that was set via the API.  Idempotent; call on startup alongside
+    seed_model_registry.  Remove once all deployments have migrated (Phase 8).
+
+    Returns the number of models whose config was seeded.
+    """
+    import yaml
+
+    seeded = 0
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id FROM models WHERE tools_config IS NULL OR database_config IS NULL"
+        ).fetchall()
+
+    for row in rows:
+        model_id = row["id"]
+        config_path = models_dir / model_id / "config.yaml"
+        if not config_path.exists():
+            continue
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+
+        tools = config.get("tools")
+        database = config.get("database")
+        if tools is None and database is None:
+            continue
+
+        with _connect(db_path) as conn:
+            # Only set columns that are still NULL
+            current = conn.execute(
+                "SELECT tools_config, database_config FROM models WHERE id=?",
+                (model_id,),
+            ).fetchone()
+            if not current:
+                continue
+            updates = []
+            params: list = []
+            if current["tools_config"] is None and tools is not None:
+                updates.append("tools_config = ?")
+                params.append(json.dumps(tools))
+            if current["database_config"] is None and database is not None:
+                updates.append("database_config = ?")
+                params.append(json.dumps(database))
+            if not updates:
+                continue
+            updates.append("updated_at = ?")
+            params.append(_now())
+            params.append(model_id)
+            conn.execute(
+                f"UPDATE models SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+        seeded += 1
+
+    return seeded
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

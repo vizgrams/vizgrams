@@ -13,6 +13,7 @@ from core.vizgrams_db import (
     load_database_config_from_db,
     load_model_config_from_db,
     load_registry_from_db,
+    seed_model_config,
     seed_model_registry,
     set_model_access_rules,
     set_model_database_config,
@@ -282,6 +283,65 @@ class TestSeedModelRegistry:
         self._write_registry(tmp_path, {})
         count = seed_model_registry(tmp_path, db_path=db)
         assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# seed_model_config (VG-142)
+# ---------------------------------------------------------------------------
+
+class TestSeedModelConfig:
+    def _setup_model(self, models_dir, db, model_id, tools=None, database=None):
+        """Register a model in DB and write its config.yaml."""
+        upsert_model_in_db(model_id, {"display_name": model_id.title()}, db_path=db)
+        model_dir = models_dir / model_id
+        model_dir.mkdir(parents=True, exist_ok=True)
+        config = {}
+        if tools is not None:
+            config["tools"] = tools
+        if database is not None:
+            config["database"] = database
+        (model_dir / "config.yaml").write_text(yaml.dump(config))
+
+    def test_seeds_tools_and_database_from_yaml(self, tmp_path, db):
+        tools = {"jira": {"enabled": True, "api_token": "file:jira_token"}}
+        database = {"backend": "clickhouse", "host": "env:CH_HOST"}
+        self._setup_model(tmp_path, db, "alpha", tools=tools, database=database)
+        count = seed_model_config(tmp_path, db_path=db)
+        assert count == 1
+        assert load_model_config_from_db("alpha", db_path=db) == tools
+        assert load_database_config_from_db("alpha", db_path=db) == database
+
+    def test_idempotent_does_not_overwrite(self, tmp_path, db):
+        self._setup_model(tmp_path, db, "alpha", tools={"file": {"enabled": True}})
+        seed_model_config(tmp_path, db_path=db)
+        # Change the yaml — second seed should NOT overwrite
+        (tmp_path / "alpha" / "config.yaml").write_text(
+            yaml.dump({"tools": {"jira": {"enabled": True}}})
+        )
+        count = seed_model_config(tmp_path, db_path=db)
+        assert count == 0
+        assert load_model_config_from_db("alpha", db_path=db) == {"file": {"enabled": True}}
+
+    def test_skips_models_without_config_yaml(self, tmp_path, db):
+        upsert_model_in_db("alpha", {"display_name": "Alpha"}, db_path=db)
+        count = seed_model_config(tmp_path, db_path=db)
+        assert count == 0
+
+    def test_seeds_only_null_columns(self, tmp_path, db):
+        """If tools_config is already set but database_config is NULL, only seed database."""
+        self._setup_model(
+            tmp_path, db, "alpha",
+            tools={"file": {"enabled": True}},
+            database={"backend": "duckdb"},
+        )
+        # Pre-set tools_config in DB
+        set_model_tools_config("alpha", {"git": {"enabled": True}}, db_path=db)
+        count = seed_model_config(tmp_path, db_path=db)
+        assert count == 1
+        # tools_config should be unchanged (already set)
+        assert load_model_config_from_db("alpha", db_path=db) == {"git": {"enabled": True}}
+        # database_config should be seeded from yaml
+        assert load_database_config_from_db("alpha", db_path=db) == {"backend": "duckdb"}
 
 
 # ---------------------------------------------------------------------------

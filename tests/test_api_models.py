@@ -14,10 +14,12 @@ from api.services.model_service import (
     delete_model,
     get_access_rules,
     get_model,
+    get_model_config,
     list_models,
     set_access_rules,
     set_active,
     update_model,
+    update_model_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -30,12 +32,31 @@ def isolate_registry_db(monkeypatch):
 
     load_registry falls back to registry.yaml when load_registry_from_db returns
     an empty dict, which is exactly what these tests exercise.
+    Config functions use an in-memory store so update/get round-trips work.
     """
+    _config_store: dict[str, dict] = {}  # model_id → {tools_config, database_config}
+
+    def _set_tools(model_id, config, **kw):
+        _config_store.setdefault(model_id, {})["tools_config"] = config
+
+    def _set_db(model_id, config, **kw):
+        _config_store.setdefault(model_id, {})["database_config"] = config
+
+    def _get_tools(model_id, **kw):
+        return _config_store.get(model_id, {}).get("tools_config")
+
+    def _get_db(model_id, **kw):
+        return _config_store.get(model_id, {}).get("database_config")
+
     monkeypatch.setattr("core.vizgrams_db.load_registry_from_db", lambda db_path=None: {})
     monkeypatch.setattr("core.vizgrams_db.upsert_model_in_db", lambda *a, **kw: None)
     monkeypatch.setattr("core.vizgrams_db.delete_model_from_db", lambda *a, **kw: None)
     monkeypatch.setattr("core.vizgrams_db.get_model_access_rules", lambda *a, **kw: None)
     monkeypatch.setattr("core.vizgrams_db.set_model_access_rules", lambda *a, **kw: None)
+    monkeypatch.setattr("core.vizgrams_db.set_model_tools_config", _set_tools)
+    monkeypatch.setattr("core.vizgrams_db.set_model_database_config", _set_db)
+    monkeypatch.setattr("core.vizgrams_db.load_model_config_from_db", _get_tools)
+    monkeypatch.setattr("core.vizgrams_db.load_database_config_from_db", _get_db)
 
 
 @pytest.fixture
@@ -365,6 +386,93 @@ def test_set_access_rules_accepts_none(models_dir):
     })
     result = set_access_rules(models_dir, "alpha", None)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# get_model_config / update_model_config (VG-143, VG-144)
+# ---------------------------------------------------------------------------
+
+def test_get_model_config_returns_masked_credentials(models_dir, base_dir):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    _make_model_dir(models_dir, "alpha")
+    # Write a config.yaml with credentials
+    (models_dir / "alpha" / "config.yaml").write_text(yaml.dump({
+        "tools": {
+            "jira": {"enabled": True, "server": "https://jira.test", "api_token": "file:jira_token"},
+            "git": {"enabled": True, "org": "MyOrg", "token": "env:GH_TOKEN"},
+        },
+        "database": {"backend": "sqlite"},
+    }))
+    result = get_model_config(models_dir, "alpha")
+    assert result["tools"]["jira"]["server"] == "https://jira.test"
+    assert result["tools"]["jira"]["api_token"] == "file:***"
+    assert result["tools"]["git"]["token"] == "env:***"
+    assert result["tools"]["git"]["org"] == "MyOrg"
+
+
+def test_get_model_config_raises_for_unknown_model(models_dir):
+    _write_registry(models_dir, {})
+    with pytest.raises(KeyError):
+        get_model_config(models_dir, "nonexistent")
+
+
+def test_update_model_config_stores_in_db(models_dir, base_dir):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    _make_model_dir(models_dir, "alpha")
+    result = update_model_config(models_dir, "alpha", {
+        "tools": {"file": {"enabled": True}},
+        "database": {"backend": "duckdb", "path": "data/data.duckdb"},
+    })
+    assert result["tools"]["file"]["enabled"] is True
+    assert result["database"]["backend"] == "duckdb"
+
+
+def test_update_model_config_rejects_literal_credential(models_dir, base_dir):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    _make_model_dir(models_dir, "alpha")
+    with pytest.raises(ValueError, match="env:VAR_NAME"):
+        update_model_config(models_dir, "alpha", {
+            "tools": {"jira": {"enabled": True, "api_token": "my_raw_secret"}},
+        })
+
+
+def test_update_model_config_accepts_env_credential(models_dir, base_dir):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    _make_model_dir(models_dir, "alpha")
+    result = update_model_config(models_dir, "alpha", {
+        "tools": {"git": {"enabled": True, "token": "env:GH_TOKEN"}},
+    })
+    assert result["tools"]["git"]["token"] == "env:***"
+
+
+def test_update_model_config_accepts_file_credential(models_dir, base_dir):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    _make_model_dir(models_dir, "alpha")
+    result = update_model_config(models_dir, "alpha", {
+        "tools": {"jira": {"enabled": True, "api_token": "file:jira_token"}},
+    })
+    assert result["tools"]["jira"]["api_token"] == "file:***"
+
+
+def test_update_model_config_rejects_literal_db_credential(models_dir, base_dir):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    _make_model_dir(models_dir, "alpha")
+    with pytest.raises(ValueError, match="env:VAR_NAME"):
+        update_model_config(models_dir, "alpha", {
+            "database": {"backend": "clickhouse", "password": "raw_password"},
+        })
 
 
 # ---------------------------------------------------------------------------

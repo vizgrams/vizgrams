@@ -18,6 +18,8 @@ from api.schemas.model import (
     AccessRule,
     AccessRulesUpdate,
     ArchiveRequest,
+    ModelConfigResponse,
+    ModelConfigUpdate,
     ModelCreate,
     ModelDetail,
     ModelPatch,
@@ -156,3 +158,32 @@ def set_access_rules(
         return model_service.set_access_rules(models_dir, model, body.rules)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{model}/config", response_model=ModelConfigResponse)
+def get_config(
+    model: str,
+    models_dir=Depends(get_models_dir),
+    _=Depends(require_role(ModelRole.ADMIN)),
+):
+    try:
+        return model_service.get_model_config(models_dir, model)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put("/{model}/config", response_model=ModelConfigResponse)
+def update_config(
+    model: str,
+    body: ModelConfigUpdate,
+    models_dir=Depends(get_models_dir),
+    _=Depends(require_role(ModelRole.ADMIN)),
+):
+    try:
+        return model_service.update_model_config(
+            models_dir, model, body.model_dump(exclude_none=True)
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
