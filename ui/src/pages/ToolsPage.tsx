@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
-import { Loader2, Play, Save } from 'lucide-react'
+import { Loader2, Play, Plus, Save } from 'lucide-react'
 import { useModel } from '@/context/ModelContext'
 import { Spinner, ErrorMessage } from '@/components/Layout'
 import { YamlEditor } from '@/components/YamlEditor'
@@ -24,6 +24,9 @@ export function ToolsPage() {
   const [editMode, setEditMode] = useState<'builder' | 'yaml'>('yaml')
   const [validStatus, setValidStatus] = useState<ValidStatus>('idle')
   const [validErrors, setValidErrors] = useState<{ path: string; message: string }[]>([])
+  const [isNewMode, setIsNewMode] = useState(false)
+  const [newToolName, setNewToolName] = useState('')
+  const [extractorRefresh, setExtractorRefresh] = useState(0)
 
   useEffect(() => {
     setLoading(true)
@@ -39,7 +42,7 @@ export function ToolsPage() {
         if (valid.length > 0) selectExtractor(valid[0])
       })
       .catch((e) => { setError(String(e)); setLoading(false) })
-  }, [model])
+  }, [model, extractorRefresh])
 
   function selectExtractor(e: ExtractorDetail) {
     setSelectedTool(e.tool)
@@ -54,16 +57,30 @@ export function ToolsPage() {
       .catch(() => setValidStatus('idle'))
   }
 
+  function startNew() {
+    setSelectedTool(null)
+    setIsNewMode(true)
+    setNewToolName('new_tool')
+    const template = `tasks:\n  - name: fetch_data\n    command: load\n    table: raw_data\n`
+    setEditorContent(template)
+    setSavedContent('')
+    setValidStatus('idle')
+    setValidErrors([])
+  }
+
   async function handleSave() {
-    if (!selectedTool || saving) return
+    const saveTool = isNewMode ? newToolName : selectedTool
+    if (!saveTool || saving) return
     setSaving(true); setValidErrors([])
     try {
-      const updated = await api.saveExtractor(selectedTool, editorContent)
+      const updated = await api.saveExtractor(saveTool, editorContent)
       const yaml = updated.raw_yaml ?? editorContent
       setSavedContent(yaml)
-      setExtractors(prev => prev.map(e => e.tool === selectedTool ? { ...e, raw_yaml: yaml } : e))
+      setSelectedTool(saveTool)
+      setIsNewMode(false)
+      setExtractorRefresh(c => c + 1)
       setValidStatus('pending')
-      api.validateExtractor(selectedTool)
+      api.validateExtractor(saveTool)
         .then((r) => { setValidStatus(r.valid ? 'valid' : 'invalid'); setValidErrors(r.errors) })
         .catch(() => setValidStatus('idle'))
     } catch (e) {
@@ -95,15 +112,25 @@ export function ToolsPage() {
     <div className="flex h-full -mx-6 -my-6 overflow-hidden">
       {/* Left: extractor list */}
       <aside className="w-56 shrink-0 border-r flex flex-col overflow-hidden bg-card">
-        <div className="px-4 py-3 border-b">
-          <h2 className="text-sm font-semibold">Extractors</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">{extractors.length} configured</p>
+        <div className="px-3 py-3 border-b flex items-center justify-between shrink-0">
+          <span className="text-sm font-semibold">Extractors</span>
+          <button onClick={startNew} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+            <Plus className="h-3.5 w-3.5" /> New
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto py-1">
+          {isNewMode && (
+            <div className="w-full text-left px-4 py-2.5 border-b border-border/30 bg-muted">
+              <div className="text-sm font-medium text-foreground/50 italic flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
+                {newToolName || 'new_tool'}
+              </div>
+            </div>
+          )}
           {extractors.map((e) => (
             <button
               key={e.tool}
-              onClick={() => selectExtractor(e)}
+              onClick={() => { selectExtractor(e); setIsNewMode(false) }}
               title={e.tool}
               className={cn(
                 'w-full text-left px-4 py-2 text-sm transition-colors',
@@ -126,7 +153,7 @@ export function ToolsPage() {
 
       {/* Right: detail + editor */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        {!selectedTool ? (
+        {!selectedTool && !isNewMode ? (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             Select an extractor to edit
           </div>
@@ -134,9 +161,18 @@ export function ToolsPage() {
           <>
             {/* Toolbar */}
             <div className="shrink-0 border-b px-6 py-3 flex items-center gap-2">
-              <h1 className="text-lg font-semibold flex-1">{selectedTool}</h1>
+              {isNewMode ? (
+                <input
+                  value={newToolName}
+                  onChange={e => setNewToolName(e.target.value.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''))}
+                  placeholder="tool_name"
+                  className="text-lg font-semibold flex-1 bg-background border rounded-md px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring max-w-xs"
+                />
+              ) : (
+                <h1 className="text-lg font-semibold flex-1">{selectedTool}</h1>
+              )}
               {dirty && !saving && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="Unsaved changes" />}
-              <button disabled={!dirty || saving} onClick={handleSave}
+              <button disabled={(!dirty && !isNewMode) || saving} onClick={handleSave}
                 className="flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs hover:bg-muted transition-colors disabled:opacity-40">
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 {saving ? 'Saving…' : 'Save'}
@@ -159,8 +195,8 @@ export function ToolsPage() {
                 builderContent={<p className="text-sm text-muted-foreground">Visual builder coming soon.</p>}
                 yamlContent={
                   <YamlEditor
-                    name={`extractor_${selectedTool}.yaml`}
-                    historyKey={{ type: 'extractor', name: selectedTool }}
+                    name={`extractor_${selectedTool ?? newToolName}.yaml`}
+                    historyKey={{ type: 'extractor', name: selectedTool ?? newToolName }}
                     content={editorContent}
                     savedContent={savedContent}
                     onChange={setEditorContent}
@@ -169,7 +205,7 @@ export function ToolsPage() {
                     hideSaveButton
                   />
                 }
-                historyKey={{ type: 'extractor', name: selectedTool }}
+                historyKey={{ type: 'extractor', name: selectedTool ?? newToolName }}
                 onRestoreVersion={(content) => setEditorContent(content)}
                 validErrors={validErrors}
               />

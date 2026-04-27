@@ -262,17 +262,13 @@ export function FeaturesPage() {
     <div className="flex h-full -mx-6 -my-6 overflow-hidden">
       {/* Left: feature list */}
       <aside className="w-56 shrink-0 border-r flex flex-col overflow-hidden bg-card">
-        <div className="px-4 py-3 border-b flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold">Features</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">{features.length} defined</p>
-          </div>
+        <div className="px-3 py-3 border-b flex items-center justify-between shrink-0">
+          <span className="text-sm font-semibold">Features</span>
           <button
             onClick={handleNew}
-            title="New feature"
-            className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-3.5 w-3.5" /> New
           </button>
         </div>
 
