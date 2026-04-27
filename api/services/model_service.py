@@ -109,7 +109,10 @@ def create_model(models_dir: Path, base_dir: Path, data: dict) -> dict:
 
     # Optionally set as active context
     if data.get("set_active"):
-        (base_dir / ".vz_context").write_text(name + "\n")
+        try:
+            (base_dir / ".vz_context").write_text(name + "\n")
+        except OSError:
+            pass
 
     return get_model(models_dir, name)
 
@@ -152,8 +155,11 @@ def set_active(models_dir: Path, base_dir: Path, model_name: str) -> str:
         raise KeyError(f"Model '{model_name}' not found in registry.")
     from core.vizgrams_db import set_model_active
     set_model_active(model_name)
-    # Keep .vz_context in sync for CLI tools
-    (base_dir / ".vz_context").write_text(model_name + "\n")
+    # Best-effort .vz_context for CLI compat (container fs may be read-only)
+    try:
+        (base_dir / ".vz_context").write_text(model_name + "\n")
+    except OSError:
+        pass
     return model_name
 
 
