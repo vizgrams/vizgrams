@@ -39,7 +39,7 @@ def list_models(
             model_tags = set(meta.get("tags") or [])
             if not set(tags).issubset(model_tags):
                 continue
-        result.append({**meta, "name": name})
+        result.append({"is_active": False, **meta, "name": name})
     return result
 
 

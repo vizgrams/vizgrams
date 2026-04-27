@@ -106,11 +106,15 @@ def test_list_models_filters_by_tag(models_dir, base_dir):
     assert result[0]["name"] == "alpha"
 
 
-def test_list_models_marks_active(models_dir, base_dir):
-    _write_registry(models_dir, {
-        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
-    })
-    (base_dir / ".vz_context").write_text("alpha")
+def test_list_models_marks_active(models_dir, base_dir, monkeypatch):
+    # is_active now comes from the DB; override the fixture's no-op stub to
+    # return the model with is_active=True so list_models picks it up.
+    monkeypatch.setattr(
+        "core.vizgrams_db.load_registry_from_db",
+        lambda db_path=None: {
+            "alpha": {"display_name": "Alpha", "status": "active", "tags": [], "is_active": True},
+        },
+    )
     result = list_models(models_dir, base_dir)
     assert result[0]["is_active"] is True
 
