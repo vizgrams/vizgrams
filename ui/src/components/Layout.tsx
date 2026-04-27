@@ -8,7 +8,7 @@ import {
   Download, Shuffle, Sparkles,
   Layers, BarChart2, Share2,
   Compass, LayoutGrid,
-  Clock, Settings, User, Database, Rss, Bookmark, Box,
+  Clock, Settings, User, Rss, Bookmark, Box,
 } from 'lucide-react'
 import type { ApplicationSummary } from '@/api/client'
 import { useModel } from '@/context/ModelContext'
@@ -103,15 +103,6 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </button>
       </div>
 
-      {/* Active model label */}
-      {model && (
-        <div className={cn('border-b border-white/10', collapsed ? 'flex justify-center py-2' : 'px-3 py-2')}>
-          {collapsed
-            ? <span title={model}><Database className="h-3.5 w-3.5 text-white/40" /></span>
-            : <p className="font-mono text-[11px] text-white/45 truncate">{model}</p>
-          }
-        </div>
-      )}
 
       {/* Scrollable nav */}
       <nav className={cn('flex-1 overflow-y-auto py-3 space-y-4', collapsed ? 'px-1.5' : 'px-2')}>

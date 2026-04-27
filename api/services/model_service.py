@@ -12,7 +12,6 @@ import yaml
 from core.registry import (
     append_audit,
     current_actor,
-    get_active_context,
     load_registry,
     read_audit,
     save_registry,
@@ -31,7 +30,6 @@ def list_models(
     tags: list[str] | None = None,
 ) -> list[dict]:
     registry = load_registry(models_dir)
-    active = get_active_context(base_dir)
     result = []
     for name, meta in registry.items():
         if status and meta.get("status") != status:
@@ -40,7 +38,7 @@ def list_models(
             model_tags = set(meta.get("tags") or [])
             if not set(tags).issubset(model_tags):
                 continue
-        result.append({**meta, "name": name, "is_active": name == active})
+        result.append({**meta, "name": name})
     return result
 
 
@@ -59,6 +57,7 @@ def get_model(models_dir: Path, model_name: str, full_audit: bool = False) -> di
 
     return {
         "name": model_name,
+        "is_active": meta.get("is_active", False),
         **meta,
         "config": _get_config_summary(model_dir),
         "database": _get_db_stats(model_dir),
@@ -140,10 +139,13 @@ def archive_model(models_dir: Path, model_name: str, reason: str | None = None) 
 
 
 def set_active(models_dir: Path, base_dir: Path, model_name: str) -> str:
-    """Write model name to .vz_context and return it."""
+    """Set the active model in the DB (clears all others) and update .vz_context."""
     registry = load_registry(models_dir)
     if model_name not in registry:
         raise KeyError(f"Model '{model_name}' not found in registry.")
+    from core.vizgrams_db import set_model_active
+    set_model_active(model_name)
+    # Keep .vz_context in sync for CLI tools
     (base_dir / ".vz_context").write_text(model_name + "\n")
     return model_name
 
