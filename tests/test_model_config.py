@@ -566,3 +566,102 @@ class TestLoadDatabaseConfig:
         cfg = load_database_config(tmp_path)
         assert "raw_database" not in cfg
         assert "sem_database" not in cfg
+
+
+# ---------------------------------------------------------------------------
+# DB-first loading (VG-141)
+# ---------------------------------------------------------------------------
+
+
+class TestLoadModelConfigDbFirst:
+    """load_model_config reads from DB when available, falls back to config.yaml."""
+
+    def test_db_config_takes_priority_over_yaml(self, tmp_path, monkeypatch):
+        # Write a config.yaml that would be used as fallback
+        _write_config(tmp_path, """\
+            tools:
+              file:
+                enabled: true
+        """)
+        # Monkeypatch DB to return a different config
+        db_tools = {"jira": {"enabled": True, "server": "https://jira.example.com"}}
+        monkeypatch.setattr(
+            "core.vizgrams_db.load_model_config_from_db",
+            lambda model_id, db_path=None: db_tools,
+        )
+        result = load_model_config(tmp_path)
+        assert "jira" in result
+        assert "file" not in result
+
+    def test_falls_back_to_yaml_when_db_returns_none(self, tmp_path, monkeypatch):
+        _write_config(tmp_path, """\
+            tools:
+              git:
+                enabled: true
+                org: FallbackOrg
+        """)
+        monkeypatch.setattr(
+            "core.vizgrams_db.load_model_config_from_db",
+            lambda model_id, db_path=None: None,
+        )
+        result = load_model_config(tmp_path)
+        assert result["git"]["org"] == "FallbackOrg"
+
+    def test_returns_none_when_db_empty_and_no_yaml(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "core.vizgrams_db.load_model_config_from_db",
+            lambda model_id, db_path=None: None,
+        )
+        assert load_model_config(tmp_path) is None
+
+
+class TestLoadDatabaseConfigDbFirst:
+    """load_database_config reads from DB when available, falls back to config.yaml."""
+
+    def test_db_config_takes_priority_over_yaml(self, tmp_path, monkeypatch):
+        _write_config(tmp_path, """\
+            database:
+              backend: sqlite
+        """)
+        db_cfg = {"backend": "clickhouse", "host": "ch.prod", "database": "mymodel"}
+        monkeypatch.setattr(
+            "core.vizgrams_db.load_database_config_from_db",
+            lambda model_id, db_path=None: db_cfg,
+        )
+        result = load_database_config(tmp_path)
+        assert result["backend"] == "clickhouse"
+        assert result["host"] == "ch.prod"
+
+    def test_falls_back_to_yaml_when_db_returns_none(self, tmp_path, monkeypatch):
+        _write_config(tmp_path, """\
+            database:
+              backend: duckdb
+              path: data/data.duckdb
+        """)
+        monkeypatch.setattr(
+            "core.vizgrams_db.load_database_config_from_db",
+            lambda model_id, db_path=None: None,
+        )
+        result = load_database_config(tmp_path)
+        assert result["backend"] == "duckdb"
+
+    def test_defaults_applied_to_db_config(self, tmp_path, monkeypatch):
+        """DB config still gets defaults + credential resolution applied."""
+        monkeypatch.setattr(
+            "core.vizgrams_db.load_database_config_from_db",
+            lambda model_id, db_path=None: {"backend": "clickhouse", "host": "ch.prod"},
+        )
+        monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
+        result = load_database_config(tmp_path)
+        assert result["backend"] == "clickhouse"
+        assert result["host"] == "ch.prod"
+        assert result["username"] == "default"  # from _CLICKHOUSE_DEFAULTS
+        assert result["database"] == tmp_path.name  # derived from dir name
+
+    def test_sqlite_default_when_db_empty_and_no_yaml(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "core.vizgrams_db.load_database_config_from_db",
+            lambda model_id, db_path=None: None,
+        )
+        result = load_database_config(tmp_path)
+        assert result["backend"] == "sqlite"

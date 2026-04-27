@@ -105,15 +105,18 @@ def resolve_tool_config(raw: dict) -> dict:
 
 
 def load_model_config(model_dir: Path) -> dict | None:
-    """Load models/<model>/config.yaml and return the raw tools block.
+    """Return the raw tools config for a model (credentials NOT resolved).
 
-    Returns a dict keyed by tool name (raw — credentials are NOT resolved here;
-    call resolve_tool_config when instantiating a specific tool) if the file
-    exists, or None if models/<model>/config.yaml is absent (unmanaged model
-    that falls back to legacy per-tool config files).
+    Reads from the DB first; falls back to config.yaml on disk if the DB
+    column is NULL (pre-migration or not yet seeded).
 
-    Respects WT_ENV: merges config.<env>.yaml on top when present.
+    Call resolve_tool_config when instantiating a specific tool.
     """
+    from core.vizgrams_db import load_model_config_from_db
+    db_config = load_model_config_from_db(Path(model_dir).name)
+    if db_config is not None:
+        return db_config
+    # Fallback: file-based
     path = Path(model_dir) / "config.yaml"
     if not path.exists():
         return None
@@ -134,14 +137,10 @@ _CLICKHOUSE_DEFAULTS: dict = {
 
 
 def load_database_config(model_dir: Path) -> dict:
-    """Return the ``database:`` block from config.yaml, with defaults applied.
+    """Return the database config for a model, with defaults and credentials resolved.
 
-    When config.yaml is absent or has no ``database:`` key, defaults to a
-    SQLite backend.  Production models that use ClickHouse always specify
-    ``database: {backend: clickhouse}`` explicitly in their config.yaml.
-
-    All string values in the block are resolved via ``resolve_credential`` so
-    that ``env:VAR`` and ``file:name`` references work for any field.
+    Reads from the DB first; falls back to the ``database:`` block in
+    config.yaml if the DB column is NULL.
 
     The returned dict always contains at least ``backend``.  Additional keys
     depend on the backend:
@@ -151,16 +150,31 @@ def load_database_config(model_dir: Path) -> dict:
       duckdb     → ``path`` (relative to model_dir)
     """
     model_dir = Path(model_dir)
-    path = model_dir / "config.yaml"
-    db_block: dict = {}
-    if path.exists():
-        db_block = load_config_yaml(model_dir).get("database") or {}
 
+    from core.vizgrams_db import load_database_config_from_db
+    db_block = load_database_config_from_db(model_dir.name)
+
+    # Fallback: file-based
+    if db_block is None:
+        path = model_dir / "config.yaml"
+        if path.exists():
+            db_block = load_config_yaml(model_dir).get("database") or {}
+        else:
+            db_block = {}
+
+    return _apply_database_defaults(db_block, model_dir)
+
+
+def _apply_database_defaults(db_block: dict, model_dir: Path) -> dict:
+    """Merge defaults, resolve credentials, and derive ClickHouse database names."""
     merged = {**_DATABASE_DEFAULTS, **db_block}
     # Inject ClickHouse connection defaults only when backend is clickhouse.
     if merged.get("backend") == "clickhouse":
         merged = {**_CLICKHOUSE_DEFAULTS, **merged}
-    resolved = {k: resolve_credential(v) if isinstance(v, str) else v for k, v in merged.items()}
+    resolved = {
+        k: resolve_credential(v) if isinstance(v, str) else v
+        for k, v in merged.items()
+    }
 
     # Apply env-var fallbacks: CLICKHOUSE_HOST / CLICKHOUSE_PASSWORD may be
     # unset in local dev (Docker-only env vars) — fall back to safe defaults.

@@ -43,8 +43,10 @@ CREATE TABLE IF NOT EXISTS models (
     updated_at   TEXT,
     status       TEXT NOT NULL DEFAULT 'experimental',
     tags         TEXT NOT NULL DEFAULT '[]',
-    access_rules TEXT,
-    is_active    INTEGER NOT NULL DEFAULT 0
+    access_rules    TEXT,
+    is_active       INTEGER NOT NULL DEFAULT 0,
+    tools_config    TEXT,
+    database_config TEXT
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -161,6 +163,10 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE models ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0"
         )
+        conn.commit()
+    if "tools_config" not in model_cols:
+        conn.execute("ALTER TABLE models ADD COLUMN tools_config TEXT")
+        conn.execute("ALTER TABLE models ADD COLUMN database_config TEXT")
         conn.commit()
 
 
@@ -621,6 +627,59 @@ def set_model_access_rules(model_id: str, rules: list[dict] | None, db_path: Pat
         conn.execute(
             "UPDATE models SET access_rules=?, updated_at=? WHERE id=?",
             (json.dumps(rules) if rules is not None else None, _now(), model_id),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Model config (tools + database) — VG-140
+# ---------------------------------------------------------------------------
+
+
+def load_model_config_from_db(
+    model_id: str, db_path: Path | None = None
+) -> dict | None:
+    """Return the tools config JSON for a model, or None if not set in DB."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT tools_config FROM models WHERE id=?", (model_id,)
+        ).fetchone()
+    if not row or row["tools_config"] is None:
+        return None
+    return json.loads(row["tools_config"])
+
+
+def load_database_config_from_db(
+    model_id: str, db_path: Path | None = None
+) -> dict | None:
+    """Return the database config JSON for a model, or None if not set in DB."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT database_config FROM models WHERE id=?", (model_id,)
+        ).fetchone()
+    if not row or row["database_config"] is None:
+        return None
+    return json.loads(row["database_config"])
+
+
+def set_model_tools_config(
+    model_id: str, config: dict | None, db_path: Path | None = None
+) -> None:
+    """Set (or clear) the tools config for a model."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE models SET tools_config=?, updated_at=? WHERE id=?",
+            (json.dumps(config) if config is not None else None, _now(), model_id),
+        )
+
+
+def set_model_database_config(
+    model_id: str, config: dict | None, db_path: Path | None = None
+) -> None:
+    """Set (or clear) the database config for a model."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE models SET database_config=?, updated_at=? WHERE id=?",
+            (json.dumps(config) if config is not None else None, _now(), model_id),
         )
 
 

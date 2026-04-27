@@ -10,9 +10,13 @@ import yaml
 from core.vizgrams_db import (
     delete_model_from_db,
     get_model_access_rules,
+    load_database_config_from_db,
+    load_model_config_from_db,
     load_registry_from_db,
     seed_model_registry,
     set_model_access_rules,
+    set_model_database_config,
+    set_model_tools_config,
     upsert_model_in_db,
 )
 
@@ -140,6 +144,75 @@ class TestAccessRules:
         set_model_access_rules("m1", [{"email": "*", "role": "VIEWER"}], db_path=db)
         set_model_access_rules("m1", [{"email": "*", "role": "ADMIN"}], db_path=db)
         assert get_model_access_rules("m1", db_path=db) == [{"email": "*", "role": "ADMIN"}]
+
+
+# ---------------------------------------------------------------------------
+# tools_config / database_config (VG-140)
+# ---------------------------------------------------------------------------
+
+class TestModelConfig:
+    def test_tools_config_returns_none_when_not_set(self, db):
+        upsert_model_in_db("m1", {"display_name": "M1"}, db_path=db)
+        assert load_model_config_from_db("m1", db_path=db) is None
+
+    def test_database_config_returns_none_when_not_set(self, db):
+        upsert_model_in_db("m1", {"display_name": "M1"}, db_path=db)
+        assert load_database_config_from_db("m1", db_path=db) is None
+
+    def test_returns_none_for_unknown_model(self, db):
+        assert load_model_config_from_db("unknown", db_path=db) is None
+        assert load_database_config_from_db("unknown", db_path=db) is None
+
+    def test_set_and_get_tools_config(self, db):
+        upsert_model_in_db("m1", {"display_name": "M1"}, db_path=db)
+        tools = {
+            "jira": {"enabled": True, "server": "https://jira.example.com", "api_token": "file:jira_token"},
+            "git": {"enabled": True, "org": "myorg", "token": "env:GH_TOKEN"},
+        }
+        set_model_tools_config("m1", tools, db_path=db)
+        assert load_model_config_from_db("m1", db_path=db) == tools
+
+    def test_set_and_get_database_config(self, db):
+        upsert_model_in_db("m1", {"display_name": "M1"}, db_path=db)
+        db_cfg = {
+            "backend": "clickhouse",
+            "host": "env:CLICKHOUSE_HOST",
+            "port": 8123,
+            "database": "m1",
+            "password": "env:CLICKHOUSE_PASSWORD",
+        }
+        set_model_database_config("m1", db_cfg, db_path=db)
+        assert load_database_config_from_db("m1", db_path=db) == db_cfg
+
+    def test_clear_tools_config_with_none(self, db):
+        upsert_model_in_db("m1", {"display_name": "M1"}, db_path=db)
+        set_model_tools_config("m1", {"file": {"enabled": True}}, db_path=db)
+        set_model_tools_config("m1", None, db_path=db)
+        assert load_model_config_from_db("m1", db_path=db) is None
+
+    def test_clear_database_config_with_none(self, db):
+        upsert_model_in_db("m1", {"display_name": "M1"}, db_path=db)
+        set_model_database_config("m1", {"backend": "sqlite"}, db_path=db)
+        set_model_database_config("m1", None, db_path=db)
+        assert load_database_config_from_db("m1", db_path=db) is None
+
+    def test_overwrite_tools_config(self, db):
+        upsert_model_in_db("m1", {"display_name": "M1"}, db_path=db)
+        set_model_tools_config("m1", {"file": {"enabled": True}}, db_path=db)
+        set_model_tools_config("m1", {"jira": {"enabled": True}}, db_path=db)
+        result = load_model_config_from_db("m1", db_path=db)
+        assert "jira" in result
+        assert "file" not in result
+
+    def test_upsert_model_does_not_overwrite_config(self, db):
+        """upsert_model_in_db should not touch tools_config or database_config."""
+        upsert_model_in_db("m1", {"display_name": "M1"}, db_path=db)
+        set_model_tools_config("m1", {"git": {"enabled": True}}, db_path=db)
+        set_model_database_config("m1", {"backend": "duckdb"}, db_path=db)
+        # Upsert again — should leave config intact
+        upsert_model_in_db("m1", {"display_name": "M1 Updated"}, db_path=db)
+        assert load_model_config_from_db("m1", db_path=db) == {"git": {"enabled": True}}
+        assert load_database_config_from_db("m1", db_path=db) == {"backend": "duckdb"}
 
 
 # ---------------------------------------------------------------------------
