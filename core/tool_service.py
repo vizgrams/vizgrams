@@ -146,12 +146,12 @@ def list_available_tools() -> list[dict]:
 
 
 def _load_model_config(model_dir: Path) -> dict:
-    config_path = model_dir / "config.yaml"
-    if not config_path.is_file():
-        return {}
-    with open(config_path) as f:
-        raw = yaml.safe_load(f) or {}
-    return raw.get("tools", {})
+    """Load tools config for a model. DB-first, falls back to config.yaml."""
+    from core.model_config import load_model_config
+    config = load_model_config(model_dir)
+    if config is not None:
+        return config
+    return {}
 
 
 def _load_custom_class(tool_name: str, tool_def: dict, model_dir: Path) -> type:
