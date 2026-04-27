@@ -47,7 +47,12 @@ import yaml
 
 
 def load_registry(models_dir: Path) -> dict[str, dict]:
-    """Load registry.yaml from models_dir and return the models dict. Returns {} if absent."""
+    """Return the model registry dict. Reads from api.db if populated; falls back to registry.yaml."""
+    from core.vizgrams_db import load_registry_from_db
+    db_registry = load_registry_from_db()
+    if db_registry:
+        return db_registry
+    # Fallback: file-based (pre-migration or offline CLI use)
     path = models_dir / "registry.yaml"
     if not path.exists():
         return {}
@@ -57,7 +62,20 @@ def load_registry(models_dir: Path) -> dict[str, dict]:
 
 
 def save_registry(models_dir: Path, models: dict[str, dict]) -> None:
-    """Write registry.yaml into models_dir from a models dict."""
+    """Persist the model registry. Upserts to api.db and dual-writes registry.yaml.
+
+    The yaml dual-write is kept for backward compatibility with the CLI and as a
+    human-readable backup. Remove _save_registry_yaml() call once all deployments
+    have confirmed the DB migration (Phase 7).
+    """
+    from core.vizgrams_db import upsert_model_in_db
+    for model_id, meta in models.items():
+        upsert_model_in_db(model_id, meta)
+    _save_registry_yaml(models_dir, models)
+
+
+def _save_registry_yaml(models_dir: Path, models: dict[str, dict]) -> None:
+    """Write registry.yaml — backward-compat backup only. Remove in Phase 7."""
     path = models_dir / "registry.yaml"
     with open(path, "w") as f:
         yaml.dump({"models": models}, f, default_flow_style=False, sort_keys=False, allow_unicode=True)

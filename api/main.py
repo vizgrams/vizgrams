@@ -65,6 +65,12 @@ async def lifespan(app: FastAPI):
                 seeded += seed_from_directory(model_dir)
         if seeded:
             _startup_logger.info("Seeded %d new artifact version(s) into api.db", seeded)
+
+        # Migrate registry.yaml → models table (idempotent; remove after all deployments migrated).
+        from core.vizgrams_db import seed_model_registry
+        reg_seeded = seed_model_registry(models_dir)
+        if reg_seeded:
+            _startup_logger.info("Migrated %d model(s) from registry.yaml into api.db models table", reg_seeded)
     yield
 
 

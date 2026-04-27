@@ -34,6 +34,18 @@ from uuid import uuid4
 # ---------------------------------------------------------------------------
 
 _DDL = """
+CREATE TABLE IF NOT EXISTS models (
+    id           TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    owner        TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT,
+    status       TEXT NOT NULL DEFAULT 'experimental',
+    tags         TEXT NOT NULL DEFAULT '[]',
+    access_rules TEXT
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id              TEXT PRIMARY KEY,
     provider        TEXT NOT NULL,
@@ -513,6 +525,138 @@ def get_engagement_counts(
     for row in rows:
         counts[row["type"]] = row["n"]
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Model registry
+# ---------------------------------------------------------------------------
+
+def load_registry_from_db(db_path: Path | None = None) -> dict[str, dict]:
+    """Return all models from the DB as {id: metadata_dict}. Empty dict if none."""
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT * FROM models").fetchall()
+    result = {}
+    for row in rows:
+        d = dict(row)
+        result[d["id"]] = {
+            "display_name": d["display_name"],
+            "description": d["description"] or "",
+            "owner": d["owner"] or "",
+            "created_at": d["created_at"],
+            "status": d["status"],
+            "tags": json.loads(d["tags"] or "[]"),
+        }
+    return result
+
+
+def upsert_model_in_db(model_id: str, fields: dict, db_path: Path | None = None) -> None:
+    """Upsert model metadata. Never overwrites access_rules — use set_model_access_rules for that."""
+    now = _now()
+    with _connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO models (id, display_name, description, owner, created_at, updated_at, status, tags)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   display_name = excluded.display_name,
+                   description  = excluded.description,
+                   owner        = excluded.owner,
+                   updated_at   = excluded.updated_at,
+                   status       = excluded.status,
+                   tags         = excluded.tags""",
+            (
+                model_id,
+                fields.get("display_name", model_id),
+                fields.get("description", ""),
+                fields.get("owner", ""),
+                fields.get("created_at", now),
+                now,
+                fields.get("status", "experimental"),
+                json.dumps(fields.get("tags", [])),
+            ),
+        )
+
+
+def delete_model_from_db(model_id: str, db_path: Path | None = None) -> None:
+    """Remove a model from the registry table."""
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM models WHERE id=?", (model_id,))
+
+
+def get_model_access_rules(model_id: str, db_path: Path | None = None) -> list[dict] | None:
+    """Return the access_rules JSON for a model, or None if not set in DB (fall back to config.yaml)."""
+    with _connect(db_path) as conn:
+        row = conn.execute("SELECT access_rules FROM models WHERE id=?", (model_id,)).fetchone()
+    if not row or row["access_rules"] is None:
+        return None
+    return json.loads(row["access_rules"])
+
+
+def set_model_access_rules(model_id: str, rules: list[dict] | None, db_path: Path | None = None) -> None:
+    """Set (or clear) the access_rules for a model. Pass None to revert to config.yaml fallback."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE models SET access_rules=?, updated_at=? WHERE id=?",
+            (json.dumps(rules) if rules is not None else None, _now(), model_id),
+        )
+
+
+def seed_model_registry(models_dir: Path, db_path: Path | None = None) -> int:
+    """Seed the models table from registry.yaml + config.yaml access blocks.
+
+    Only inserts models not already present in the DB — fully idempotent.
+    Call this on startup; remove once all deployments have migrated.
+    Returns the number of newly inserted models.
+    """
+    import yaml
+
+    registry_path = models_dir / "registry.yaml"
+    if not registry_path.exists():
+        return 0
+
+    with open(registry_path) as f:
+        data = yaml.safe_load(f) or {}
+    registry: dict[str, dict] = data.get("models", {})
+    if not registry:
+        return 0
+
+    seeded = 0
+    now = _now()
+    for model_id, meta in registry.items():
+        with _connect(db_path) as conn:
+            existing = conn.execute("SELECT id FROM models WHERE id=?", (model_id,)).fetchone()
+            if existing:
+                continue
+
+        # Read access block from config.yaml if present
+        access_rules = None
+        config_path = models_dir / model_id / "config.yaml"
+        if config_path.exists():
+            with open(config_path) as f:
+                config = yaml.safe_load(f) or {}
+            access = config.get("access")
+            if access:
+                access_rules = access
+
+        with _connect(db_path) as conn:
+            conn.execute(
+                """INSERT INTO models (id, display_name, description, owner, created_at, updated_at, status, tags, access_rules)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO NOTHING""",
+                (
+                    model_id,
+                    meta.get("display_name", model_id),
+                    meta.get("description", ""),
+                    meta.get("owner", ""),
+                    meta.get("created_at", now),
+                    now,
+                    meta.get("status", "experimental"),
+                    json.dumps(meta.get("tags", [])),
+                    json.dumps(access_rules) if access_rules is not None else None,
+                ),
+            )
+        seeded += 1
+
+    return seeded
 
 
 # ---------------------------------------------------------------------------

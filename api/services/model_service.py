@@ -54,12 +54,16 @@ def get_model(models_dir: Path, model_name: str, full_audit: bool = False) -> di
     audit_entries = read_audit(model_dir)
     audit = audit_entries if full_audit else audit_entries[-10:]
 
+    from core.vizgrams_db import get_model_access_rules
+    access_rules = get_model_access_rules(model_name)
+
     return {
         "name": model_name,
         **meta,
         "config": _get_config_summary(model_dir),
         "database": _get_db_stats(model_dir),
         "audit": audit,
+        "access_rules": access_rules,
     }
 
 
@@ -154,10 +158,29 @@ def delete_model(models_dir: Path, model_name: str, delete_files: bool = False) 
     del registry[model_name]
     save_registry(models_dir, registry)
 
+    from core.vizgrams_db import delete_model_from_db
+    delete_model_from_db(model_name)
+
     if delete_files:
         model_dir = models_dir / model_name
         if model_dir.exists():
             shutil.rmtree(model_dir)
+
+
+def get_access_rules(model_name: str) -> list[dict] | None:
+    """Return DB access rules for a model, or None if using config.yaml fallback."""
+    from core.vizgrams_db import get_model_access_rules
+    return get_model_access_rules(model_name)
+
+
+def set_access_rules(models_dir: Path, model_name: str, rules: list[dict] | None) -> list[dict] | None:
+    """Set (or clear) DB access rules for a model. Returns the new rules."""
+    registry = load_registry(models_dir)
+    if model_name not in registry:
+        raise KeyError(f"Model '{model_name}' not found in registry.")
+    from core.vizgrams_db import set_model_access_rules
+    set_model_access_rules(model_name, rules)
+    return rules
 
 
 # ---------------------------------------------------------------------------
