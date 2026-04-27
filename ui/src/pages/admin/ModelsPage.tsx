@@ -596,13 +596,13 @@ function ConfigReadOnly({ config }: { config: ModelConfig }) {
         <span className="text-muted-foreground w-28 shrink-0">Backend</span>
         <span className="text-xs">{String(config.database.backend || 'sqlite')}</span>
       </div>
-      {config.database.host && (
+      {config.database.host != null && (
         <div className="flex items-center gap-2 text-sm">
           <span className="text-muted-foreground w-28 shrink-0">Host</span>
           <span className="text-xs font-mono">{String(config.database.host)}</span>
         </div>
       )}
-      {config.database.database && (
+      {config.database.database != null && (
         <div className="flex items-center gap-2 text-sm">
           <span className="text-muted-foreground w-28 shrink-0">Database</span>
           <span className="text-xs font-mono">{String(config.database.database)}</span>
