@@ -43,8 +43,10 @@ CREATE TABLE IF NOT EXISTS models (
     updated_at   TEXT,
     status       TEXT NOT NULL DEFAULT 'experimental',
     tags         TEXT NOT NULL DEFAULT '[]',
-    access_rules TEXT,
-    is_active    INTEGER NOT NULL DEFAULT 0
+    access_rules    TEXT,
+    is_active       INTEGER NOT NULL DEFAULT 0,
+    tools_config    TEXT,
+    database_config TEXT
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -161,6 +163,10 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE models ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0"
         )
+        conn.commit()
+    if "tools_config" not in model_cols:
+        conn.execute("ALTER TABLE models ADD COLUMN tools_config TEXT")
+        conn.execute("ALTER TABLE models ADD COLUMN database_config TEXT")
         conn.commit()
 
 
@@ -624,6 +630,59 @@ def set_model_access_rules(model_id: str, rules: list[dict] | None, db_path: Pat
         )
 
 
+# ---------------------------------------------------------------------------
+# Model config (tools + database) — VG-140
+# ---------------------------------------------------------------------------
+
+
+def load_model_config_from_db(
+    model_id: str, db_path: Path | None = None
+) -> dict | None:
+    """Return the tools config JSON for a model, or None if not set in DB."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT tools_config FROM models WHERE id=?", (model_id,)
+        ).fetchone()
+    if not row or row["tools_config"] is None:
+        return None
+    return json.loads(row["tools_config"])
+
+
+def load_database_config_from_db(
+    model_id: str, db_path: Path | None = None
+) -> dict | None:
+    """Return the database config JSON for a model, or None if not set in DB."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT database_config FROM models WHERE id=?", (model_id,)
+        ).fetchone()
+    if not row or row["database_config"] is None:
+        return None
+    return json.loads(row["database_config"])
+
+
+def set_model_tools_config(
+    model_id: str, config: dict | None, db_path: Path | None = None
+) -> None:
+    """Set (or clear) the tools config for a model."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE models SET tools_config=?, updated_at=? WHERE id=?",
+            (json.dumps(config) if config is not None else None, _now(), model_id),
+        )
+
+
+def set_model_database_config(
+    model_id: str, config: dict | None, db_path: Path | None = None
+) -> None:
+    """Set (or clear) the database config for a model."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE models SET database_config=?, updated_at=? WHERE id=?",
+            (json.dumps(config) if config is not None else None, _now(), model_id),
+        )
+
+
 def seed_model_registry(models_dir: Path, db_path: Path | None = None) -> int:
     """Seed the models table from registry.yaml + config.yaml access blocks.
 
@@ -678,6 +737,66 @@ def seed_model_registry(models_dir: Path, db_path: Path | None = None) -> int:
                     json.dumps(meta.get("tags", [])),
                     json.dumps(access_rules) if access_rules is not None else None,
                 ),
+            )
+        seeded += 1
+
+    return seeded
+
+
+def seed_model_config(models_dir: Path, db_path: Path | None = None) -> int:
+    """Seed tools_config and database_config from config.yaml for registered models.
+
+    Only populates columns that are currently NULL — never overwrites DB config
+    that was set via the API.  Idempotent; call on startup alongside
+    seed_model_registry.  Remove once all deployments have migrated (Phase 8).
+
+    Returns the number of models whose config was seeded.
+    """
+    import yaml
+
+    seeded = 0
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id FROM models WHERE tools_config IS NULL OR database_config IS NULL"
+        ).fetchall()
+
+    for row in rows:
+        model_id = row["id"]
+        config_path = models_dir / model_id / "config.yaml"
+        if not config_path.exists():
+            continue
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+
+        tools = config.get("tools")
+        database = config.get("database")
+        if tools is None and database is None:
+            continue
+
+        with _connect(db_path) as conn:
+            # Only set columns that are still NULL
+            current = conn.execute(
+                "SELECT tools_config, database_config FROM models WHERE id=?",
+                (model_id,),
+            ).fetchone()
+            if not current:
+                continue
+            updates = []
+            params: list = []
+            if current["tools_config"] is None and tools is not None:
+                updates.append("tools_config = ?")
+                params.append(json.dumps(tools))
+            if current["database_config"] is None and database is not None:
+                updates.append("database_config = ?")
+                params.append(json.dumps(database))
+            if not updates:
+                continue
+            updates.append("updated_at = ?")
+            params.append(_now())
+            params.append(model_id)
+            conn.execute(
+                f"UPDATE models SET {', '.join(updates)} WHERE id = ?",
+                params,
             )
         seeded += 1
 

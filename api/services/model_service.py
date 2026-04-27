@@ -197,6 +197,97 @@ def set_access_rules(models_dir: Path, model_name: str, rules: list[dict] | None
 
 
 # ---------------------------------------------------------------------------
+# Model config — tools + database (VG-143, VG-144)
+# ---------------------------------------------------------------------------
+
+
+def get_model_config(models_dir: Path, model_name: str) -> dict:
+    """Return the model config with credential values masked."""
+    registry = load_registry(models_dir)
+    if model_name not in registry:
+        raise KeyError(f"Model '{model_name}' not found in registry.")
+    from core.model_config import load_database_config, load_model_config
+    model_dir = models_dir / model_name
+    tools = load_model_config(model_dir) or {}
+    db_cfg = load_database_config(model_dir)
+    return {
+        "tools": _mask_credentials(tools),
+        "database": _mask_credential_values(db_cfg),
+    }
+
+
+def update_model_config(
+    models_dir: Path, model_name: str, data: dict
+) -> dict:
+    """Update tools and/or database config in the DB. Returns masked config."""
+    registry = load_registry(models_dir)
+    if model_name not in registry:
+        raise KeyError(f"Model '{model_name}' not found in registry.")
+
+    from core.vizgrams_db import set_model_database_config, set_model_tools_config
+
+    if "tools" in data and data["tools"] is not None:
+        _validate_no_literal_credentials(data["tools"])
+        set_model_tools_config(model_name, data["tools"])
+
+    if "database" in data and data["database"] is not None:
+        _validate_no_literal_credentials_flat(data["database"])
+        set_model_database_config(model_name, data["database"])
+
+    model_dir = models_dir / model_name
+    append_audit(model_dir, "config_updated", "Updated via API", actor=current_actor())
+    return get_model_config(models_dir, model_name)
+
+
+def _mask_credentials(tools: dict) -> dict:
+    """Mask credential values in a tools config dict (nested by tool name)."""
+    return {
+        tool_name: _mask_credential_values(tool_cfg)
+        if isinstance(tool_cfg, dict) else tool_cfg
+        for tool_name, tool_cfg in tools.items()
+    }
+
+
+def _mask_credential_values(cfg: dict) -> dict:
+    """Mask credential field values in a flat config dict."""
+    result = {}
+    for k, v in cfg.items():
+        if k in _CREDENTIAL_KEYS and isinstance(v, str):
+            if v.startswith("env:"):
+                result[k] = "env:***"
+            elif v.startswith("file:"):
+                result[k] = "file:***"
+            else:
+                result[k] = "***"
+        else:
+            result[k] = v
+    return result
+
+
+def _validate_no_literal_credentials(tools: dict) -> None:
+    """Raise ValueError if any tool has a credential with a literal value."""
+    for tool_name, tool_cfg in tools.items():
+        if not isinstance(tool_cfg, dict):
+            continue
+        for key, val in tool_cfg.items():
+            if key in _CREDENTIAL_KEYS and isinstance(val, str) and not val.startswith(("env:", "file:")):
+                raise ValueError(
+                    f"Tool '{tool_name}': credential '{key}' must use "
+                    f"'env:VAR_NAME' or 'file:secret_name', not a literal value."
+                )
+
+
+def _validate_no_literal_credentials_flat(cfg: dict) -> None:
+    """Raise ValueError if a flat config dict has literal credential values."""
+    for key, val in cfg.items():
+        if key in _CREDENTIAL_KEYS and isinstance(val, str) and not val.startswith(("env:", "file:")):
+            raise ValueError(
+                f"Credential '{key}' must use 'env:VAR_NAME' or "
+                f"'file:secret_name', not a literal value."
+            )
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

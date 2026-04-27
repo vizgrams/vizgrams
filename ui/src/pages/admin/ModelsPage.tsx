@@ -5,8 +5,9 @@ import { useEffect, useState } from 'react'
 import { Plus, Trash2, Archive, CircleDot } from 'lucide-react'
 import {
   listModels, getModel, createModel, updateModel, archiveModel, deleteModel, setActiveModel, setModelAccess,
+  getModelConfig, updateModelConfig,
 } from '@/api/client'
-import type { ModelSummary, ModelDetail, AccessRule, ModelCreate, ModelPatch } from '@/api/client'
+import type { ModelSummary, ModelDetail, AccessRule, ModelCreate, ModelPatch, ModelConfig } from '@/api/client'
 import { Badge, ErrorMessage, Spinner } from '@/components/Layout'
 import { useModel } from '@/context/ModelContext'
 import { cn } from '@/lib/utils'
@@ -159,7 +160,7 @@ export function ModelsPage() {
                 model={detail}
                 onSaved={() => selectModel(detail.name)}
               />
-              {detail.config && <ConfigSection config={detail.config} />}
+              <ConfigSection modelName={detail.name} />
             </div>
           </>
         )}
@@ -448,26 +449,166 @@ function AccessRulesSection({ model, onSaved }: { model: ModelDetail; onSaved: (
 }
 
 // ---------------------------------------------------------------------------
-// Config summary (read-only)
+// Config section — tools + database (editable, reads from DB)
 // ---------------------------------------------------------------------------
 
-function ConfigSection({ config }: { config: ModelDetail['config'] }) {
-  if (!config) return null
+function ConfigSection({ modelName }: { modelName: string }) {
+  const [config, setConfig] = useState<ModelConfig | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [editTools, setEditTools] = useState<string>('')
+  const [editDb, setEditDb] = useState<string>('')
+  const [editing, setEditing] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    setError('')
+    setEditing(false)
+    getModelConfig(modelName)
+      .then((c) => {
+        setConfig(c)
+        setEditTools(JSON.stringify(c.tools, null, 2))
+        setEditDb(JSON.stringify(c.database, null, 2))
+      })
+      .catch((e) => setError(e.message || 'Failed to load config'))
+      .finally(() => setLoading(false))
+  }, [modelName])
+
+  const handleSave = () => {
+    setSaving(true)
+    setError('')
+    let tools: Record<string, Record<string, unknown>>
+    let database: Record<string, unknown>
+    try {
+      tools = JSON.parse(editTools)
+      database = JSON.parse(editDb)
+    } catch {
+      setError('Invalid JSON')
+      setSaving(false)
+      return
+    }
+    updateModelConfig(modelName, { tools, database })
+      .then((c) => {
+        setConfig(c)
+        setEditTools(JSON.stringify(c.tools, null, 2))
+        setEditDb(JSON.stringify(c.database, null, 2))
+        setEditing(false)
+      })
+      .catch((e) => {
+        const detail = e?.body?.detail || e.message || 'Failed to save'
+        setError(typeof detail === 'string' ? detail : JSON.stringify(detail))
+      })
+      .finally(() => setSaving(false))
+  }
+
+  if (loading) return <div className="pt-4 border-t"><Spinner /></div>
+
   return (
-    <section className="space-y-2 pt-4 border-t">
-      <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-        Configuration <span className="font-normal normal-case">— from config.yaml on disk</span>
-      </h2>
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground w-28 shrink-0">Tools enabled</span>
-        {config.tools_enabled.length > 0
-          ? config.tools_enabled.map((t) => (
-              <span key={t} className="inline-flex items-center rounded border px-2 py-0.5 text-xs text-muted-foreground">{t}</span>
-            ))
-          : <span className="text-muted-foreground text-xs">none</span>
-        }
+    <section className="space-y-3 pt-4 border-t">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          Configuration
+        </h2>
+        {!editing ? (
+          <button
+            className="text-xs text-blue-600 hover:underline"
+            onClick={() => setEditing(true)}
+          >
+            Edit
+          </button>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              className="text-xs text-muted-foreground hover:underline"
+              onClick={() => {
+                setEditing(false)
+                setError('')
+                if (config) {
+                  setEditTools(JSON.stringify(config.tools, null, 2))
+                  setEditDb(JSON.stringify(config.database, null, 2))
+                }
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="text-xs text-blue-600 hover:underline font-medium"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        )}
       </div>
+
+      {error && <ErrorMessage message={error} />}
+
+      {!editing && config ? (
+        <ConfigReadOnly config={config} />
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Tools</label>
+            <textarea
+              className="w-full font-mono text-xs border rounded p-2 bg-muted/30 min-h-[120px]"
+              value={editTools}
+              onChange={(e) => setEditTools(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Database</label>
+            <textarea
+              className="w-full font-mono text-xs border rounded p-2 bg-muted/30 min-h-[80px]"
+              value={editDb}
+              onChange={(e) => setEditDb(e.target.value)}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Credentials must use <code className="font-mono">env:VAR_NAME</code> or <code className="font-mono">file:secret_name</code> — literal values are rejected.
+          </p>
+        </div>
+      )}
     </section>
+  )
+}
+
+function ConfigReadOnly({ config }: { config: ModelConfig }) {
+  const enabledTools = Object.entries(config.tools)
+    .filter(([, cfg]) => typeof cfg === 'object' && cfg?.enabled)
+    .map(([name]) => name)
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-start gap-2 text-sm">
+        <span className="text-muted-foreground w-28 shrink-0">Tools</span>
+        <div className="flex flex-wrap gap-1">
+          {enabledTools.length > 0
+            ? enabledTools.map((t) => (
+                <span key={t} className="inline-flex items-center rounded border px-2 py-0.5 text-xs text-muted-foreground">{t}</span>
+              ))
+            : <span className="text-muted-foreground text-xs">none configured</span>
+          }
+        </div>
+      </div>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-muted-foreground w-28 shrink-0">Backend</span>
+        <span className="text-xs">{String(config.database.backend || 'sqlite')}</span>
+      </div>
+      {config.database.host != null && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground w-28 shrink-0">Host</span>
+          <span className="text-xs font-mono">{String(config.database.host)}</span>
+        </div>
+      )}
+      {config.database.database != null && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground w-28 shrink-0">Database</span>
+          <span className="text-xs font-mono">{String(config.database.database)}</span>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -552,7 +693,7 @@ function CreateModelModal({ onClose, onCreated }: { onClose: () => void; onCreat
             </div>
           )}
           <p className="text-xs text-muted-foreground bg-muted/40 rounded px-3 py-2">
-            After creating, add <code className="font-mono">models/{form.name || 'slug'}/config.yaml</code> on the server with database credentials.
+            After creating, configure tools and database settings from the model's Configuration section.
           </p>
           <div className="flex justify-end gap-2 pt-1">
             <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm border rounded hover:bg-muted transition-colors">Cancel</button>
