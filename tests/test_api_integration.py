@@ -135,14 +135,16 @@ def _scaffold_model(base_dir: Path, name: str) -> Path:
     return model_dir
 
 
-def _configure_ch(model_dir: Path, ch_backend) -> None:
-    """Overwrite model config.yaml to point to the ch_backend test database."""
-    (model_dir / "config.yaml").write_text(
-        f"database:\n"
-        f"  backend: clickhouse\n"
-        f"  database: {ch_backend.database}\n"
-        f"  host: localhost\n"
-        f"  port: 8123\n"
+def _configure_ch(model_dir: Path, ch_backend, monkeypatch) -> None:
+    """Monkeypatch load_database_config to return the ch_backend test database."""
+    monkeypatch.setattr(
+        "core.model_config.load_database_config",
+        lambda md: {
+            "backend": "clickhouse", "host": "localhost", "port": 8123,
+            "database": ch_backend.database, "username": "default", "password": "",
+            "raw_database": f"{ch_backend.database}_raw",
+            "sem_database": ch_backend.database,
+        },
     )
 
 
@@ -646,17 +648,17 @@ def test_validate_query_200(live_client):
     assert "valid" in resp.json()
 
 
-def test_execute_query_404_no_db(live_client, ch_backend):
+def test_execute_query_404_no_db(live_client, ch_backend, monkeypatch):
     tc, _, _, model_dir = live_client
-    _configure_ch(model_dir, ch_backend)
+    _configure_ch(model_dir, ch_backend, monkeypatch)
     _seed(model_dir, "entity", "Widget", _WIDGET_ENTITY_YAML)
     _seed(model_dir, "query", "widget_count", _QUERY_YAML)
     assert tc.post("/api/v1/model/testmodel/query/widget_count/execute").status_code == 404
 
 
-def test_execute_query_200_with_db(live_client, ch_backend):
+def test_execute_query_200_with_db(live_client, ch_backend, monkeypatch):
     tc, _, _, model_dir = live_client
-    _configure_ch(model_dir, ch_backend)
+    _configure_ch(model_dir, ch_backend, monkeypatch)
     _seed(model_dir, "entity", "Widget", _WIDGET_ENTITY_YAML)
     _seed(model_dir, "query", "widget_count", _QUERY_YAML)
     ch_backend.create_table(
@@ -671,9 +673,9 @@ def test_execute_query_200_with_db(live_client, ch_backend):
     assert data["row_count"] >= 1
 
 
-def test_execute_query_csv_content_type(live_client, ch_backend):
+def test_execute_query_csv_content_type(live_client, ch_backend, monkeypatch):
     tc, _, _, model_dir = live_client
-    _configure_ch(model_dir, ch_backend)
+    _configure_ch(model_dir, ch_backend, monkeypatch)
     _seed(model_dir, "entity", "Widget", _WIDGET_ENTITY_YAML)
     _seed(model_dir, "query", "widget_count", _QUERY_YAML)
     ch_backend.create_table(

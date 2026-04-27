@@ -54,14 +54,16 @@ measures:
 """
 
 
-def _configure_ch(model_dir, ch_backend):
-    """Overwrite model config.yaml to point to the ch_backend test database."""
-    (model_dir / "config.yaml").write_text(
-        f"database:\n"
-        f"  backend: clickhouse\n"
-        f"  database: {ch_backend.database}\n"
-        f"  host: localhost\n"
-        f"  port: 8123\n"
+def _configure_ch(model_dir, ch_backend, monkeypatch):
+    """Monkeypatch load_database_config to return the ch_backend test database."""
+    monkeypatch.setattr(
+        "core.model_config.load_database_config",
+        lambda md: {
+            "backend": "clickhouse", "host": "localhost", "port": 8123,
+            "database": ch_backend.database, "username": "default", "password": "",
+            "raw_database": f"{ch_backend.database}_raw",
+            "sem_database": ch_backend.database,
+        },
     )
 
 
@@ -81,9 +83,9 @@ def model_dir_with_query(model_dir):
 
 
 @pytest.fixture
-def model_dir_with_db(model_dir_with_query, ch_backend):
+def model_dir_with_db(model_dir_with_query, ch_backend, monkeypatch):
     """Model dir with a ClickHouse-backed populated DB for execute_query tests."""
-    _configure_ch(model_dir_with_query, ch_backend)
+    _configure_ch(model_dir_with_query, ch_backend, monkeypatch)
     ch_backend.create_table(
         "widget",
         {"widget_key": "String", "score": "float"},
@@ -170,8 +172,8 @@ def test_validate_query_raises_key_error_when_not_found(model_dir):
 # execute_query
 # ---------------------------------------------------------------------------
 
-def test_execute_query_raises_file_not_found_when_no_db(model_dir_with_query, ch_backend):
-    _configure_ch(model_dir_with_query, ch_backend)
+def test_execute_query_raises_file_not_found_when_no_db(model_dir_with_query, ch_backend, monkeypatch):
+    _configure_ch(model_dir_with_query, ch_backend, monkeypatch)
     with pytest.raises(FileNotFoundError):
         execute_query(model_dir_with_query, "widget_totals")
 

@@ -405,167 +405,46 @@ def _write_db_config(model_dir: Path, content: str) -> None:
 
 
 class TestLoadDatabaseConfig:
-    def test_no_config_returns_sqlite_default(self, tmp_path):
-        """No config.yaml → SQLite backend (safe default for CI / local dev)."""
-        cfg = load_database_config(tmp_path)
-        assert cfg["backend"] == "sqlite"
-        assert "host" not in cfg
-        assert "database" not in cfg
+    """load_database_config reads VZ_DATABASE_BACKEND env var. No per-model config."""
 
-    def test_empty_config_returns_sqlite_default(self, tmp_path):
-        (tmp_path / "config.yaml").write_text("{}\n")
+    def test_default_is_sqlite(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("VZ_DATABASE_BACKEND", raising=False)
         cfg = load_database_config(tmp_path)
         assert cfg["backend"] == "sqlite"
 
-    def test_config_without_database_key_returns_sqlite_default(self, tmp_path):
-        _write_config(tmp_path, """\
-            tools:
-              github:
-                enabled: true
-        """)
-        cfg = load_database_config(tmp_path)
-        assert cfg["backend"] == "sqlite"
-
-    def test_sqlite_backend_explicit(self, tmp_path):
-        _write_config(tmp_path, """\
-            database:
-              backend: sqlite
-              path: data/custom.db
-        """)
-        cfg = load_database_config(tmp_path)
-        assert cfg["backend"] == "sqlite"
-        assert cfg["path"] == "data/custom.db"
-
-    def test_clickhouse_backend_full_config(self, tmp_path):
-        _write_config(tmp_path, """\
-            database:
-              backend: clickhouse
-              host: ch.internal
-              port: 8123
-              database: mymodel
-              username: default
-              password: ""
-        """)
+    def test_env_var_sets_backend(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VZ_DATABASE_BACKEND", "clickhouse")
+        monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
         cfg = load_database_config(tmp_path)
         assert cfg["backend"] == "clickhouse"
-        assert cfg["host"] == "ch.internal"
-        assert cfg["port"] == 8123
-        assert cfg["database"] == "mymodel"
+        assert cfg["host"] == "localhost"  # fallback when CLICKHOUSE_HOST unset
         assert cfg["username"] == "default"
 
-    def test_clickhouse_host_overrides_default(self, tmp_path):
-        """Specifying only host overrides the env-var default; other keys use defaults."""
-        _write_config(tmp_path, """\
-            database:
-              backend: clickhouse
-              host: ch.internal
-        """)
+    def test_clickhouse_derives_database_from_dir_name(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VZ_DATABASE_BACKEND", "clickhouse")
         cfg = load_database_config(tmp_path)
-        assert cfg["backend"] == "clickhouse"
-        assert cfg["host"] == "ch.internal"
-        assert cfg["username"] == "default"
+        assert cfg["database"] == tmp_path.name
+        assert cfg["raw_database"] == f"{tmp_path.name}_raw"
+        assert cfg["sem_database"] == tmp_path.name
 
-    def test_partial_override_explicit_clickhouse_backend_merges_defaults(self, tmp_path):
-        """Specifying backend: clickhouse with just host applies ClickHouse connection defaults."""
-        _write_config(tmp_path, """\
-            database:
-              backend: clickhouse
-              host: ch.internal
-        """)
+    def test_clickhouse_host_from_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VZ_DATABASE_BACKEND", "clickhouse")
+        monkeypatch.setenv("CLICKHOUSE_HOST", "ch.prod")
         cfg = load_database_config(tmp_path)
-        assert cfg["backend"] == "clickhouse"
-        assert cfg["host"] == "ch.internal"
-        assert cfg["username"] == "default"
+        assert cfg["host"] == "ch.prod"
 
-    def test_returns_independent_copy(self, tmp_path):
-        """Mutating the returned dict should not affect subsequent calls."""
+    def test_sqlite_does_not_derive_raw_sem(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("VZ_DATABASE_BACKEND", raising=False)
+        cfg = load_database_config(tmp_path)
+        assert "raw_database" not in cfg
+        assert "sem_database" not in cfg
+
+    def test_returns_independent_copy(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("VZ_DATABASE_BACKEND", raising=False)
         cfg1 = load_database_config(tmp_path)
         cfg1["backend"] = "mutated"
         cfg2 = load_database_config(tmp_path)
         assert cfg2["backend"] == "sqlite"
-
-    def test_database_null_value_returns_sqlite_default(self, tmp_path):
-        _write_config(tmp_path, "database:\n")
-        cfg = load_database_config(tmp_path)
-        assert cfg["backend"] == "sqlite"
-
-    def test_env_var_resolved_for_host(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CH_HOST_TEST", "ch.internal")
-        _write_config(tmp_path, """\
-            database:
-              backend: clickhouse
-              host: env:CH_HOST_TEST
-              port: 8123
-              database: mydb
-        """)
-        cfg = load_database_config(tmp_path)
-        assert cfg["host"] == "ch.internal"
-
-    def test_env_var_unset_falls_back_to_localhost(self, tmp_path, monkeypatch):
-        """Unset CLICKHOUSE_HOST env var falls back to 'localhost' when backend is clickhouse."""
-        monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
-        _write_config(tmp_path, "database:\n  backend: clickhouse\n")
-        cfg = load_database_config(tmp_path)
-        assert cfg["host"] == "localhost"
-
-    def test_non_string_values_pass_through_unchanged(self, tmp_path):
-        _write_config(tmp_path, """\
-            database:
-              backend: clickhouse
-              host: localhost
-              port: 9000
-        """)
-        cfg = load_database_config(tmp_path)
-        assert cfg["port"] == 9000  # integer, not resolved
-
-    def test_raw_sem_databases_derived_from_database(self, tmp_path):
-        """raw_database is auto-derived as {database}_raw; sem_database equals the base database name."""
-        _write_config(tmp_path, """\
-            database:
-              backend: clickhouse
-              host: localhost
-              port: 8123
-              database: openflights
-        """)
-        cfg = load_database_config(tmp_path)
-        assert cfg["raw_database"] == "openflights_raw"
-        assert cfg["sem_database"] == "openflights"
-
-    def test_raw_sem_derived_from_model_dir_name(self, tmp_path):
-        """When clickhouse backend set without a database key, raw/sem derived from dir name."""
-        _write_config(tmp_path, """\
-            database:
-              backend: clickhouse
-              host: localhost
-        """)
-        cfg = load_database_config(tmp_path)
-        assert cfg["raw_database"] == f"{tmp_path.name}_raw"
-        assert cfg["sem_database"] == tmp_path.name
-
-    def test_explicit_raw_sem_databases_override_derived(self, tmp_path):
-        """Explicitly set raw_database / sem_database fields take precedence."""
-        _write_config(tmp_path, """\
-            database:
-              backend: clickhouse
-              host: localhost
-              database: openflights
-              raw_database: raw_custom
-              sem_database: sem_custom
-        """)
-        cfg = load_database_config(tmp_path)
-        assert cfg["raw_database"] == "raw_custom"
-        assert cfg["sem_database"] == "sem_custom"
-
-    def test_sqlite_backend_does_not_derive_raw_sem(self, tmp_path):
-        """raw_database / sem_database are not added for SQLite backends."""
-        _write_config(tmp_path, """\
-            database:
-              backend: sqlite
-              path: data/data.db
-        """)
-        cfg = load_database_config(tmp_path)
-        assert "raw_database" not in cfg
-        assert "sem_database" not in cfg
 
 
 # ---------------------------------------------------------------------------
@@ -615,53 +494,3 @@ class TestLoadModelConfigDbFirst:
         assert load_model_config(tmp_path) is None
 
 
-class TestLoadDatabaseConfigDbFirst:
-    """load_database_config reads from DB when available, falls back to config.yaml."""
-
-    def test_db_config_takes_priority_over_yaml(self, tmp_path, monkeypatch):
-        _write_config(tmp_path, """\
-            database:
-              backend: sqlite
-        """)
-        db_cfg = {"backend": "clickhouse", "host": "ch.prod", "database": "mymodel"}
-        monkeypatch.setattr(
-            "core.vizgrams_db.load_database_config_from_db",
-            lambda model_id, db_path=None: db_cfg,
-        )
-        result = load_database_config(tmp_path)
-        assert result["backend"] == "clickhouse"
-        assert result["host"] == "ch.prod"
-
-    def test_falls_back_to_yaml_when_db_returns_none(self, tmp_path, monkeypatch):
-        _write_config(tmp_path, """\
-            database:
-              backend: duckdb
-              path: data/data.duckdb
-        """)
-        monkeypatch.setattr(
-            "core.vizgrams_db.load_database_config_from_db",
-            lambda model_id, db_path=None: None,
-        )
-        result = load_database_config(tmp_path)
-        assert result["backend"] == "duckdb"
-
-    def test_defaults_applied_to_db_config(self, tmp_path, monkeypatch):
-        """DB config still gets defaults + credential resolution applied."""
-        monkeypatch.setattr(
-            "core.vizgrams_db.load_database_config_from_db",
-            lambda model_id, db_path=None: {"backend": "clickhouse", "host": "ch.prod"},
-        )
-        monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
-        result = load_database_config(tmp_path)
-        assert result["backend"] == "clickhouse"
-        assert result["host"] == "ch.prod"
-        assert result["username"] == "default"  # from _CLICKHOUSE_DEFAULTS
-        assert result["database"] == tmp_path.name  # derived from dir name
-
-    def test_sqlite_default_when_db_empty_and_no_yaml(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "core.vizgrams_db.load_database_config_from_db",
-            lambda model_id, db_path=None: None,
-        )
-        result = load_database_config(tmp_path)
-        assert result["backend"] == "sqlite"

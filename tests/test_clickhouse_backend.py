@@ -375,70 +375,23 @@ def test_truncate_idempotent_on_empty_table(ch):
 # get_backend namespace routing (unit-level — no server required)
 # ---------------------------------------------------------------------------
 
-def test_get_backend_sem_namespace_uses_sem_database(tmp_path):
-    """get_backend(namespace='sem') returns a backend pointing at the base database name."""
-    import yaml
-
+def test_get_backend_sem_namespace_uses_sem_database(tmp_path, monkeypatch):
+    """get_backend(namespace='sem') returns a backend with database derived from dir name."""
     from core.db import ClickHouseBackend, get_backend
 
-    config = {
-        "database": {
-            "backend": "clickhouse",
-            "host": "localhost",
-            "port": 8123,
-            "database": "mymodel",
-            "username": "default",
-            "password": "",
-        }
-    }
-    (tmp_path / "config.yaml").write_text(yaml.dump(config))
+    monkeypatch.setenv("VZ_DATABASE_BACKEND", "clickhouse")
     backend = get_backend(tmp_path, namespace="sem")
     assert isinstance(backend, ClickHouseBackend)
-    assert backend.database == "mymodel"
+    assert backend.database == tmp_path.name
     assert backend.always_final is True
 
 
-def test_get_backend_raw_namespace_uses_raw_database(tmp_path):
-    """get_backend(namespace='raw') returns a backend pointing at {model}_raw."""
-    import yaml
-
+def test_get_backend_raw_namespace_uses_raw_database(tmp_path, monkeypatch):
+    """get_backend(namespace='raw') returns a backend with {dir_name}_raw database."""
     from core.db import ClickHouseBackend, get_backend
 
-    config = {
-        "database": {
-            "backend": "clickhouse",
-            "host": "localhost",
-            "port": 8123,
-            "database": "mymodel",
-            "username": "default",
-            "password": "",
-        }
-    }
-    (tmp_path / "config.yaml").write_text(yaml.dump(config))
+    monkeypatch.setenv("VZ_DATABASE_BACKEND", "clickhouse")
     backend = get_backend(tmp_path, namespace="raw")
     assert isinstance(backend, ClickHouseBackend)
-    assert backend.database == "mymodel_raw"
+    assert backend.database == f"{tmp_path.name}_raw"
     assert backend.always_final is True
-
-
-def test_get_backend_explicit_raw_sem_databases(tmp_path):
-    """Explicit raw_database / sem_database fields override the derived names."""
-    import yaml
-
-    from core.db import get_backend
-
-    config = {
-        "database": {
-            "backend": "clickhouse",
-            "host": "localhost",
-            "port": 8123,
-            "database": "mymodel",
-            "raw_database": "custom_raw",
-            "sem_database": "custom_sem",
-            "username": "default",
-            "password": "",
-        }
-    }
-    (tmp_path / "config.yaml").write_text(yaml.dump(config))
-    assert get_backend(tmp_path, namespace="raw").database == "custom_raw"
-    assert get_backend(tmp_path, namespace="sem").database == "custom_sem"
