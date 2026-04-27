@@ -78,18 +78,19 @@ def _scaffold_model(base_dir: Path, name: str) -> Path:
     model_dir = base_dir / "models" / name
     for sub in ("extractors", "ontology", "mappers", "features", "queries", "input_data", "data"):
         (model_dir / sub).mkdir(parents=True, exist_ok=True)
-    (model_dir / "config.yaml").write_text("database:\n  backend: sqlite\n")
     return model_dir
 
 
-def _configure_ch(model_dir: Path, ch_backend) -> None:
-    """Overwrite model config.yaml to point to the ch_backend test database."""
-    (model_dir / "config.yaml").write_text(
-        f"database:\n"
-        f"  backend: clickhouse\n"
-        f"  database: {ch_backend.database}\n"
-        f"  host: localhost\n"
-        f"  port: 8123\n"
+def _configure_ch(model_dir: Path, ch_backend, monkeypatch) -> None:
+    """Monkeypatch load_database_config to return the ch_backend test database."""
+    monkeypatch.setattr(
+        "core.model_config.load_database_config",
+        lambda md: {
+            "backend": "clickhouse", "host": "localhost", "port": 8123,
+            "database": ch_backend.database, "username": "default", "password": "",
+            "raw_database": f"{ch_backend.database}_raw",
+            "sem_database": ch_backend.database,
+        },
     )
 
 
@@ -342,10 +343,10 @@ def test_get_job_returns_job_detail(client_with_model):
 # Query CSV format
 # ---------------------------------------------------------------------------
 
-def test_execute_query_csv_content_type(client_with_model, ch_backend):
+def test_execute_query_csv_content_type(client_with_model, ch_backend, monkeypatch):
     """CSV format returns text/csv Content-Type."""
     test_client, _, _, model_dir = client_with_model
-    _configure_ch(model_dir, ch_backend)
+    _configure_ch(model_dir, ch_backend, monkeypatch)
     _seed(model_dir, "entity", "Widget", _WIDGET_ENTITY_YAML)
     _seed(model_dir, "query", "widget_count", _QUERY_YAML)
     ch_backend.create_table(

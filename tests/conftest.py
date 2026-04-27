@@ -22,6 +22,7 @@ def _clear_vz_models_dir(monkeypatch):
     interfere.
     """
     monkeypatch.delenv("VZ_MODELS_DIR", raising=False)
+    monkeypatch.delenv("VZ_DATABASE_BACKEND", raising=False)
 
 
 @pytest.fixture(autouse=True)

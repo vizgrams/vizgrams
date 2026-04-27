@@ -458,7 +458,6 @@ function ConfigSection({ modelName }: { modelName: string }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [editTools, setEditTools] = useState<string>('')
-  const [editDb, setEditDb] = useState<string>('')
   const [editing, setEditing] = useState(false)
 
   useEffect(() => {
@@ -469,7 +468,6 @@ function ConfigSection({ modelName }: { modelName: string }) {
       .then((c) => {
         setConfig(c)
         setEditTools(JSON.stringify(c.tools, null, 2))
-        setEditDb(JSON.stringify(c.database, null, 2))
       })
       .catch((e) => setError(e.message || 'Failed to load config'))
       .finally(() => setLoading(false))
@@ -479,21 +477,17 @@ function ConfigSection({ modelName }: { modelName: string }) {
     setSaving(true)
     setError('')
     let tools: Record<string, Record<string, unknown>>
-    let database: Record<string, unknown>
     try {
       tools = JSON.parse(editTools)
-      database = JSON.parse(editDb)
     } catch {
       setError('Invalid JSON')
       setSaving(false)
       return
     }
-    const payload = config?.database_managed ? { tools } : { tools, database }
-    updateModelConfig(modelName, payload)
+    updateModelConfig(modelName, { tools })
       .then((c) => {
         setConfig(c)
         setEditTools(JSON.stringify(c.tools, null, 2))
-        setEditDb(JSON.stringify(c.database, null, 2))
         setEditing(false)
       })
       .catch((e) => {
@@ -509,7 +503,7 @@ function ConfigSection({ modelName }: { modelName: string }) {
     <section className="space-y-3 pt-4 border-t">
       <div className="flex items-center justify-between">
         <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-          Configuration
+          Tools
         </h2>
         {!editing ? (
           <button
@@ -525,10 +519,7 @@ function ConfigSection({ modelName }: { modelName: string }) {
               onClick={() => {
                 setEditing(false)
                 setError('')
-                if (config) {
-                  setEditTools(JSON.stringify(config.tools, null, 2))
-                  setEditDb(JSON.stringify(config.database, null, 2))
-                }
+                if (config) setEditTools(JSON.stringify(config.tools, null, 2))
               }}
             >
               Cancel
@@ -550,24 +541,11 @@ function ConfigSection({ modelName }: { modelName: string }) {
         <ConfigReadOnly config={config} />
       ) : (
         <div className="space-y-3">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Tools</label>
-            <textarea
-              className="w-full font-mono text-xs border rounded p-2 bg-muted/30 min-h-[120px]"
-              value={editTools}
-              onChange={(e) => setEditTools(e.target.value)}
-            />
-          </div>
-          {!config?.database_managed && (
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Database</label>
-              <textarea
-                className="w-full font-mono text-xs border rounded p-2 bg-muted/30 min-h-[80px]"
-                value={editDb}
-                onChange={(e) => setEditDb(e.target.value)}
-              />
-            </div>
-          )}
+          <textarea
+            className="w-full font-mono text-xs border rounded p-2 bg-muted/30 min-h-[120px]"
+            value={editTools}
+            onChange={(e) => setEditTools(e.target.value)}
+          />
           <p className="text-xs text-muted-foreground">
             Credentials must use <code className="font-mono">env:VAR_NAME</code> or <code className="font-mono">file:secret_name</code> — literal values are rejected.
           </p>
@@ -583,38 +561,16 @@ function ConfigReadOnly({ config }: { config: ModelConfig }) {
     .map(([name]) => name)
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-start gap-2 text-sm">
-        <span className="text-muted-foreground w-28 shrink-0">Tools</span>
-        <div className="flex flex-wrap gap-1">
-          {enabledTools.length > 0
-            ? enabledTools.map((t) => (
-                <span key={t} className="inline-flex items-center rounded border px-2 py-0.5 text-xs text-muted-foreground">{t}</span>
-              ))
-            : <span className="text-muted-foreground text-xs">none configured</span>
-          }
-        </div>
+    <div className="flex items-start gap-2 text-sm">
+      <span className="text-muted-foreground w-28 shrink-0">Enabled</span>
+      <div className="flex flex-wrap gap-1">
+        {enabledTools.length > 0
+          ? enabledTools.map((t) => (
+              <span key={t} className="inline-flex items-center rounded border px-2 py-0.5 text-xs text-muted-foreground">{t}</span>
+            ))
+          : <span className="text-muted-foreground text-xs">none configured</span>
+        }
       </div>
-      {!config.database_managed && (
-        <>
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground w-28 shrink-0">Backend</span>
-            <span className="text-xs">{String(config.database.backend || 'sqlite')}</span>
-          </div>
-          {config.database.host != null && (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground w-28 shrink-0">Host</span>
-              <span className="text-xs font-mono">{String(config.database.host)}</span>
-            </div>
-          )}
-          {config.database.database != null && (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground w-28 shrink-0">Database</span>
-              <span className="text-xs font-mono">{String(config.database.database)}</span>
-            </div>
-          )}
-        </>
-      )}
     </div>
   )
 }

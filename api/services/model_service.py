@@ -202,53 +202,33 @@ def set_access_rules(models_dir: Path, model_name: str, rules: list[dict] | None
 
 
 def get_model_config(models_dir: Path, model_name: str) -> dict:
-    """Return the model config with credential references masked (not resolved).
-
-    Returns raw config from the DB (or config.yaml fallback) so that the
-    masked values are round-trippable — e.g. ``env:CLICKHOUSE_PASSWORD``
-    becomes ``env:***``, not ``***`` (which would fail PUT validation).
-    """
+    """Return the tools config with credential references masked."""
     registry = load_registry(models_dir)
     if model_name not in registry:
         raise KeyError(f"Model '{model_name}' not found in registry.")
-    from core.vizgrams_db import load_database_config_from_db, load_model_config_from_db
-    # Read raw (unresolved) config — DB first, then config.yaml fallback
+    from core.vizgrams_db import load_model_config_from_db
     tools = load_model_config_from_db(model_name)
-    db_cfg = load_database_config_from_db(model_name)
-    if tools is None or db_cfg is None:
+    if tools is None:
         from core.model_config import load_config_yaml
         model_dir = models_dir / model_name
         yaml_data = load_config_yaml(model_dir) if (model_dir / "config.yaml").exists() else {}
-        if tools is None:
-            tools = yaml_data.get("tools", {})
-        if db_cfg is None:
-            db_cfg = yaml_data.get("database", {})
-    import os
-    deployment_backend = os.environ.get("VZ_DATABASE_BACKEND")
-    return {
-        "tools": _mask_credentials(tools),
-        "database": _mask_credential_values(db_cfg),
-        "database_managed": deployment_backend is not None,
-    }
+        tools = yaml_data.get("tools", {})
+    return {"tools": _mask_credentials(tools)}
 
 
 def update_model_config(
     models_dir: Path, model_name: str, data: dict
 ) -> dict:
-    """Update tools and/or database config in the DB. Returns masked config."""
+    """Update tools config in the DB. Returns masked config."""
     registry = load_registry(models_dir)
     if model_name not in registry:
         raise KeyError(f"Model '{model_name}' not found in registry.")
 
-    from core.vizgrams_db import set_model_database_config, set_model_tools_config
+    from core.vizgrams_db import set_model_tools_config
 
     if "tools" in data and data["tools"] is not None:
         _validate_no_literal_credentials(data["tools"])
         set_model_tools_config(model_name, data["tools"])
-
-    if "database" in data and data["database"] is not None:
-        _validate_no_literal_credentials_flat(data["database"])
-        set_model_database_config(model_name, data["database"])
 
     model_dir = models_dir / model_name
     append_audit(model_dir, "config_updated", "Updated via API", actor=current_actor())
@@ -291,16 +271,6 @@ def _validate_no_literal_credentials(tools: dict) -> None:
                     f"Tool '{tool_name}': credential '{key}' must use "
                     f"'env:VAR_NAME' or 'file:secret_name', not a literal value."
                 )
-
-
-def _validate_no_literal_credentials_flat(cfg: dict) -> None:
-    """Raise ValueError if a flat config dict has literal credential values."""
-    for key, val in cfg.items():
-        if key in _CREDENTIAL_KEYS and isinstance(val, str) and not val.startswith(("env:", "file:")):
-            raise ValueError(
-                f"Credential '{key}' must use 'env:VAR_NAME' or "
-                f"'file:secret_name', not a literal value."
-            )
 
 
 # ---------------------------------------------------------------------------

@@ -93,14 +93,11 @@ class AccessRulesUpdate(BaseModel):
 class ModelConfigResponse(BaseModel):
     """GET /model/{model}/config — credential values are masked."""
     tools: dict[str, Any] = {}
-    database: dict[str, Any] = {}
-    database_managed: bool = False  # True when VZ_DATABASE_BACKEND is set (deployment-level)
 
 
 class ModelConfigUpdate(BaseModel):
-    """PUT /model/{model}/config — update tools and/or database config."""
+    """PUT /model/{model}/config — update tools config."""
     tools: dict[str, Any] | None = None
-    database: dict[str, Any] | None = None
 
 
 class ToolParamInfo(BaseModel):

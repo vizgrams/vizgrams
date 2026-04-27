@@ -34,19 +34,13 @@ def isolate_registry_db(monkeypatch):
     an empty dict, which is exactly what these tests exercise.
     Config functions use an in-memory store so update/get round-trips work.
     """
-    _config_store: dict[str, dict] = {}  # model_id → {tools_config, database_config}
+    _config_store: dict[str, dict] = {}
 
     def _set_tools(model_id, config, **kw):
         _config_store.setdefault(model_id, {})["tools_config"] = config
 
-    def _set_db(model_id, config, **kw):
-        _config_store.setdefault(model_id, {})["database_config"] = config
-
     def _get_tools(model_id, **kw):
         return _config_store.get(model_id, {}).get("tools_config")
-
-    def _get_db(model_id, **kw):
-        return _config_store.get(model_id, {}).get("database_config")
 
     monkeypatch.setattr("core.vizgrams_db.load_registry_from_db", lambda db_path=None: {})
     monkeypatch.setattr("core.vizgrams_db.upsert_model_in_db", lambda *a, **kw: None)
@@ -54,9 +48,7 @@ def isolate_registry_db(monkeypatch):
     monkeypatch.setattr("core.vizgrams_db.get_model_access_rules", lambda *a, **kw: None)
     monkeypatch.setattr("core.vizgrams_db.set_model_access_rules", lambda *a, **kw: None)
     monkeypatch.setattr("core.vizgrams_db.set_model_tools_config", _set_tools)
-    monkeypatch.setattr("core.vizgrams_db.set_model_database_config", _set_db)
     monkeypatch.setattr("core.vizgrams_db.load_model_config_from_db", _get_tools)
-    monkeypatch.setattr("core.vizgrams_db.load_database_config_from_db", _get_db)
 
 
 @pytest.fixture
@@ -403,7 +395,6 @@ def test_get_model_config_returns_masked_credentials(models_dir, base_dir):
             "jira": {"enabled": True, "server": "https://jira.test", "api_token": "file:jira_token"},
             "git": {"enabled": True, "org": "MyOrg", "token": "env:GH_TOKEN"},
         },
-        "database": {"backend": "sqlite"},
     }))
     result = get_model_config(models_dir, "alpha")
     assert result["tools"]["jira"]["server"] == "https://jira.test"
@@ -425,10 +416,8 @@ def test_update_model_config_stores_in_db(models_dir, base_dir):
     _make_model_dir(models_dir, "alpha")
     result = update_model_config(models_dir, "alpha", {
         "tools": {"file": {"enabled": True}},
-        "database": {"backend": "duckdb", "path": "data/data.duckdb"},
     })
     assert result["tools"]["file"]["enabled"] is True
-    assert result["database"]["backend"] == "duckdb"
 
 
 def test_update_model_config_rejects_literal_credential(models_dir, base_dir):
@@ -462,17 +451,6 @@ def test_update_model_config_accepts_file_credential(models_dir, base_dir):
         "tools": {"jira": {"enabled": True, "api_token": "file:jira_token"}},
     })
     assert result["tools"]["jira"]["api_token"] == "file:***"
-
-
-def test_update_model_config_rejects_literal_db_credential(models_dir, base_dir):
-    _write_registry(models_dir, {
-        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
-    })
-    _make_model_dir(models_dir, "alpha")
-    with pytest.raises(ValueError, match="env:VAR_NAME"):
-        update_model_config(models_dir, "alpha", {
-            "database": {"backend": "clickhouse", "password": "raw_password"},
-        })
 
 
 # ---------------------------------------------------------------------------

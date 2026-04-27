@@ -139,13 +139,10 @@ _CLICKHOUSE_DEFAULTS: dict = {
 def load_database_config(model_dir: Path) -> dict:
     """Return the database config for a model, with defaults and credentials resolved.
 
-    Resolution order:
-      1. ``VZ_DATABASE_BACKEND`` env var — deployment-level override.
-         When set, all models use this backend with connection details from
-         env vars (CLICKHOUSE_HOST, etc.). Per-model database config is ignored.
-      2. Per-model DB column (``database_config`` in models table).
-      3. Per-model ``config.yaml`` on disk (legacy fallback).
-      4. Defaults (SQLite).
+    The backend is set at the deployment level via ``VZ_DATABASE_BACKEND``
+    (defaults to ``sqlite``).  Connection details come from env vars
+    (``CLICKHOUSE_HOST``, ``CLICKHOUSE_PASSWORD``, etc.).  The database name
+    is derived from the model directory name.
 
     The returned dict always contains at least ``backend``.  Additional keys
     depend on the backend:
@@ -155,24 +152,8 @@ def load_database_config(model_dir: Path) -> dict:
       duckdb     → ``path`` (relative to model_dir)
     """
     model_dir = Path(model_dir)
-
-    # Deployment-level override — all models share the same backend
-    deployment_backend = os.environ.get("VZ_DATABASE_BACKEND")
-    if deployment_backend:
-        return _apply_database_defaults({"backend": deployment_backend}, model_dir)
-
-    from core.vizgrams_db import load_database_config_from_db
-    db_block = load_database_config_from_db(model_dir.name)
-
-    # Fallback: file-based
-    if db_block is None:
-        path = model_dir / "config.yaml"
-        if path.exists():
-            db_block = load_config_yaml(model_dir).get("database") or {}
-        else:
-            db_block = {}
-
-    return _apply_database_defaults(db_block, model_dir)
+    backend = os.environ.get("VZ_DATABASE_BACKEND", "sqlite")
+    return _apply_database_defaults({"backend": backend}, model_dir)
 
 
 def _apply_database_defaults(db_block: dict, model_dir: Path) -> dict:
