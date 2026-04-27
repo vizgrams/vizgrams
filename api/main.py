@@ -77,11 +77,9 @@ async def lifespan(app: FastAPI):
         if cfg_seeded:
             _startup_logger.info("Seeded config for %d model(s) from config.yaml into DB", cfg_seeded)
 
-    # Discover system tools from VZ_TOOLS_DIR (VG-150).
+    # Discover external tools from VZ_TOOLS_DIR (VG-150).
     from core.tool_service import init_system_tools
-    n_tools = init_system_tools()
-    if n_tools:
-        _startup_logger.info("Registered %d system tool(s)", n_tools)
+    init_system_tools()
     yield
 
 

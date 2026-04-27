@@ -7,7 +7,7 @@ import textwrap
 
 from core.tool_service import (
     BUILTIN_REGISTRY,
-    SYSTEM_REGISTRY,
+    EXTERNAL_REGISTRY,
     _resolve_class,
     discover_system_tools,
     list_available_tools,
@@ -119,14 +119,14 @@ class TestDiscoverSystemTools:
 class TestResolveClassOrder:
     def test_builtin_takes_priority(self, tmp_path, monkeypatch):
         """Built-in registry wins over system registry."""
-        monkeypatch.setitem(SYSTEM_REGISTRY, "jira", type("FakeJira", (), {}))
+        monkeypatch.setitem(EXTERNAL_REGISTRY, "jira", type("FakeJira", (), {}))
         cls = _resolve_class("jira", {}, tmp_path)
         assert cls is BUILTIN_REGISTRY["jira"]
 
     def test_system_tool_found(self, tmp_path, monkeypatch):
         class FakeTool:
             pass
-        monkeypatch.setitem(SYSTEM_REGISTRY, "my_tool", FakeTool)
+        monkeypatch.setitem(EXTERNAL_REGISTRY, "my_tool", FakeTool)
         cls = _resolve_class("my_tool", {}, tmp_path)
         assert cls is FakeTool
 
@@ -184,7 +184,7 @@ class TestListAvailableTools:
         assert "jira" in names
         assert "git" in names
 
-    def test_includes_system_tools(self, monkeypatch):
+    def test_includes_external_tools(self, monkeypatch):
         class FakeTool(BaseTool):
             PARAMS = {"url": {"required": True, "description": "URL"}}
             def run(self, command, params=None):
@@ -192,10 +192,10 @@ class TestListAvailableTools:
             def list_commands(self):
                 return []
 
-        monkeypatch.setitem(SYSTEM_REGISTRY, "fake", FakeTool)
+        monkeypatch.setitem(EXTERNAL_REGISTRY, "fake", FakeTool)
         result = list_available_tools()
         fake = next(t for t in result if t["name"] == "fake")
-        assert fake["source"] == "system"
+        assert fake["source"] == "external"
         assert "url" in fake["params"]
 
     def test_source_field(self):

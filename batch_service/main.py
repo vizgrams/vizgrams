@@ -73,11 +73,9 @@ async def lifespan(app: FastAPI):
     except Exception:
         _log.exception("Error during orphaned job cleanup")
 
-    # Discover system tools from VZ_TOOLS_DIR
+    # Discover external tools from VZ_TOOLS_DIR
     from core.tool_service import init_system_tools
-    n_tools = init_system_tools()
-    if n_tools:
-        _log.info("Registered %d system tool(s)", n_tools)
+    init_system_tools()
 
     # Start background scheduler
     start_scheduler(models_dir)

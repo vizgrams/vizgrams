@@ -12,8 +12,6 @@ import os
 import sys
 from pathlib import Path
 
-import yaml
-
 from core.model_config import resolve_tool_config
 from tools.base import BaseTool
 from tools.file.tool import FileTool
@@ -34,7 +32,7 @@ BUILTIN_REGISTRY: dict[str, type] = {
     "garmin": GarminTool,
 }
 
-SYSTEM_REGISTRY: dict[str, type] = {}
+EXTERNAL_REGISTRY: dict[str, type] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +74,7 @@ def discover_system_tools(tools_dirs: list[Path]) -> dict[str, type]:
                 if cls is not None:
                     discovered[name] = cls
             except Exception:
-                logger.exception("Failed to load system tool '%s' from %s", name, tool_py)
+                logger.exception("Failed to load external tool '%s' from %s", name, tool_py)
     return discovered
 
 
@@ -102,7 +100,7 @@ def _import_tool_class(name: str, tool_py: Path) -> type | None:
 
 
 def init_system_tools() -> int:
-    """Discover and register system tools from VZ_TOOLS_DIR.
+    """Discover and register external tools from VZ_TOOLS_DIR.
 
     VZ_TOOLS_DIR is a colon-separated list of directories, like PATH.
     Call once at app startup. Returns the number of tools discovered.
@@ -112,10 +110,10 @@ def init_system_tools() -> int:
         return 0
     dirs = [Path(d) for d in env.split(":") if d]
     discovered = discover_system_tools(dirs)
-    SYSTEM_REGISTRY.update(discovered)
+    EXTERNAL_REGISTRY.update(discovered)
     if discovered:
         logger.info(
-            "Discovered %d system tool(s): %s",
+            "Discovered %d external tool(s): %s",
             len(discovered),
             ", ".join(sorted(discovered)),
         )
@@ -131,10 +129,10 @@ def list_available_tools() -> list[dict]:
             "source": "builtin",
             "params": getattr(cls, "PARAMS", {}),
         })
-    for name, cls in SYSTEM_REGISTRY.items():
+    for name, cls in EXTERNAL_REGISTRY.items():
         result.append({
             "name": name,
-            "source": "system",
+            "source": "external",
             "params": getattr(cls, "PARAMS", {}),
         })
     return result
@@ -241,8 +239,8 @@ def get_tool_instance(tool_name: str, model_dir: Path):
 def _resolve_class(tool_name: str, cfg: dict, model_dir: Path) -> type | None:
     if tool_name in BUILTIN_REGISTRY:
         return BUILTIN_REGISTRY[tool_name]
-    if tool_name in SYSTEM_REGISTRY:
-        return SYSTEM_REGISTRY[tool_name]
+    if tool_name in EXTERNAL_REGISTRY:
+        return EXTERNAL_REGISTRY[tool_name]
     if "module" in cfg and "class" in cfg:
         return _load_custom_class(tool_name, cfg, model_dir)
     return None
