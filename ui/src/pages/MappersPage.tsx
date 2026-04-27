@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
-import { Loader2, Play, Save } from 'lucide-react'
+import { Loader2, Play, Plus, Save } from 'lucide-react'
 import { useModel } from '@/context/ModelContext'
 import { Spinner, ErrorMessage } from '@/components/Layout'
 import { YamlEditor } from '@/components/YamlEditor'
@@ -25,6 +25,8 @@ export function MappersPage() {
   const [editMode, setEditMode] = useState<'builder' | 'yaml'>('yaml')
   const [validStatus, setValidStatus] = useState<ValidStatus>('idle')
   const [validErrors, setValidErrors] = useState<{ path: string; message: string }[]>([])
+  const [isNewMode, setIsNewMode] = useState(false)
+  const [mapperRefresh, setMapperRefresh] = useState(0)
 
   useEffect(() => {
     setLoading(true)
@@ -35,7 +37,7 @@ export function MappersPage() {
         if (list.length > 0 && !selectedName) selectMapper(list[0])
       })
       .catch((e) => { setError(e.message); setLoading(false) })
-  }, [api])
+  }, [api, mapperRefresh])
 
   function selectMapper(m: MapperSummary) {
     setSelectedName(m.name)
@@ -53,17 +55,35 @@ export function MappersPage() {
     }
   }
 
+  function startNew() {
+    setSelectedName(null)
+    setSelectedEntity(null)
+    setIsNewMode(true)
+    const template = `name: new_mapper\nentity: EntityName\ntool: tool_name\ncommand: command_name\nsources:\n  - alias: src\n    table: raw_table_name\ntarget_columns:\n  - name: id\n    expression: src.id\n`
+    setEditorContent(template)
+    setSavedContent('')
+    setValidStatus('idle')
+    setValidErrors([])
+  }
+
   async function handleSave() {
-    if (!selectedName || saving) return
+    const saveName = isNewMode
+      ? (editorContent.match(/^name:\s*(\S+)/m)?.[1] ?? 'new_mapper')
+      : selectedName
+    if (!saveName || saving) return
     setSaving(true); setValidErrors([])
     try {
-      const updated = await api.saveMapper(selectedName, editorContent)
+      const updated = await api.saveMapper(saveName, editorContent)
       const yaml = updated.raw_yaml ?? editorContent
       setSavedContent(yaml)
-      setMappers(prev => prev.map(m => m.name === selectedName ? { ...m, raw_yaml: yaml } : m))
-      if (selectedEntity) {
+      setSelectedName(saveName)
+      setIsNewMode(false)
+      setMapperRefresh(c => c + 1)
+      const entity = updated.entity ?? selectedEntity
+      if (entity) {
+        setSelectedEntity(entity)
         setValidStatus('pending')
-        api.validateMapper(selectedEntity)
+        api.validateMapper(entity)
           .then((r) => { setValidStatus(r.valid ? 'valid' : 'invalid'); setValidErrors(r.errors) })
           .catch(() => setValidStatus('idle'))
       }
@@ -96,15 +116,25 @@ export function MappersPage() {
     <div className="flex h-full -mx-6 -my-6 overflow-hidden">
       {/* Left: mapper list */}
       <aside className="w-56 shrink-0 border-r flex flex-col overflow-hidden bg-card">
-        <div className="px-4 py-3 border-b">
-          <h2 className="text-sm font-semibold">Mappers</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">{mappers.length} defined</p>
+        <div className="px-3 py-3 border-b flex items-center justify-between shrink-0">
+          <span className="text-sm font-semibold">Mappers</span>
+          <button onClick={startNew} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+            <Plus className="h-3.5 w-3.5" /> New
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto py-1">
+          {isNewMode && (
+            <div className="w-full text-left px-4 py-2.5 border-b border-border/30 bg-muted">
+              <div className="text-sm font-medium text-foreground/50 italic flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
+                {editorContent.match(/^name:\s*(\S+)/m)?.[1] ?? 'new_mapper'}
+              </div>
+            </div>
+          )}
           {mappers.map((m) => (
             <button
               key={m.name}
-              onClick={() => selectMapper(m)}
+              onClick={() => { selectMapper(m); setIsNewMode(false) }}
               title={m.name}
               className={cn(
                 'w-full text-left px-4 py-2 text-sm transition-colors',
@@ -129,7 +159,7 @@ export function MappersPage() {
 
       {/* Right: detail + editor */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        {!selectedName ? (
+        {!selectedName && !isNewMode ? (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             Select a mapper to edit
           </div>
@@ -137,9 +167,9 @@ export function MappersPage() {
           <>
             {/* Toolbar */}
             <div className="shrink-0 border-b px-6 py-3 flex items-center gap-2">
-              <h1 className="text-lg font-semibold flex-1">{selectedName}</h1>
+              <h1 className="text-lg font-semibold flex-1">{isNewMode ? (editorContent.match(/^name:\s*(\S+)/m)?.[1] ?? 'new_mapper') : selectedName}</h1>
               {dirty && !saving && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="Unsaved changes" />}
-              <button disabled={!dirty || saving} onClick={handleSave}
+              <button disabled={(!dirty && !isNewMode) || saving} onClick={handleSave}
                 className="flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs hover:bg-muted transition-colors disabled:opacity-40">
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 {saving ? 'Saving…' : 'Save'}
@@ -164,8 +194,8 @@ export function MappersPage() {
                 builderContent={<p className="text-sm text-muted-foreground">Visual builder coming soon.</p>}
                 yamlContent={
                   <YamlEditor
-                    name={`${selectedName}.yaml`}
-                    historyKey={{ type: 'mapper', name: selectedName }}
+                    name={`${selectedName ?? 'new_mapper'}.yaml`}
+                    historyKey={{ type: 'mapper', name: selectedName ?? 'new_mapper' }}
                     content={editorContent}
                     savedContent={savedContent}
                     onChange={setEditorContent}
@@ -174,7 +204,7 @@ export function MappersPage() {
                     hideSaveButton
                   />
                 }
-                historyKey={{ type: 'mapper', name: selectedName }}
+                historyKey={{ type: 'mapper', name: selectedName ?? 'new_mapper' }}
                 onRestoreVersion={(content) => setEditorContent(content)}
                 validErrors={validErrors}
               />
