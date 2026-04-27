@@ -94,6 +94,7 @@ class ModelConfigResponse(BaseModel):
     """GET /model/{model}/config — credential values are masked."""
     tools: dict[str, Any] = {}
     database: dict[str, Any] = {}
+    database_managed: bool = False  # True when VZ_DATABASE_BACKEND is set (deployment-level)
 
 
 class ModelConfigUpdate(BaseModel):

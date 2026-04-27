@@ -223,9 +223,12 @@ def get_model_config(models_dir: Path, model_name: str) -> dict:
             tools = yaml_data.get("tools", {})
         if db_cfg is None:
             db_cfg = yaml_data.get("database", {})
+    import os
+    deployment_backend = os.environ.get("VZ_DATABASE_BACKEND")
     return {
         "tools": _mask_credentials(tools),
         "database": _mask_credential_values(db_cfg),
+        "database_managed": deployment_backend is not None,
     }
 
 

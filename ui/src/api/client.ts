@@ -577,6 +577,7 @@ export const setModelAccess = (name: string, rules: AccessRule[] | null) =>
 export interface ModelConfig {
   tools: Record<string, Record<string, unknown>>
   database: Record<string, unknown>
+  database_managed: boolean
 }
 export const getModelConfig = (name: string) => get<ModelConfig>(`/api/v1/model/${name}/config`)
 export const updateModelConfig = (name: string, data: { tools?: Record<string, Record<string, unknown>>; database?: Record<string, unknown> }) =>

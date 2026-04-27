@@ -488,7 +488,8 @@ function ConfigSection({ modelName }: { modelName: string }) {
       setSaving(false)
       return
     }
-    updateModelConfig(modelName, { tools, database })
+    const payload = config?.database_managed ? { tools } : { tools, database }
+    updateModelConfig(modelName, payload)
       .then((c) => {
         setConfig(c)
         setEditTools(JSON.stringify(c.tools, null, 2))
@@ -557,14 +558,16 @@ function ConfigSection({ modelName }: { modelName: string }) {
               onChange={(e) => setEditTools(e.target.value)}
             />
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Database</label>
-            <textarea
-              className="w-full font-mono text-xs border rounded p-2 bg-muted/30 min-h-[80px]"
-              value={editDb}
-              onChange={(e) => setEditDb(e.target.value)}
-            />
-          </div>
+          {!config?.database_managed && (
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Database</label>
+              <textarea
+                className="w-full font-mono text-xs border rounded p-2 bg-muted/30 min-h-[80px]"
+                value={editDb}
+                onChange={(e) => setEditDb(e.target.value)}
+              />
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
             Credentials must use <code className="font-mono">env:VAR_NAME</code> or <code className="font-mono">file:secret_name</code> — literal values are rejected.
           </p>
@@ -592,21 +595,25 @@ function ConfigReadOnly({ config }: { config: ModelConfig }) {
           }
         </div>
       </div>
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground w-28 shrink-0">Backend</span>
-        <span className="text-xs">{String(config.database.backend || 'sqlite')}</span>
-      </div>
-      {config.database.host != null && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground w-28 shrink-0">Host</span>
-          <span className="text-xs font-mono">{String(config.database.host)}</span>
-        </div>
-      )}
-      {config.database.database != null && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground w-28 shrink-0">Database</span>
-          <span className="text-xs font-mono">{String(config.database.database)}</span>
-        </div>
+      {!config.database_managed && (
+        <>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground w-28 shrink-0">Backend</span>
+            <span className="text-xs">{String(config.database.backend || 'sqlite')}</span>
+          </div>
+          {config.database.host != null && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground w-28 shrink-0">Host</span>
+              <span className="text-xs font-mono">{String(config.database.host)}</span>
+            </div>
+          )}
+          {config.database.database != null && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground w-28 shrink-0">Database</span>
+              <span className="text-xs font-mono">{String(config.database.database)}</span>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
