@@ -11,6 +11,8 @@ from api.dependencies import (
     require_system_admin,
 )
 from api.schemas.model import (
+    AccessRule,
+    AccessRulesUpdate,
     ArchiveRequest,
     ModelCreate,
     ModelDetail,
@@ -117,5 +119,26 @@ def delete_model(
 ):
     try:
         model_service.delete_model(models_dir, model, delete_files=delete_files)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{model}/access", response_model=list[AccessRule] | None)
+def get_access_rules(
+    model: str,
+    _=Depends(require_system_admin),
+):
+    return model_service.get_access_rules(model)
+
+
+@router.put("/{model}/access", response_model=list[AccessRule] | None)
+def set_access_rules(
+    model: str,
+    body: AccessRulesUpdate,
+    models_dir=Depends(get_models_dir),
+    _=Depends(require_system_admin),
+):
+    try:
+        return model_service.set_access_rules(models_dir, model, body.rules)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

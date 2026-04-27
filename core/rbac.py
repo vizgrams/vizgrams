@@ -101,13 +101,32 @@ def get_model_role(model_dir: Path, email: str) -> ModelRole | None:
 
     Resolution order:
     1. System admins → ADMIN unconditionally.
-    2. No ``config.yaml`` or no ``access:`` block → ADMIN (open by default).
-    3. First matching entry in the ``access:`` list → that role.
-    4. No match → ``None`` (model hidden, all requests rejected with 403).
+    2. DB access_rules set → use those (empty list = open/ADMIN).
+    3. No DB rules → fall back to ``config.yaml`` access block.
+    4. No access block anywhere → ADMIN (open by default).
+    5. No match in access list → ``None`` (model hidden, 403).
     """
     if is_system_admin(email):
         return ModelRole.ADMIN
 
+    model_id = Path(model_dir).name
+    from core.vizgrams_db import get_model_access_rules
+    db_rules = get_model_access_rules(model_id)
+
+    if db_rules is not None:
+        # DB is authoritative; empty list means open to all authenticated users
+        if not db_rules:
+            return ModelRole.ADMIN
+        for entry in db_rules:
+            if _matches(email, entry.get("email", "")):
+                role_str = entry.get("role", "").upper()
+                try:
+                    return ModelRole[role_str]
+                except KeyError:
+                    continue
+        return None
+
+    # Fall back to config.yaml
     config_path = Path(model_dir) / "config.yaml"
     if not config_path.exists():
         return ModelRole.ADMIN

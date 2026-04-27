@@ -15,6 +15,11 @@ class ModelStatus(StrEnum):
     archived = "archived"
 
 
+class AccessRule(BaseModel):
+    email: str
+    role: str  # VIEWER | OPERATOR | ADMIN
+
+
 class ModelSummary(BaseModel):
     name: str
     display_name: str
@@ -46,13 +51,14 @@ class AuditEntry(BaseModel):
     timestamp: str
     event: str
     actor: str
-    detail: str
+    detail: str | Any
 
 
 class ModelDetail(ModelSummary):
     config: ConfigSummary | None = None
     database: DbStats
     audit: list[AuditEntry] = []
+    access_rules: list[AccessRule] | None = None
 
 
 class ModelCreate(BaseModel):
@@ -78,3 +84,7 @@ class ArchiveRequest(BaseModel):
 
 class SetActiveResponse(BaseModel):
     active: str
+
+
+class AccessRulesUpdate(BaseModel):
+    rules: list[AccessRule] | None  # None clears DB rules (reverts to config.yaml fallback)

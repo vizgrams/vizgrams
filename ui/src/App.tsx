@@ -21,6 +21,7 @@ import { ExploreShell } from '@/pages/ExploreShell'
 import { AccountPage } from '@/pages/AccountPage'
 import { FeedPage } from '@/pages/FeedPage'
 import { SavedPage } from '@/pages/SavedPage'
+import { ModelsPage } from '@/pages/admin/ModelsPage'
 
 // ---------------------------------------------------------------------------
 // Route guard — renders children only if the user meets minRole, else 403.
@@ -75,6 +76,7 @@ export default function App() {
             <Route path="/graph" element={<ProtectedRoute minRole="creator"><GraphPage /></ProtectedRoute>} />
 
             {/* Admin — admin only */}
+            <Route path="/admin/models" element={<ProtectedRoute minRole="admin"><ModelsPage /></ProtectedRoute>} />
             <Route path="/tools" element={<ProtectedRoute minRole="admin"><ToolsPage /></ProtectedRoute>} />
             <Route path="/mappers" element={<ProtectedRoute minRole="admin"><MappersPage /></ProtectedRoute>} />
             <Route path="/entities" element={<ProtectedRoute minRole="admin"><EntitiesPage /></ProtectedRoute>} />

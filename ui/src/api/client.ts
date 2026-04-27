@@ -8,7 +8,49 @@
 export interface ModelSummary {
   name: string
   display_name: string
+  description: string
+  owner: string
+  created_at: string
   status: string
+  tags: string[]
+  is_active: boolean
+}
+
+export interface AccessRule {
+  email: string
+  role: string
+}
+
+export interface ModelDetail extends ModelSummary {
+  config: { tools_enabled: string[]; managed: Record<string, unknown> } | null
+  database: {
+    path: string
+    present: boolean
+    raw_tables: number
+    raw_row_count: number
+    semantic_tables: number
+    semantic_row_count: number
+    last_extract_at: string | null
+    last_map_at: string | null
+  }
+  audit: { timestamp: string; event: string; actor: string; detail: string }[]
+  access_rules: AccessRule[] | null
+}
+
+export interface ModelCreate {
+  name: string
+  display_name: string
+  description: string
+  owner: string
+  status?: string
+  tags?: string[]
+}
+
+export interface ModelPatch {
+  display_name?: string
+  description?: string
+  owner?: string
+  tags?: string[]
 }
 
 export interface EntitySummary {
@@ -498,7 +540,37 @@ export interface FunctionDoc {
   category: string
 }
 
+async function del(path: string): Promise<void> {
+  const res = await fetch(path, { method: 'DELETE' })
+  if (!res.ok) {
+    const detail = await res.text()
+    throw new Error(`${res.status}: ${detail}`)
+  }
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = await res.text()
+    throw new Error(`${res.status}: ${detail}`)
+  }
+  return res.json() as Promise<T>
+}
+
 export const listModels = () => get<ModelSummary[]>('/api/v1/model')
+export const getModel = (name: string) => get<ModelDetail>(`/api/v1/model/${name}`)
+export const createModel = (data: ModelCreate) => post<ModelDetail>('/api/v1/model', data)
+export const updateModel = (name: string, data: ModelPatch) => patch<ModelDetail>(`/api/v1/model/${name}`, data)
+export const archiveModel = (name: string, reason?: string) =>
+  post<ModelDetail>(`/api/v1/model/${name}/archive`, { reason: reason ?? null })
+export const deleteModel = (name: string) => del(`/api/v1/model/${name}`)
+export const getModelAccess = (name: string) => get<AccessRule[] | null>(`/api/v1/model/${name}/access`)
+export const setModelAccess = (name: string, rules: AccessRule[] | null) =>
+  put<AccessRule[] | null>(`/api/v1/model/${name}/access`, { rules })
 export type PlatformRole = 'admin' | 'creator' | 'viewer'
 export type MeResponse = {
   email: string | null

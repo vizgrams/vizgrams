@@ -167,6 +167,72 @@ class TestGetModelRole:
     def test_role_hierarchy(self):
         assert ModelRole.VIEWER < ModelRole.OPERATOR < ModelRole.ADMIN
 
+    # --- DB access rules take priority over config.yaml ---
+
+    def test_db_rules_override_config_yaml(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("DEV_USER", raising=False)
+        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
+        # config.yaml says ADMIN for everyone
+        _write_config(tmp_path, access=[{"email": "*", "role": "ADMIN"}])
+        # DB says VIEWER for this user
+        monkeypatch.setattr(
+            "core.vizgrams_db.get_model_access_rules",
+            lambda model_id, db_path=None: [{"email": "alice@example.com", "role": "VIEWER"}],
+        )
+        assert get_model_role(tmp_path, "alice@example.com") == ModelRole.VIEWER
+
+    def test_db_empty_rules_means_open_admin(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("DEV_USER", raising=False)
+        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
+        # config.yaml restricts to VIEWER
+        _write_config(tmp_path, access=[{"email": "*", "role": "VIEWER"}])
+        # DB has an empty list (explicitly open)
+        monkeypatch.setattr(
+            "core.vizgrams_db.get_model_access_rules",
+            lambda model_id, db_path=None: [],
+        )
+        assert get_model_role(tmp_path, "alice@example.com") == ModelRole.ADMIN
+
+    def test_db_rules_none_falls_back_to_config(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("DEV_USER", raising=False)
+        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
+        _write_config(tmp_path, access=[{"email": "alice@example.com", "role": "OPERATOR"}])
+        # DB returns None → fall back to config.yaml
+        monkeypatch.setattr(
+            "core.vizgrams_db.get_model_access_rules",
+            lambda model_id, db_path=None: None,
+        )
+        assert get_model_role(tmp_path, "alice@example.com") == ModelRole.OPERATOR
+
+    def test_db_rules_no_match_returns_none(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("DEV_USER", raising=False)
+        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
+        monkeypatch.setattr(
+            "core.vizgrams_db.get_model_access_rules",
+            lambda model_id, db_path=None: [{"email": "alice@example.com", "role": "ADMIN"}],
+        )
+        assert get_model_role(tmp_path, "outsider@other.com") is None
+
+    def test_db_domain_wildcard_in_rules(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("DEV_USER", raising=False)
+        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
+        monkeypatch.setattr(
+            "core.vizgrams_db.get_model_access_rules",
+            lambda model_id, db_path=None: [{"email": "*@acme.com", "role": "OPERATOR"}],
+        )
+        assert get_model_role(tmp_path, "bob@acme.com") == ModelRole.OPERATOR
+        assert get_model_role(tmp_path, "bob@other.com") is None
+
+    def test_system_admin_bypasses_db_rules(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VZ_SYSTEM_ADMINS", "admin@example.com")
+        monkeypatch.delenv("DEV_USER", raising=False)
+        # DB says VIEWER
+        monkeypatch.setattr(
+            "core.vizgrams_db.get_model_access_rules",
+            lambda model_id, db_path=None: [{"email": "*", "role": "VIEWER"}],
+        )
+        assert get_model_role(tmp_path, "admin@example.com") == ModelRole.ADMIN
+
 
 # ---------------------------------------------------------------------------
 # is_creator

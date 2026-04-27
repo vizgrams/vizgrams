@@ -4,12 +4,12 @@
 import { useState } from 'react'
 import { useApi } from '@/hooks/useApi'
 import { useModel } from '@/context/ModelContext'
-import { ErrorMessage, Spinner } from '@/components/Layout'
+
 import { ExpressionEditor } from '@/components/ExpressionEditor'
 import { YamlEditor } from '@/components/YamlEditor'
 import { EditSection } from '@/pages/explore/EditSection'
 import type { ValidStatus } from '@/components/StatusBadge'
-import { Plus, Save, Play, Eye, Loader2, ChevronRight, Check } from 'lucide-react'
+import { Plus, Save, Play, Eye, Loader2, Check } from 'lucide-react'
 import { cn, pollJob } from '@/lib/utils'
 import type { FeatureSummary } from '@/api/client'
 
@@ -45,7 +45,7 @@ function featureToYaml(draft: FeatureDraft): string {
 }
 
 // ---------------------------------------------------------------------------
-// Form fields (no buttons — buttons live in the top header)
+// Detail panel (form fields — buttons live in the toolbar)
 // ---------------------------------------------------------------------------
 
 function DetailPanel({ draft, isNew, onChange }: {
@@ -235,8 +235,7 @@ export function FeaturesPage() {
       setError(msg)
       setValidStatus('invalid')
       setValidErrors([{ path: '', message: msg }])
-    }
-    finally { setSaving(false) }
+    } finally { setSaving(false) }
   }
 
   async function handleReconcile() {
@@ -260,81 +259,90 @@ export function FeaturesPage() {
   const canSave = !saving && !!draft?.name && !!draft?.feature_id && !!draft?.expr
 
   return (
-    <div className="flex gap-6 h-full">
+    <div className="flex h-full -mx-6 -my-6 overflow-hidden">
       {/* Left: feature list */}
-      <div className="w-64 shrink-0 space-y-3">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold">Features</h1>
+      <aside className="w-56 shrink-0 border-r flex flex-col overflow-hidden bg-card">
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold">Features</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{features.length} defined</p>
+          </div>
           <button
             onClick={handleNew}
-            className="flex items-center gap-1 text-xs px-2.5 py-1.5 border rounded-md hover:bg-muted transition-colors"
+            title="New feature"
+            className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
           >
-            <Plus className="h-3.5 w-3.5" /> New
+            <Plus className="h-4 w-4" />
           </button>
         </div>
 
-        <select
-          className="w-full text-sm border border-border rounded-md px-2 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-          value={filterEntity}
-          onChange={(e) => setFilterEntity(e.target.value)}
-        >
-          <option value="all">All entities</option>
-          {entities.map((e) => <option key={e.name} value={e.name}>{e.name}</option>)}
-        </select>
+        <div className="px-3 py-2 border-b">
+          <select
+            className="w-full text-xs border border-border rounded px-2 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+            value={filterEntity}
+            onChange={(e) => setFilterEntity(e.target.value)}
+          >
+            <option value="all">All entities</option>
+            {entities.map((e) => <option key={e.name} value={e.name}>{e.name}</option>)}
+          </select>
+        </div>
 
-        {allFeaturesState.status === 'loading' && <Spinner />}
-        {allFeaturesState.status === 'error' && <ErrorMessage message={allFeaturesState.error} />}
-
-        {allFeaturesState.status === 'ok' && (
-          <div className="space-y-3">
-            {Object.entries(grouped).map(([entity, fns]) => (
-              <div key={entity}>
-                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-1 mb-1">
-                  {entity}
-                </div>
-                <div className="space-y-0.5">
+        <div className="flex-1 overflow-y-auto py-1">
+          {allFeaturesState.status === 'loading' && (
+            <p className="px-4 py-3 text-xs text-muted-foreground">Loading…</p>
+          )}
+          {allFeaturesState.status === 'error' && (
+            <p className="px-4 py-3 text-xs text-red-600">{allFeaturesState.error}</p>
+          )}
+          {allFeaturesState.status === 'ok' && (
+            <>
+              {Object.entries(grouped).map(([entity, fns]) => (
+                <div key={entity}>
+                  <div className="px-4 pt-2 pb-0.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    {entity}
+                  </div>
                   {fns.map((f) => {
                     const id = f.feature_id ?? `${f.entity}.${f.name}`
-                    const active = selectedId === id
                     return (
                       <button
                         key={id}
                         onClick={() => handleSelect(f)}
                         title={f.name}
                         className={cn(
-                          'w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-md text-sm transition-colors',
-                          active ? 'bg-primary/10 text-primary' : 'hover:bg-muted/60',
+                          'w-full text-left px-4 py-2 text-sm transition-colors flex items-center gap-2',
+                          selectedId === id
+                            ? 'bg-primary/10 text-primary font-medium'
+                            : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                         )}
                       >
-                        <span className="text-[10px] font-semibold text-primary/60 border border-primary/30 rounded px-0.5 leading-none shrink-0">ƒ</span>
+                        <span className="text-[9px] font-bold text-primary/50 border border-primary/30 rounded px-0.5 leading-none shrink-0">ƒ</span>
                         <span className="line-clamp-2 break-all">{f.name}</span>
-                        {active && <ChevronRight className="h-3 w-3 ml-auto shrink-0" />}
                       </button>
                     )
                   })}
                 </div>
-              </div>
-            ))}
-            {features.length === 0 && (
-              <p className="text-sm text-muted-foreground px-1">No features yet.</p>
-            )}
-          </div>
-        )}
-      </div>
+              ))}
+              {features.length === 0 && (
+                <p className="px-4 py-6 text-xs text-muted-foreground text-center">No features yet</p>
+              )}
+            </>
+          )}
+        </div>
+      </aside>
 
-      {/* Right: editor */}
-      <div className="flex-1 min-w-0 overflow-y-auto">
+      {/* Right: detail + editor */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {!draft ? (
-          <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
-            Select a feature to edit, or click New.
+          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+            Select a feature to edit, or click <Plus className="h-3.5 w-3.5 mx-1 inline" /> New.
           </div>
         ) : (
-          <div className="flex flex-col gap-3 pb-4">
-            {/* Header */}
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold flex-1 truncate">
-                {isNew ? 'New Feature' : (draft.name || 'Untitled')}
-              </h2>
+          <>
+            {/* Toolbar */}
+            <div className="shrink-0 border-b px-6 py-3 flex items-center gap-2">
+              <h1 className="text-lg font-semibold flex-1 truncate">
+                {isNew ? 'New feature' : (draft.name || 'Untitled')}
+              </h1>
               <button
                 disabled={!canSave}
                 onClick={handleSave}
@@ -363,69 +371,72 @@ export function FeaturesPage() {
               )}
             </div>
 
-            <EditSection
-              defaultOpen={isNew}
-              mode={editMode}
-              onModeChange={setEditMode}
-              isDirty={yamlContent !== savedYaml}
-              builderContent={<DetailPanel draft={draft} isNew={isNew} onChange={setDraft} />}
-              yamlContent={
-                !isNew ? (
-                  <YamlEditor
-                    name={`${selectedId}.yaml`}
-                    historyKey={{ type: 'feature', name: selectedId! }}
-                    content={yamlContent}
-                    savedContent={savedYaml}
-                    onChange={setYamlContent}
-                    onSave={handleYamlSave}
-                    hideHeader
-                    hideSaveButton
-                  />
-                ) : (
-                  <div className="px-4 py-6 text-center text-xs text-muted-foreground">Save the feature first to edit its YAML.</div>
-                )
-              }
-              historyKey={!isNew && selectedId ? { type: 'feature', name: selectedId } : undefined}
-              onRestoreVersion={(content) => setYamlContent(content)}
-              validStatus={validStatus}
-              validErrors={validErrors}
-            />
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+              <EditSection
+                defaultOpen={isNew}
+                mode={editMode}
+                onModeChange={setEditMode}
+                isDirty={yamlContent !== savedYaml}
+                builderContent={<DetailPanel draft={draft} isNew={isNew} onChange={setDraft} />}
+                yamlContent={
+                  !isNew ? (
+                    <YamlEditor
+                      name={`${selectedId}.yaml`}
+                      historyKey={{ type: 'feature', name: selectedId! }}
+                      content={yamlContent}
+                      savedContent={savedYaml}
+                      onChange={setYamlContent}
+                      onSave={handleYamlSave}
+                      hideHeader
+                      hideSaveButton
+                    />
+                  ) : (
+                    <div className="px-4 py-6 text-center text-xs text-muted-foreground">Save the feature first to edit its YAML.</div>
+                  )
+                }
+                historyKey={!isNew && selectedId ? { type: 'feature', name: selectedId } : undefined}
+                onRestoreVersion={(content) => setYamlContent(content)}
+                validStatus={validStatus}
+                validErrors={validErrors}
+              />
 
-            {/* Preview results */}
-            {previewState.status === 'ok' && (
-              <div className="border rounded-lg overflow-hidden text-xs">
-                <div className="px-4 py-2 bg-muted/30 border-b text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Preview
-                </div>
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b bg-muted/20">
-                      <th className="text-left px-4 py-2 font-medium text-muted-foreground">Entity ID</th>
-                      <th className="text-right px-4 py-2 font-medium text-muted-foreground">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewState.results.map((r) => (
-                      <tr key={r.entity_id} className="border-b last:border-0">
-                        <td className="px-4 py-2 font-mono text-muted-foreground truncate max-w-xs">{r.entity_id}</td>
-                        <td className="px-4 py-2 font-mono text-right font-medium">
-                          {r.value === null ? <span className="italic opacity-40">null</span> : String(r.value)}
-                        </td>
+              {/* Preview results */}
+              {previewState.status === 'ok' && (
+                <div className="border rounded-lg overflow-hidden text-xs">
+                  <div className="px-4 py-2 bg-muted/30 border-b text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Preview
+                  </div>
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b bg-muted/20">
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground">Entity ID</th>
+                        <th className="text-right px-4 py-2 font-medium text-muted-foreground">Value</th>
                       </tr>
-                    ))}
-                    {previewState.results.length === 0 && (
-                      <tr><td colSpan={2} className="px-4 py-3 text-center text-muted-foreground italic">No results</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {previewState.status === 'error' && (
-              <p className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-4 py-2.5">
-                {previewState.message}
-              </p>
-            )}
-          </div>
+                    </thead>
+                    <tbody>
+                      {previewState.results.map((r) => (
+                        <tr key={r.entity_id} className="border-b last:border-0">
+                          <td className="px-4 py-2 font-mono text-muted-foreground truncate max-w-xs">{r.entity_id}</td>
+                          <td className="px-4 py-2 font-mono text-right font-medium">
+                            {r.value === null ? <span className="italic opacity-40">null</span> : String(r.value)}
+                          </td>
+                        </tr>
+                      ))}
+                      {previewState.results.length === 0 && (
+                        <tr><td colSpan={2} className="px-4 py-3 text-center text-muted-foreground italic">No results</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {previewState.status === 'error' && (
+                <p className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-4 py-2.5">
+                  {previewState.message}
+                </p>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>

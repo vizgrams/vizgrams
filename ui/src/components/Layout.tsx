@@ -8,7 +8,7 @@ import {
   Download, Shuffle, Sparkles,
   Layers, BarChart2, Share2,
   Compass, LayoutGrid,
-  Clock, Settings, User, Database, Rss, Bookmark,
+  Clock, Settings, User, Database, Rss, Bookmark, Box,
 } from 'lucide-react'
 import { listModels } from '@/api/client'
 import type { ModelSummary, ApplicationSummary } from '@/api/client'
@@ -121,6 +121,7 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
         {role === 'admin' && (
           <NavSection label="Admin" collapsed={collapsed} dark>
+            <NavItem to="/admin/models" matchPrefix="/admin/models" icon={<Box className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Models</NavItem>
             <NavItem to="/tools" icon={<Download className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Extractors</NavItem>
             <NavItem to="/mappers" icon={<Shuffle className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Mappers</NavItem>
             <NavItem to="/entities" icon={<Layers className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Ontology</NavItem>

@@ -11,8 +11,11 @@ import yaml
 from api.services.model_service import (
     archive_model,
     create_model,
+    delete_model,
+    get_access_rules,
     get_model,
     list_models,
+    set_access_rules,
     set_active,
     update_model,
 )
@@ -20,6 +23,20 @@ from api.services.model_service import (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def isolate_registry_db(monkeypatch):
+    """Prevent model-service tests from touching the real api.db models table.
+
+    load_registry falls back to registry.yaml when load_registry_from_db returns
+    an empty dict, which is exactly what these tests exercise.
+    """
+    monkeypatch.setattr("core.vizgrams_db.load_registry_from_db", lambda db_path=None: {})
+    monkeypatch.setattr("core.vizgrams_db.upsert_model_in_db", lambda *a, **kw: None)
+    monkeypatch.setattr("core.vizgrams_db.delete_model_from_db", lambda *a, **kw: None)
+    monkeypatch.setattr("core.vizgrams_db.get_model_access_rules", lambda *a, **kw: None)
+    monkeypatch.setattr("core.vizgrams_db.set_model_access_rules", lambda *a, **kw: None)
+
 
 @pytest.fixture
 def base_dir(tmp_path):
@@ -254,3 +271,83 @@ def test_set_active_raises_key_error_when_not_found(models_dir, base_dir):
     _write_registry(models_dir, {})
     with pytest.raises(KeyError):
         set_active(models_dir, base_dir, "nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# delete_model
+# ---------------------------------------------------------------------------
+
+def test_delete_model_removes_from_registry(models_dir):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    _make_model_dir(models_dir, "alpha")
+    delete_model(models_dir, "alpha")
+    with open(models_dir / "registry.yaml") as f:
+        reg = yaml.safe_load(f)
+    assert "alpha" not in reg["models"]
+
+
+def test_delete_model_raises_key_error_when_not_found(models_dir):
+    _write_registry(models_dir, {})
+    with pytest.raises(KeyError):
+        delete_model(models_dir, "nonexistent")
+
+
+def test_delete_model_removes_files_when_flag_set(models_dir):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    _make_model_dir(models_dir, "alpha")
+    delete_model(models_dir, "alpha", delete_files=True)
+    assert not (models_dir / "alpha").exists()
+
+
+# ---------------------------------------------------------------------------
+# get_access_rules / set_access_rules
+# ---------------------------------------------------------------------------
+
+def test_get_access_rules_returns_none_when_not_set(monkeypatch):
+    # isolate_registry_db already patches get_model_access_rules to return None
+    result = get_access_rules("alpha")
+    assert result is None
+
+
+def test_set_access_rules_raises_key_error_when_model_not_found(models_dir):
+    _write_registry(models_dir, {})
+    with pytest.raises(KeyError):
+        set_access_rules(models_dir, "nonexistent", [])
+
+
+def test_set_access_rules_returns_provided_rules(models_dir, monkeypatch):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    rules = [{"email": "*@example.com", "role": "VIEWER"}]
+    result = set_access_rules(models_dir, "alpha", rules)
+    assert result == rules
+
+
+def test_set_access_rules_accepts_none(models_dir):
+    _write_registry(models_dir, {
+        "alpha": {"display_name": "Alpha", "status": "active", "tags": []},
+    })
+    result = set_access_rules(models_dir, "alpha", None)
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# AuditEntry schema — detail accepts str or dict
+# ---------------------------------------------------------------------------
+
+def test_audit_entry_detail_accepts_string():
+    from api.schemas.model import AuditEntry
+    e = AuditEntry(timestamp="2026-01-01T00:00:00Z", event="test", actor="user", detail="some text")
+    assert e.detail == "some text"
+
+
+def test_audit_entry_detail_accepts_dict():
+    from api.schemas.model import AuditEntry
+    d = {"consistent_at": "2026-01-01T00:00:00Z", "clickhouse_databases": ["iagai"]}
+    e = AuditEntry(timestamp="2026-01-01T00:00:00Z", event="backup", actor="system", detail=d)
+    assert e.detail == d
