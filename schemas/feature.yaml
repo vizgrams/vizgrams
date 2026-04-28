@@ -10,8 +10,8 @@ additionalProperties: false
 properties:
   feature_id:
     type: string
-    pattern: "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
-    description: "Dot-namespaced identifier, e.g. pull_request.merge_time_hours"
+    pattern: "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?$"
+    description: "Feature name (e.g. airport_count) or dot-namespaced (e.g. airline.airport_count). The entity prefix is derived from entity_type when not provided."
   name:
     type: string
     minLength: 1

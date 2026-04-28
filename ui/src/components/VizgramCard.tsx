@@ -8,6 +8,7 @@ import type { VizgramSummary } from '@/api/client'
 import { engageVizgram } from '@/api/client'
 import { LineBarChart } from '@/components/charts/LineBarChart'
 import { CalendarHeatmapChart } from '@/components/charts/CalendarHeatmapChart'
+import { MapChart } from '@/components/charts/MapChart'
 
 // ---------------------------------------------------------------------------
 // Mini table — shows up to 5 rows from the snapshot
@@ -148,6 +149,24 @@ function VizgramViz({ vizgram }: { vizgram: VizgramSummary }) {
         />
       )
     }
+  }
+
+  if (chart_config.type === 'map' && viz.lat && viz.lon) {
+    return (
+      <MapChart
+        rows={rows}
+        columns={columns}
+        latKey={viz.lat as string}
+        lonKey={(viz.lon ?? viz.center_long) as string}
+        labelKey={viz.label as string | undefined}
+        tooltipKeys={viz.popup as string[] | undefined}
+        sizeKey={viz.size as string | undefined}
+        zoom={viz.zoom as number | undefined}
+        centerLat={viz.center_lat as number | undefined}
+        centerLon={(viz.center_lon ?? viz.center_long) as number | undefined}
+        height={300}
+      />
+    )
   }
 
   return (

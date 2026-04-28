@@ -113,6 +113,14 @@ def create_or_replace_feature(
     canonical_feature_id = f"{entity_name.lower()}.{feature_name}"
     entities = _load_entities(model_dir)
     ent = entities.get(entity_name)
+
+    # Normalize feature_id to canonical dotted form if user provided just the name
+    content = re.sub(
+        r"^feature_id:.*$",
+        f"feature_id: {canonical_feature_id}",
+        content, flags=re.MULTILINE,
+    )
+
     if ent:
         pk_attr = next(
             (a for a in ent.identity if a.semantic == SemanticHint.PRIMARY_KEY), None

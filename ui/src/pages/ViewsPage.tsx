@@ -137,7 +137,11 @@ export function ViewsPage() {
         query_ref: selectedName,
         title: selectedName,
         slice_config: {},
-        chart_config: runResult.visualization ?? {},
+        chart_config: {
+          type: runResult.type,
+          columns: runResult.columns,
+          visualization: runResult.visualization ?? {},
+        },
         data_snapshot: runResult.rows.slice(0, 50),
       })
       setPublishCaption(res.caption ?? '')
@@ -156,7 +160,11 @@ export function ViewsPage() {
         title: publishTitle.trim() || selectedName,
         caption: publishCaption || undefined,
         slice_config: {},
-        chart_config: runResult.visualization ?? {},
+        chart_config: {
+          type: runResult.type,
+          columns: runResult.columns,
+          visualization: runResult.visualization ?? {},
+        },
         data_snapshot: runResult.rows.slice(0, 200),
       })
       setPublishOpen(false)
@@ -289,7 +297,7 @@ export function ViewsPage() {
               />
 
               {/* Results — type-aware rendering */}
-              {runResult && <ViewResultPanel result={runResult} />}
+              {runResult && !publishOpen && <ViewResultPanel result={runResult} />}
             </div>
           </>
         )}
