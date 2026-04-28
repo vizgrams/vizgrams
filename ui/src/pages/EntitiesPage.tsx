@@ -65,7 +65,7 @@ export function EntitiesPage() {
     setSelectedName(null)
     setIsNewMode(true)
     setDetail(null)
-    const template = `name: new_entity\ntable_name: new_entity\nattributes:\n  id:\n    type: STRING\n    semantic: identifier\n`
+    const template = `entity: NewEntity\ndescription: ""\n\nidentity:\n  id:\n    type: STRING\n    semantic: PRIMARY_KEY\n\nattributes: {}\n\nrelations: {}\n`
     setEditorContent(template)
     setSavedContent('')
     setValidStatus('idle')
@@ -74,7 +74,7 @@ export function EntitiesPage() {
 
   async function handleSave() {
     const saveName = isNewMode
-      ? (editorContent.match(/^name:\s*(\S+)/m)?.[1] ?? 'new_entity')
+      ? (editorContent.match(/^entity:\s*(\S+)/m)?.[1] ?? 'new_entity')
       : selectedName
     if (!saveName || saving) return
     setSaving(true); setValidErrors([])
@@ -130,7 +130,7 @@ export function EntitiesPage() {
             <div className="w-full text-left px-4 py-2.5 border-b border-border/30 bg-muted">
               <div className="text-sm font-medium text-foreground/50 italic flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
-                {editorContent.match(/^name:\s*(\S+)/m)?.[1] ?? 'new_entity'}
+                {editorContent.match(/^entity:\s*(\S+)/m)?.[1] ?? 'new_entity'}
               </div>
             </div>
           )}
@@ -166,7 +166,7 @@ export function EntitiesPage() {
           <>
             {/* Toolbar */}
             <div className="shrink-0 border-b px-6 py-3 flex items-center gap-2">
-              <h1 className="text-lg font-semibold flex-1">{isNewMode ? (editorContent.match(/^name:\s*(\S+)/m)?.[1] ?? 'new_entity') : selectedName}</h1>
+              <h1 className="text-lg font-semibold flex-1">{isNewMode ? (editorContent.match(/^entity:\s*(\S+)/m)?.[1] ?? 'new_entity') : selectedName}</h1>
               {dirty && !saving && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="Unsaved changes" />}
               <button disabled={(!dirty && !isNewMode) || saving} onClick={handleSave}
                 className="flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs hover:bg-muted transition-colors disabled:opacity-40">

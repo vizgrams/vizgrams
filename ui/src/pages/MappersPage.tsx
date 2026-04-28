@@ -59,7 +59,7 @@ export function MappersPage() {
     setSelectedName(null)
     setSelectedEntity(null)
     setIsNewMode(true)
-    const template = `name: new_mapper\nentity: EntityName\ntool: tool_name\ncommand: command_name\nsources:\n  - alias: src\n    table: raw_table_name\ntarget_columns:\n  - name: id\n    expression: src.id\n`
+    const template = `mapper: new_mapper\ndescription: ""\n\ngrain: src\n\nsources:\n  - alias: src\n    table: raw_table\n    columns: []\n\ntargets:\n  - entity: EntityName\n    columns:\n      - name: id\n        expr: src.id\n`
     setEditorContent(template)
     setSavedContent('')
     setValidStatus('idle')
@@ -68,7 +68,7 @@ export function MappersPage() {
 
   async function handleSave() {
     const saveName = isNewMode
-      ? (editorContent.match(/^name:\s*(\S+)/m)?.[1] ?? 'new_mapper')
+      ? (editorContent.match(/^mapper:\s*(\S+)/m)?.[1] ?? 'new_mapper')
       : selectedName
     if (!saveName || saving) return
     setSaving(true); setValidErrors([])
@@ -127,7 +127,7 @@ export function MappersPage() {
             <div className="w-full text-left px-4 py-2.5 border-b border-border/30 bg-muted">
               <div className="text-sm font-medium text-foreground/50 italic flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
-                {editorContent.match(/^name:\s*(\S+)/m)?.[1] ?? 'new_mapper'}
+                {editorContent.match(/^mapper:\s*(\S+)/m)?.[1] ?? 'new_mapper'}
               </div>
             </div>
           )}
@@ -167,7 +167,7 @@ export function MappersPage() {
           <>
             {/* Toolbar */}
             <div className="shrink-0 border-b px-6 py-3 flex items-center gap-2">
-              <h1 className="text-lg font-semibold flex-1">{isNewMode ? (editorContent.match(/^name:\s*(\S+)/m)?.[1] ?? 'new_mapper') : selectedName}</h1>
+              <h1 className="text-lg font-semibold flex-1">{isNewMode ? (editorContent.match(/^mapper:\s*(\S+)/m)?.[1] ?? 'new_mapper') : selectedName}</h1>
               {dirty && !saving && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="Unsaved changes" />}
               <button disabled={(!dirty && !isNewMode) || saving} onClick={handleSave}
                 className="flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs hover:bg-muted transition-colors disabled:opacity-40">
