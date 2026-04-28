@@ -744,7 +744,7 @@ export function QueriesPage() {
   const [isNewMode, setIsNewMode] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
   const [draft, setDraft] = useState<QueryDraft>(emptyDraft())
-  const [editMode, setEditMode] = useState<EditMode>('builder')
+  const [editMode, setEditMode] = useState<EditMode>('yaml')
 
   const [savedYaml, setSavedYaml] = useState('')
   const [yamlEditorContent, setYamlEditorContent] = useState('')
@@ -852,7 +852,8 @@ export function QueriesPage() {
     setValidErrors([])
     try {
       const yaml = yamlEditorContent
-      const name = draft.name || selected || 'new_query'
+      const yamlName = yaml.match(/^name:\s*(\S+)/m)?.[1]
+      const name = draft.name || yamlName || selected || 'new_query'
       // Validate before saving
       const validation = await api.validateInline(name, yaml)
       if (!validation.valid) {
@@ -875,7 +876,7 @@ export function QueriesPage() {
   }
 
   function handleEditModeChange(next: EditMode) {
-    if (isDirty) return // blocked
+    if (isDirty && !isNewMode) return // blocked
     setEditMode(next)
     if (next === 'yaml') {
       setYamlEditorContent(savedYaml)
@@ -887,7 +888,9 @@ export function QueriesPage() {
     setSelected(null)
     setIsNewMode(true)
     setDraft(emptyDraft())
-    setEditMode('builder')
+    setEditMode('yaml')
+    const template = `name: new_query\nroot: entity_name\nattributes:\n  - path: field_name\nmeasures:\n  - name: count\n    expr: "count(*)"\n`
+    setYamlEditorContent(template)
     setSavedYaml(''); setResult(null); setValidStatus('idle'); setValidErrors([])
     ensureEntityDetails()
   }
@@ -977,14 +980,14 @@ export function QueriesPage() {
               onEditModeChange={handleEditModeChange}
               isDirty={isDirty}
               onRestoreVersion={(content) => setYamlEditorContent(content)}
-              yamlEditorProps={selected && !isNewMode ? {
-                name: `${selected}.yaml`,
-                historyKey: { type: 'query' as const, name: selected },
+              yamlEditorProps={(selected || isNewMode) ? {
+                name: `${selected ?? 'new_query'}.yaml`,
+                historyKey: { type: 'query' as const, name: selected ?? '__new__' },
                 content: yamlEditorContent,
                 savedContent: savedYaml,
                 onChange: setYamlEditorContent,
-                onSave: async () => {
-                  await api.saveQuery(selected, yamlEditorContent)
+                onSave: isNewMode ? handleSave : async () => {
+                  await api.saveQuery(selected!, yamlEditorContent)
                   setSavedYaml(yamlEditorContent)
                   setQueryRefresh(k => k + 1)
                 },

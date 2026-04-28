@@ -152,7 +152,7 @@ def load_database_config(model_dir: Path) -> dict:
       duckdb     → ``path`` (relative to model_dir)
     """
     model_dir = Path(model_dir)
-    backend = os.environ.get("VZ_DATABASE_BACKEND", "sqlite")
+    backend = os.environ.get("VZ_DATABASE_BACKEND") or "sqlite"
     return _apply_database_defaults({"backend": backend}, model_dir)
 
 

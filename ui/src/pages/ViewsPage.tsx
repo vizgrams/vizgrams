@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
-import { Loader2, Plus, Save } from 'lucide-react'
+import { Loader2, Plus, Save, Play } from 'lucide-react'
 import { useModel } from '@/context/ModelContext'
 import { Spinner, ErrorMessage } from '@/components/Layout'
 import { YamlEditor } from '@/components/YamlEditor'
 import { EditSection } from '@/pages/explore/EditSection'
 import type { ValidStatus } from '@/components/StatusBadge'
-import type { ViewSummary, ViewDetail } from '@/api/client'
+import type { ViewSummary, ViewDetail, ViewResult } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 export function ViewsPage() {
@@ -27,6 +27,8 @@ export function ViewsPage() {
   const [validErrors, setValidErrors] = useState<{ path: string; message: string }[]>([])
   const [isNewMode, setIsNewMode] = useState(false)
   const [viewRefresh, setViewRefresh] = useState(0)
+  const [running, setRunning] = useState(false)
+  const [runResult, setRunResult] = useState<ViewResult | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -97,6 +99,19 @@ export function ViewsPage() {
     }
   }
 
+  async function handleRun() {
+    if (!selectedName || running) return
+    setRunning(true)
+    try {
+      const result = await api.executeView(selectedName)
+      setRunResult(result)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setRunning(false)
+    }
+  }
+
   if (loading) return <Spinner />
   if (error) return <ErrorMessage message={error} />
 
@@ -164,6 +179,13 @@ export function ViewsPage() {
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 {saving ? 'Saving...' : 'Save'}
               </button>
+              {!isNewMode && selectedName && (
+                <button disabled={running} onClick={handleRun}
+                  className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-40">
+                  {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  {running ? 'Running...' : 'Run'}
+                </button>
+              )}
             </div>
 
             {/* Stats strip */}
@@ -201,6 +223,45 @@ export function ViewsPage() {
                 onRestoreVersion={(content) => setEditorContent(content)}
                 validErrors={validErrors}
               />
+
+              {/* Results table */}
+              {runResult && (
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="px-4 py-2 bg-muted/30 border-b flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Results</span>
+                    <span className="text-xs text-muted-foreground">
+                      {runResult.total_row_count.toLocaleString()} rows
+                      {runResult.truncated && ` (showing ${runResult.row_count.toLocaleString()})`}
+                      <span className="ml-2 opacity-50">{runResult.duration_ms}ms</span>
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/20">
+                          {runResult.columns.map(c => (
+                            <th key={c} className="text-left px-3 py-2 font-medium text-xs text-muted-foreground whitespace-nowrap">{c}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {runResult.rows.map((row, i) => (
+                          <tr key={i} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+                            {row.map((val, j) => (
+                              <td key={j} className="px-3 py-2 text-sm tabular-nums whitespace-nowrap">
+                                {val == null ? <span className="italic opacity-40">null</span> : String(val)}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                        {runResult.rows.length === 0 && (
+                          <tr><td colSpan={runResult.columns.length} className="px-3 py-6 text-center text-sm text-muted-foreground">No results</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
