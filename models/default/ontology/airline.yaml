@@ -1,0 +1,32 @@
+entity: Airline
+description: An airline with IATA/ICAO codes
+display:
+  list: [name, iata_code, country]
+  detail: [name, iata_code, icao_code, callsign, country, active]
+
+identity:
+  iata_code:
+    type: STRING
+    semantic: PRIMARY_KEY
+attributes:
+  icao_code:
+    type: STRING
+    semantic: ATTRIBUTE
+  name:
+    type: STRING
+    semantic: IDENTIFIER
+  callsign:
+    type: STRING
+    semantic: ATTRIBUTE
+  country:
+    type: STRING
+    semantic: ATTRIBUTE
+  active:
+    type: STRING
+    semantic: STATE
+relations:
+  routes:
+    target: Route
+    cardinality: ONE_TO_MANY
+    via: "iata_code > airline_code"
+    inverse: airline

@@ -1,0 +1,64 @@
+tasks:
+  - name: recent_earthquakes
+    tool: usgs_earthquakes
+    command: recent
+    params:
+      days: 7
+      min_magnitude: 2.5
+    output:
+      table: raw_usgs_earthquakes
+      write_mode: APPEND
+      primary_keys:
+        - event_id
+      columns:
+        - name: event_id
+          json_path: $.event_id
+          type: STRING
+        - name: magnitude
+          json_path: $.magnitude
+          type: FLOAT
+        - name: magnitude_type
+          json_path: $.magnitude_type
+          type: STRING
+        - name: place
+          json_path: $.place
+          type: STRING
+        - name: time
+          json_path: $.time
+          type: STRING
+        - name: updated
+          json_path: $.updated
+          type: STRING
+        - name: longitude
+          json_path: $.longitude
+          type: FLOAT
+        - name: latitude
+          json_path: $.latitude
+          type: FLOAT
+        - name: depth_km
+          json_path: $.depth_km
+          type: FLOAT
+        - name: felt
+          json_path: $.felt
+          type: INTEGER
+        - name: alert
+          json_path: $.alert
+          type: STRING
+        - name: status
+          json_path: $.status
+          type: STRING
+        - name: tsunami
+          json_path: $.tsunami
+          type: STRING
+        - name: significance
+          json_path: $.significance
+          type: INTEGER
+        - name: type
+          json_path: $.type
+          type: STRING
+        - name: title
+          json_path: $.title
+          type: STRING
+        - name: url
+          json_path: $.url
+          type: STRING

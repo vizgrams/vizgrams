@@ -1,0 +1,37 @@
+mapper: route
+description: Map raw OpenFlights route data to the Route entity
+depends_on:
+  - airport
+  - airline
+
+grain: rt
+
+sources:
+  - alias: rt
+    table: raw_openflights_routes
+    columns:
+      - airline_code
+      - source_airport_code
+      - dest_airport_code
+      - codeshare
+      - stops
+      - equipment
+    filter: "airline_code IS NOT NULL AND source_airport_code IS NOT NULL AND dest_airport_code IS NOT NULL"
+
+targets:
+  - entity: Route
+    columns:
+      - name: route_key
+        expr: concat(rt.airline_code, '-', rt.source_airport_code, '-', rt.dest_airport_code)
+      - name: airline_code
+        expr: rt.airline_code
+      - name: source_airport_code
+        expr: rt.source_airport_code
+      - name: dest_airport_code
+        expr: rt.dest_airport_code
+      - name: codeshare
+        expr: rt.codeshare
+      - name: stops
+        expr: rt.stops
+      - name: equipment
+        expr: rt.equipment

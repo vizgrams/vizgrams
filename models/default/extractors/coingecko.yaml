@@ -1,0 +1,60 @@
+tasks:
+  - name: coins
+    tool: coingecko
+    command: coins
+    params: {}
+    output:
+      table: raw_coingecko_coins
+      write_mode: REPLACE
+      columns:
+        - name: id
+          json_path: $.id
+          type: STRING
+        - name: symbol
+          json_path: $.symbol
+          type: STRING
+        - name: name
+          json_path: $.name
+          type: STRING
+        - name: current_price
+          json_path: $.current_price
+          type: FLOAT
+        - name: market_cap
+          json_path: $.market_cap
+          type: FLOAT
+        - name: market_cap_rank
+          json_path: $.market_cap_rank
+          type: INTEGER
+        - name: total_volume
+          json_path: $.total_volume
+          type: FLOAT
+        - name: high_24h
+          json_path: $.high_24h
+          type: FLOAT
+        - name: low_24h
+          json_path: $.low_24h
+          type: FLOAT
+        - name: price_change_percentage_24h
+          json_path: $.price_change_percentage_24h
+          type: FLOAT
+        - name: circulating_supply
+          json_path: $.circulating_supply
+          type: FLOAT
+        - name: total_supply
+          json_path: $.total_supply
+          type: FLOAT
+        - name: ath
+          json_path: $.ath
+          type: FLOAT
+        - name: ath_date
+          json_path: $.ath_date
+          type: STRING
+        - name: atl
+          json_path: $.atl
+          type: FLOAT
+        - name: atl_date
+          json_path: $.atl_date
+          type: STRING
+        - name: last_updated
+          json_path: $.last_updated
+          type: STRING

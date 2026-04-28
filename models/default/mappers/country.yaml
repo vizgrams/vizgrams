@@ -1,0 +1,59 @@
+mapper: country
+description: Map raw REST Countries data to the Country entity
+
+grain: ctry
+
+sources:
+  - alias: ctry
+    table: raw_rest_countries
+    columns:
+      - name_common
+      - name_official
+      - cca2
+      - cca3
+      - region
+      - subregion
+      - capital
+      - population
+      - area
+      - latitude
+      - longitude
+      - languages
+      - currencies
+      - flag_emoji
+      - borders
+    filter: "cca3 IS NOT NULL"
+
+targets:
+  - entity: Country
+    columns:
+      - name: cca3
+        expr: ctry.cca3
+      - name: cca2
+        expr: ctry.cca2
+      - name: name_common
+        expr: ctry.name_common
+      - name: name_official
+        expr: ctry.name_official
+      - name: region
+        expr: ctry.region
+      - name: subregion
+        expr: ctry.subregion
+      - name: capital
+        expr: ctry.capital
+      - name: population
+        expr: ctry.population
+      - name: area
+        expr: ctry.area
+      - name: latitude
+        expr: ctry.latitude
+      - name: longitude
+        expr: ctry.longitude
+      - name: languages
+        expr: ctry.languages
+      - name: currencies
+        expr: ctry.currencies
+      - name: flag_emoji
+        expr: ctry.flag_emoji
+      - name: borders
+        expr: ctry.borders

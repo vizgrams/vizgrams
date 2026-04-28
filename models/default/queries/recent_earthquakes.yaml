@@ -1,0 +1,17 @@
+name: recent_earthquakes
+root: Earthquake
+
+attributes:
+  - title: title
+  - magnitude: magnitude
+  - magnitude_type: magnitude_type
+  - place: place
+  - time: time
+  - latitude: latitude
+  - longitude: longitude
+  - depth_km: depth_km
+  - alert: alert
+  - significance: significance
+
+order:
+  - time: desc

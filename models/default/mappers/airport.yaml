@@ -1,0 +1,41 @@
+mapper: airport
+description: Map raw OpenFlights airport data to the Airport entity
+
+grain: apt
+
+sources:
+  - alias: apt
+    table: raw_openflights_airports
+    columns:
+      - iata_code
+      - icao_code
+      - name
+      - city
+      - country
+      - latitude
+      - longitude
+      - altitude_ft
+      - timezone
+    filter: "iata_code IS NOT NULL"
+
+targets:
+  - entity: Airport
+    columns:
+      - name: iata_code
+        expr: apt.iata_code
+      - name: icao_code
+        expr: apt.icao_code
+      - name: name
+        expr: apt.name
+      - name: city
+        expr: apt.city
+      - name: country
+        expr: apt.country
+      - name: latitude
+        expr: apt.latitude
+      - name: longitude
+        expr: apt.longitude
+      - name: altitude_ft
+        expr: apt.altitude_ft
+      - name: timezone
+        expr: apt.timezone

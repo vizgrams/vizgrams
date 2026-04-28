@@ -1,0 +1,54 @@
+tasks:
+  - name: countries
+    tool: rest_countries
+    command: countries
+    params: {}
+    output:
+      table: raw_rest_countries
+      write_mode: REPLACE
+      columns:
+        - name: name_common
+          json_path: $.name_common
+          type: STRING
+        - name: name_official
+          json_path: $.name_official
+          type: STRING
+        - name: cca2
+          json_path: $.cca2
+          type: STRING
+        - name: cca3
+          json_path: $.cca3
+          type: STRING
+        - name: region
+          json_path: $.region
+          type: STRING
+        - name: subregion
+          json_path: $.subregion
+          type: STRING
+        - name: capital
+          json_path: $.capital
+          type: STRING
+        - name: population
+          json_path: $.population
+          type: INTEGER
+        - name: area
+          json_path: $.area
+          type: FLOAT
+        - name: latitude
+          json_path: $.latitude
+          type: FLOAT
+        - name: longitude
+          json_path: $.longitude
+          type: FLOAT
+        - name: languages
+          json_path: $.languages
+          type: STRING
+        - name: currencies
+          json_path: $.currencies
+          type: STRING
+        - name: flag_emoji
+          json_path: $.flag_emoji
+          type: STRING
+        - name: borders
+          json_path: $.borders
+          type: STRING

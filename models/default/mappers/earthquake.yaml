@@ -1,0 +1,65 @@
+mapper: earthquake
+description: Map raw USGS earthquake data to the Earthquake entity
+
+grain: eq
+
+sources:
+  - alias: eq
+    table: raw_usgs_earthquakes
+    columns:
+      - event_id
+      - magnitude
+      - magnitude_type
+      - place
+      - time
+      - updated
+      - longitude
+      - latitude
+      - depth_km
+      - felt
+      - alert
+      - status
+      - tsunami
+      - significance
+      - type
+      - title
+      - url
+    filter: "event_id IS NOT NULL"
+
+targets:
+  - entity: Earthquake
+    columns:
+      - name: event_id
+        expr: eq.event_id
+      - name: magnitude
+        expr: eq.magnitude
+      - name: magnitude_type
+        expr: eq.magnitude_type
+      - name: place
+        expr: eq.place
+      - name: time
+        expr: eq.time
+      - name: updated
+        expr: eq.updated
+      - name: longitude
+        expr: eq.longitude
+      - name: latitude
+        expr: eq.latitude
+      - name: depth_km
+        expr: eq.depth_km
+      - name: felt
+        expr: eq.felt
+      - name: alert
+        expr: eq.alert
+      - name: status
+        expr: eq.status
+      - name: tsunami
+        expr: eq.tsunami
+      - name: significance
+        expr: eq.significance
+      - name: type
+        expr: eq.type
+      - name: title
+        expr: eq.title
+      - name: url
+        expr: eq.url

@@ -1,0 +1,9 @@
+name: countries_by_region
+type: chart
+query: countries_by_population
+measure: population
+visualization:
+  chart_type: bar
+  x: name
+  y: population
+  color: region

@@ -1,0 +1,14 @@
+name: airport_map
+type: map
+query: busiest_airports
+visualization:
+  lat: latitude
+  lon: longitude
+  label: name
+  size: outbound_routes
+  popup:
+    - name
+    - iata_code
+    - city
+    - country
+    - outbound_routes

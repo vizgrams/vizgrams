@@ -1,0 +1,59 @@
+entity: CryptoAsset
+description: A cryptocurrency with market data from CoinGecko
+display:
+  list: [name, symbol, current_price, market_cap_rank]
+  detail: [name, symbol, current_price, market_cap, market_cap_rank, total_volume, price_change_percentage_24h, circulating_supply]
+
+identity:
+  coin_id:
+    type: STRING
+    semantic: PRIMARY_KEY
+attributes:
+  symbol:
+    type: STRING
+    semantic: IDENTIFIER
+  name:
+    type: STRING
+    semantic: IDENTIFIER
+  current_price:
+    type: FLOAT
+    semantic: MEASURE
+  market_cap:
+    type: FLOAT
+    semantic: MEASURE
+  market_cap_rank:
+    type: INTEGER
+    semantic: ORDERING
+  total_volume:
+    type: FLOAT
+    semantic: MEASURE
+  high_24h:
+    type: FLOAT
+    semantic: MEASURE
+  low_24h:
+    type: FLOAT
+    semantic: MEASURE
+  price_change_percentage_24h:
+    type: FLOAT
+    semantic: MEASURE
+  circulating_supply:
+    type: FLOAT
+    semantic: MEASURE
+  total_supply:
+    type: FLOAT
+    semantic: MEASURE
+  ath:
+    type: FLOAT
+    semantic: MEASURE
+  ath_date:
+    type: STRING
+    semantic: TIMESTAMP
+  atl:
+    type: FLOAT
+    semantic: MEASURE
+  atl_date:
+    type: STRING
+    semantic: TIMESTAMP
+  last_updated:
+    type: STRING
+    semantic: TIMESTAMP

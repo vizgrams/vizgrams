@@ -1,0 +1,46 @@
+entity: Airport
+description: An airport with IATA/ICAO codes and geographic coordinates
+display:
+  list: [name, iata_code, city, country]
+  detail: [name, iata_code, icao_code, city, country, latitude, longitude, altitude_ft, timezone]
+
+identity:
+  iata_code:
+    type: STRING
+    semantic: PRIMARY_KEY
+attributes:
+  icao_code:
+    type: STRING
+    semantic: ATTRIBUTE
+  name:
+    type: STRING
+    semantic: IDENTIFIER
+  city:
+    type: STRING
+    semantic: ATTRIBUTE
+  country:
+    type: STRING
+    semantic: ATTRIBUTE
+  latitude:
+    type: FLOAT
+    semantic: ATTRIBUTE
+  longitude:
+    type: FLOAT
+    semantic: ATTRIBUTE
+  altitude_ft:
+    type: INTEGER
+    semantic: ATTRIBUTE
+  timezone:
+    type: STRING
+    semantic: ATTRIBUTE
+relations:
+  outbound_routes:
+    target: Route
+    cardinality: ONE_TO_MANY
+    via: "iata_code > source_airport_code"
+    inverse: source_airport
+  inbound_routes:
+    target: Route
+    cardinality: ONE_TO_MANY
+    via: "iata_code > dest_airport_code"
+    inverse: dest_airport

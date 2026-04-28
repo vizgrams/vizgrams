@@ -1,0 +1,54 @@
+entity: Country
+description: A country with geographic, demographic, and political information
+display:
+  list: [name_common, region, population, capital]
+  detail: [name_common, name_official, cca2, cca3, region, subregion, capital, population, area, languages, currencies]
+
+identity:
+  cca3:
+    type: STRING
+    semantic: PRIMARY_KEY
+  cca2:
+    type: STRING
+    semantic: IDENTIFIER
+attributes:
+  name_common:
+    type: STRING
+    semantic: IDENTIFIER
+  name_official:
+    type: STRING
+    semantic: ATTRIBUTE
+  region:
+    type: STRING
+    semantic: ATTRIBUTE
+  subregion:
+    type: STRING
+    semantic: ATTRIBUTE
+  capital:
+    type: STRING
+    semantic: ATTRIBUTE
+  population:
+    type: INTEGER
+    semantic: MEASURE
+  area:
+    type: FLOAT
+    semantic: MEASURE
+  latitude:
+    type: FLOAT
+    semantic: ATTRIBUTE
+  longitude:
+    type: FLOAT
+    semantic: ATTRIBUTE
+  languages:
+    type: STRING
+    semantic: ATTRIBUTE
+  currencies:
+    type: STRING
+    semantic: ATTRIBUTE
+  flag_emoji:
+    type: STRING
+    semantic: ATTRIBUTE
+  borders:
+    type: STRING
+    semantic: ATTRIBUTE
+    description: Comma-separated CCA3 codes of bordering countries

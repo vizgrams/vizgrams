@@ -1,0 +1,59 @@
+entity: Earthquake
+description: A seismic event recorded by the USGS
+display:
+  list: [title, magnitude, time]
+  detail: [title, magnitude, magnitude_type, place, time, latitude, longitude, depth_km, alert, significance]
+
+identity:
+  event_id:
+    type: STRING
+    semantic: PRIMARY_KEY
+attributes:
+  magnitude:
+    type: FLOAT
+    semantic: MEASURE
+  magnitude_type:
+    type: STRING
+    semantic: ATTRIBUTE
+  place:
+    type: STRING
+    semantic: ATTRIBUTE
+  time:
+    type: STRING
+    semantic: TIMESTAMP
+  updated:
+    type: STRING
+    semantic: TIMESTAMP
+  longitude:
+    type: FLOAT
+    semantic: ATTRIBUTE
+  latitude:
+    type: FLOAT
+    semantic: ATTRIBUTE
+  depth_km:
+    type: FLOAT
+    semantic: MEASURE
+  felt:
+    type: INTEGER
+    semantic: MEASURE
+  alert:
+    type: STRING
+    semantic: STATE
+  status:
+    type: STRING
+    semantic: STATE
+  tsunami:
+    type: STRING
+    semantic: ATTRIBUTE
+  significance:
+    type: INTEGER
+    semantic: MEASURE
+  type:
+    type: STRING
+    semantic: ATTRIBUTE
+  title:
+    type: STRING
+    semantic: IDENTIFIER
+  url:
+    type: STRING
+    semantic: ATTRIBUTE

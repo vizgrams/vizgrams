@@ -1,0 +1,25 @@
+name: countries_by_population
+root: Country
+
+attributes:
+  - name: name_common
+  - region: region
+  - subregion: subregion
+  - capital: capital
+  - latitude: latitude
+  - longitude: longitude
+
+measures:
+  - population:
+      expr: sum(population)
+      format:
+        type: number
+        pattern: "0,0"
+  - area:
+      expr: sum(area)
+      format:
+        type: number
+        pattern: "0,0"
+
+order:
+  - population: desc

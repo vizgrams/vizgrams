@@ -1,0 +1,16 @@
+name: top_cryptos
+root: CryptoAsset
+
+attributes:
+  - name: name
+  - symbol: symbol
+  - current_price: current_price
+  - market_cap: market_cap
+  - market_cap_rank: market_cap_rank
+  - total_volume: total_volume
+  - price_change_percentage_24h: price_change_percentage_24h
+  - high_24h: high_24h
+  - low_24h: low_24h
+
+order:
+  - market_cap_rank: asc

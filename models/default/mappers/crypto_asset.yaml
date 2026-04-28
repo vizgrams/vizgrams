@@ -1,0 +1,65 @@
+mapper: crypto_asset
+description: Map raw CoinGecko coin data to the CryptoAsset entity
+
+grain: coin
+
+sources:
+  - alias: coin
+    table: raw_coingecko_coins
+    columns:
+      - id
+      - symbol
+      - name
+      - current_price
+      - market_cap
+      - market_cap_rank
+      - total_volume
+      - high_24h
+      - low_24h
+      - price_change_percentage_24h
+      - circulating_supply
+      - total_supply
+      - ath
+      - ath_date
+      - atl
+      - atl_date
+      - last_updated
+    filter: "id IS NOT NULL"
+
+targets:
+  - entity: CryptoAsset
+    columns:
+      - name: coin_id
+        expr: coin.id
+      - name: symbol
+        expr: coin.symbol
+      - name: name
+        expr: coin.name
+      - name: current_price
+        expr: coin.current_price
+      - name: market_cap
+        expr: coin.market_cap
+      - name: market_cap_rank
+        expr: coin.market_cap_rank
+      - name: total_volume
+        expr: coin.total_volume
+      - name: high_24h
+        expr: coin.high_24h
+      - name: low_24h
+        expr: coin.low_24h
+      - name: price_change_percentage_24h
+        expr: coin.price_change_percentage_24h
+      - name: circulating_supply
+        expr: coin.circulating_supply
+      - name: total_supply
+        expr: coin.total_supply
+      - name: ath
+        expr: coin.ath
+      - name: ath_date
+        expr: coin.ath_date
+      - name: atl
+        expr: coin.atl
+      - name: atl_date
+        expr: coin.atl_date
+      - name: last_updated
+        expr: coin.last_updated

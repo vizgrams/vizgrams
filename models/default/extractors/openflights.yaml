@@ -1,0 +1,90 @@
+tasks:
+  - name: airports
+    tool: openflights
+    command: airports
+    params: {}
+    output:
+      table: raw_openflights_airports
+      write_mode: REPLACE
+      columns:
+        - name: iata_code
+          json_path: $.iata_code
+          type: STRING
+        - name: icao_code
+          json_path: $.icao_code
+          type: STRING
+        - name: name
+          json_path: $.name
+          type: STRING
+        - name: city
+          json_path: $.city
+          type: STRING
+        - name: country
+          json_path: $.country
+          type: STRING
+        - name: latitude
+          json_path: $.latitude
+          type: FLOAT
+        - name: longitude
+          json_path: $.longitude
+          type: FLOAT
+        - name: altitude_ft
+          json_path: $.altitude_ft
+          type: INTEGER
+        - name: timezone
+          json_path: $.timezone
+          type: STRING
+
+  - name: airlines
+    tool: openflights
+    command: airlines
+    params: {}
+    output:
+      table: raw_openflights_airlines
+      write_mode: REPLACE
+      columns:
+        - name: iata_code
+          json_path: $.iata_code
+          type: STRING
+        - name: icao_code
+          json_path: $.icao_code
+          type: STRING
+        - name: name
+          json_path: $.name
+          type: STRING
+        - name: callsign
+          json_path: $.callsign
+          type: STRING
+        - name: country
+          json_path: $.country
+          type: STRING
+        - name: active
+          json_path: $.active
+          type: STRING
+
+  - name: routes
+    tool: openflights
+    command: routes
+    params: {}
+    output:
+      table: raw_openflights_routes
+      write_mode: REPLACE
+      columns:
+        - name: airline_code
+          json_path: $.airline_code
+          type: STRING
+        - name: source_airport_code
+          json_path: $.source_airport_code
+          type: STRING
+        - name: dest_airport_code
+          json_path: $.dest_airport_code
+          type: STRING
+        - name: codeshare
+          json_path: $.codeshare
+          type: STRING
+        - name: stops
+          json_path: $.stops
+          type: INTEGER
+        - name: equipment
+          json_path: $.equipment
+          type: STRING

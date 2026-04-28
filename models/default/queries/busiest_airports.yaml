@@ -1,0 +1,20 @@
+name: busiest_airports
+root: Airport
+
+attributes:
+  - name: name
+  - iata_code: iata_code
+  - country: country
+  - city: city
+  - latitude: latitude
+  - longitude: longitude
+
+measures:
+  - outbound_routes:
+      expr: count(Route.route_key)
+      format:
+        type: number
+        pattern: "0"
+
+order:
+  - outbound_routes: desc

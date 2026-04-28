@@ -1,0 +1,49 @@
+entity: Route
+description: A flight route between two airports operated by an airline
+display:
+  list: [airline_code, source_airport_code, dest_airport_code]
+  detail: [airline_code, source_airport_code, dest_airport_code, codeshare, stops, equipment]
+
+identity:
+  route_key:
+    type: STRING
+    semantic: PRIMARY_KEY
+    description: Composite key airline_code-source-dest
+  airline_code:
+    type: STRING
+    semantic: RELATION
+    references: Airline
+  source_airport_code:
+    type: STRING
+    semantic: RELATION
+    references: Airport
+  dest_airport_code:
+    type: STRING
+    semantic: RELATION
+    references: Airport
+attributes:
+  codeshare:
+    type: STRING
+    semantic: ATTRIBUTE
+  stops:
+    type: INTEGER
+    semantic: ATTRIBUTE
+  equipment:
+    type: STRING
+    semantic: ATTRIBUTE
+relations:
+  airline:
+    target: Airline
+    cardinality: MANY_TO_ONE
+    via: airline_code
+    inverse: routes
+  source_airport:
+    target: Airport
+    cardinality: MANY_TO_ONE
+    via: source_airport_code
+    inverse: outbound_routes
+  dest_airport:
+    target: Airport
+    cardinality: MANY_TO_ONE
+    via: dest_airport_code
+    inverse: inbound_routes

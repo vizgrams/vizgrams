@@ -1,4 +1,13 @@
 models:
+  default:
+    display_name: Default Model
+    description: Multi-tool demo model — OpenFlights, USGS Earthquakes, REST Countries, CoinGecko
+    owner: open-source
+    created_at: '2026-04-27T00:00:00Z'
+    status: active
+    tags:
+      - demo
+      - tools
   example:
     display_name: Example Model
     description: Toy model for tests and quickstart — no credentials required

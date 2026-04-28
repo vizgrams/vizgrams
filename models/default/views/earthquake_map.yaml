@@ -1,0 +1,16 @@
+name: earthquake_map
+type: map
+query: recent_earthquakes
+visualization:
+  lat: latitude
+  lon: longitude
+  label: title
+  size: magnitude
+  color: alert
+  popup:
+    - title
+    - magnitude
+    - place
+    - time
+    - depth_km
+    - significance

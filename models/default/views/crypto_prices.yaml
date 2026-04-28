@@ -1,0 +1,13 @@
+name: crypto_prices
+type: table
+query: top_cryptos
+visualization:
+  columns:
+    - name
+    - symbol
+    - current_price
+    - market_cap
+    - total_volume
+    - price_change_percentage_24h
+    - high_24h
+    - low_24h

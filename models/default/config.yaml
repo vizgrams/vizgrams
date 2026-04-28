@@ -1,0 +1,17 @@
+database:
+  backend: clickhouse
+  host: env:CLICKHOUSE_HOST
+  port: 8123
+  database: default
+  username: default
+  password: env:CLICKHOUSE_PASSWORD
+
+tools:
+  openflights:
+    enabled: true
+  usgs_earthquakes:
+    enabled: true
+  rest_countries:
+    enabled: true
+  coingecko:
+    enabled: true
