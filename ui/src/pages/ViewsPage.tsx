@@ -1,20 +1,23 @@
 // Copyright 2024-2026 Oliver Fenton
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from 'react'
-import { Loader2, Plus, Save, Play } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Loader2, Plus, Save, Play, Upload } from 'lucide-react'
 import { useModel } from '@/context/ModelContext'
+import { useRole } from '@/context/RoleContext'
 import { Spinner, ErrorMessage } from '@/components/Layout'
 import { YamlEditor } from '@/components/YamlEditor'
 import { EditSection } from '@/pages/explore/EditSection'
 import type { ValidStatus } from '@/components/StatusBadge'
 import type { ViewSummary, ViewDetail, ViewResult } from '@/api/client'
+import { publishVizgram, previewCaption } from '@/api/client'
 import { MapChart } from '@/components/charts/MapChart'
 import { LineBarChart } from '@/components/charts/LineBarChart'
 import { cn } from '@/lib/utils'
 
 export function ViewsPage() {
   const { api, model } = useModel()
+  const { role } = useRole()
   const [views, setViews] = useState<ViewSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -31,6 +34,12 @@ export function ViewsPage() {
   const [viewRefresh, setViewRefresh] = useState(0)
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState<ViewResult | null>(null)
+  const [publishOpen, setPublishOpen] = useState(false)
+  const [publishTitle, setPublishTitle] = useState('')
+  const [publishCaption, setPublishCaption] = useState('')
+  const [captionLoading, setCaptionLoading] = useState(false)
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -115,6 +124,49 @@ export function ViewsPage() {
     }
   }
 
+  const openPublishDialog = useCallback(async () => {
+    if (!selectedName || !runResult) return
+    setPublishOpen(true)
+    setPublishTitle(selectedName)
+    setPublishCaption('')
+    setPublishError(null)
+    setCaptionLoading(true)
+    try {
+      const res = await previewCaption({
+        model,
+        query_ref: selectedName,
+        title: selectedName,
+        slice_config: {},
+        chart_config: runResult.visualization ?? {},
+        data_snapshot: runResult.rows.slice(0, 50),
+      })
+      setPublishCaption(res.caption ?? '')
+    } catch { /* caption is optional */ }
+    finally { setCaptionLoading(false) }
+  }, [model, selectedName, runResult])
+
+  async function handlePublish() {
+    if (!selectedName || !runResult || publishing) return
+    setPublishing(true)
+    setPublishError(null)
+    try {
+      await publishVizgram({
+        model,
+        query_ref: selectedName,
+        title: publishTitle.trim() || selectedName,
+        caption: publishCaption || undefined,
+        slice_config: {},
+        chart_config: runResult.visualization ?? {},
+        data_snapshot: runResult.rows.slice(0, 200),
+      })
+      setPublishOpen(false)
+    } catch (e) {
+      setPublishError(e instanceof Error ? e.message : 'Publish failed')
+    } finally {
+      setPublishing(false)
+    }
+  }
+
   if (loading) return <Spinner />
   if (error) return <ErrorMessage message={error} />
 
@@ -183,11 +235,20 @@ export function ViewsPage() {
                 {saving ? 'Saving...' : 'Save'}
               </button>
               {!isNewMode && selectedName && (
-                <button disabled={running} onClick={handleRun}
-                  className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-40">
-                  {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                  {running ? 'Running...' : 'Run'}
-                </button>
+                <>
+                  <button disabled={running} onClick={handleRun}
+                    className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-40">
+                    {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {running ? 'Running...' : 'Run'}
+                  </button>
+                  {runResult && (role === 'admin' || role === 'creator') && (
+                    <button onClick={openPublishDialog}
+                      className="flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs hover:bg-muted transition-colors">
+                      <Upload className="h-3.5 w-3.5" />
+                      Publish
+                    </button>
+                  )}
+                </>
               )}
             </div>
 
@@ -233,6 +294,33 @@ export function ViewsPage() {
           </>
         )}
       </div>
+
+      {/* Publish dialog */}
+      {publishOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-background border rounded-xl shadow-xl w-full max-w-md mx-4 p-5 space-y-4">
+            <h2 className="text-lg font-semibold">Publish vizgram</h2>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Title</label>
+              <input value={publishTitle} onChange={e => setPublishTitle(e.target.value)}
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Caption {captionLoading && <span className="text-muted-foreground/50">(generating...)</span>}</label>
+              <textarea value={publishCaption} onChange={e => setPublishCaption(e.target.value)} rows={4}
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring resize-none" />
+            </div>
+            {publishError && <p className="text-xs text-red-500">{publishError}</p>}
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setPublishOpen(false)} className="px-3 py-1.5 text-sm border rounded hover:bg-muted transition-colors">Cancel</button>
+              <button onClick={handlePublish} disabled={publishing || !publishTitle.trim()}
+                className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:opacity-90 transition-opacity disabled:opacity-40">
+                {publishing ? 'Publishing...' : 'Publish'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
