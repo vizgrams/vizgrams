@@ -9,6 +9,8 @@ import { YamlEditor } from '@/components/YamlEditor'
 import { EditSection } from '@/pages/explore/EditSection'
 import type { ValidStatus } from '@/components/StatusBadge'
 import type { ViewSummary, ViewDetail, ViewResult } from '@/api/client'
+import { MapChart } from '@/components/charts/MapChart'
+import { LineBarChart } from '@/components/charts/LineBarChart'
 import { cn } from '@/lib/utils'
 
 export function ViewsPage() {
@@ -103,7 +105,8 @@ export function ViewsPage() {
     if (!selectedName || running) return
     setRunning(true)
     try {
-      const result = await api.executeView(selectedName)
+      const limit = detail?.type === 'map' ? 10000 : 1000
+      const result = await api.executeView(selectedName, limit)
       setRunResult(result)
     } catch (e) {
       console.error(e)
@@ -224,47 +227,106 @@ export function ViewsPage() {
                 validErrors={validErrors}
               />
 
-              {/* Results table */}
-              {runResult && (
-                <div className="border rounded-lg overflow-hidden">
-                  <div className="px-4 py-2 bg-muted/30 border-b flex items-center justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Results</span>
-                    <span className="text-xs text-muted-foreground">
-                      {runResult.total_row_count.toLocaleString()} rows
-                      {runResult.truncated && ` (showing ${runResult.row_count.toLocaleString()})`}
-                      <span className="ml-2 opacity-50">{runResult.duration_ms}ms</span>
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b bg-muted/20">
-                          {runResult.columns.map(c => (
-                            <th key={c} className="text-left px-3 py-2 font-medium text-xs text-muted-foreground whitespace-nowrap">{c}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {runResult.rows.map((row, i) => (
-                          <tr key={i} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
-                            {row.map((val, j) => (
-                              <td key={j} className="px-3 py-2 text-sm tabular-nums whitespace-nowrap">
-                                {val == null ? <span className="italic opacity-40">null</span> : String(val)}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                        {runResult.rows.length === 0 && (
-                          <tr><td colSpan={runResult.columns.length} className="px-3 py-6 text-center text-sm text-muted-foreground">No results</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+              {/* Results — type-aware rendering */}
+              {runResult && <ViewResultPanel result={runResult} />}
             </div>
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Result panel — renders map, chart, or table based on view type
+// ---------------------------------------------------------------------------
+
+function ViewResultPanel({ result }: { result: ViewResult }) {
+  const viz = (result.visualization ?? {}) as Record<string, unknown>
+
+  const header = (
+    <div className="px-4 py-2 bg-muted/30 border-b flex items-center justify-between">
+      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Results ({result.type})
+      </span>
+      <span className="text-xs text-muted-foreground">
+        {result.total_row_count.toLocaleString()} rows
+        {result.truncated && ` (showing ${result.row_count.toLocaleString()})`}
+        <span className="ml-2 opacity-50">{result.duration_ms}ms</span>
+      </span>
+    </div>
+  )
+
+  // Map view
+  if (result.type === 'map' && viz.lat && viz.lon) {
+    return (
+      <div className="border rounded-lg overflow-hidden">
+        {header}
+        <MapChart
+          rows={result.rows}
+          columns={result.columns}
+          latKey={viz.lat as string}
+          lonKey={(viz.lon ?? viz.center_long) as string}
+          labelKey={viz.label as string | undefined}
+          tooltipKeys={viz.popup as string[] | undefined}
+          sizeKey={viz.size as string | undefined}
+          zoom={viz.zoom as number | undefined}
+          centerLat={viz.center_lat as number | undefined}
+          centerLon={(viz.center_lon ?? viz.center_long) as number | undefined}
+          height={480}
+        />
+      </div>
+    )
+  }
+
+  // Chart view (line/bar)
+  if (result.type === 'chart' && viz.chart_type && viz.chart_type !== 'calendar_heatmap') {
+    return (
+      <div className="border rounded-lg overflow-hidden">
+        {header}
+        <div className="p-4">
+          <LineBarChart
+            rows={result.rows}
+            columns={result.columns}
+            xKey={viz.x as string}
+            yKeys={Array.isArray(viz.y) ? viz.y as string[] : [viz.y as string]}
+            chartType={viz.chart_type as 'bar' | 'line'}
+            formats={result.formats}
+            height={360}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  // Table view (default)
+  return (
+    <div className="border rounded-lg overflow-hidden">
+      {header}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/20">
+              {result.columns.map(c => (
+                <th key={c} className="text-left px-3 py-2 font-medium text-xs text-muted-foreground whitespace-nowrap">{c}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {result.rows.map((row, i) => (
+              <tr key={i} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+                {row.map((val, j) => (
+                  <td key={j} className="px-3 py-2 text-sm tabular-nums whitespace-nowrap">
+                    {val == null ? <span className="italic opacity-40">null</span> : String(val)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {result.rows.length === 0 && (
+              <tr><td colSpan={result.columns.length} className="px-3 py-6 text-center text-sm text-muted-foreground">No results</td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   )
