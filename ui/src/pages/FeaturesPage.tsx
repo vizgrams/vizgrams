@@ -142,7 +142,7 @@ export function FeaturesPage() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [yamlContent, setYamlContent] = useState('')
   const [savedYaml, setSavedYaml] = useState('')
-  const [editMode, setEditMode] = useState<'builder' | 'yaml'>('builder')
+  const [editMode, setEditMode] = useState<'builder' | 'yaml'>('yaml')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [reconciling, setReconciling] = useState(false)
@@ -206,8 +206,9 @@ export function FeaturesPage() {
     const entity = filterEntity !== 'all' ? filterEntity : (entities[0]?.name ?? '')
     setIsNew(true)
     setSelectedId('__new__')
-    setDraft(emptyDraft(entity))
-    setYamlContent('')
+    const d = emptyDraft(entity)
+    setDraft(d)
+    setYamlContent(featureToYaml(d))
     setSavedYaml('')
     setError(null)
     setValidStatus('idle')
@@ -217,11 +218,19 @@ export function FeaturesPage() {
   async function handleSave() {
     if (!draft) return
     setSaving(true); setError(null); setSaved(false); setValidErrors([])
-    const shortName = draft.feature_id.split('.').pop() ?? draft.feature_id
+    // When in yaml mode, extract entity and feature_id from the YAML content
+    let entity = draft.entity
+    let shortName = draft.feature_id.split('.').pop() ?? draft.feature_id
+    if (editMode === 'yaml') {
+      const entityMatch = yamlContent.match(/^entity_type:\s*"?(\S+?)"?\s*$/m)
+      if (entityMatch) entity = entityMatch[1]
+      const fidMatch = yamlContent.match(/^feature_id:\s*"?(\S+?)"?\s*$/m)
+      if (fidMatch) shortName = fidMatch[1].split('.').pop() ?? fidMatch[1]
+    }
     try {
-      const yaml = featureToYaml(draft)
+      const yaml = editMode === 'yaml' ? yamlContent : featureToYaml(draft)
       const res = await fetch(
-        `/api/v1/model/${model}/entity/${draft.entity}/feature/${encodeURIComponent(shortName)}`,
+        `/api/v1/model/${model}/entity/${entity}/feature/${encodeURIComponent(shortName)}`,
         { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: yaml }) },
       )
       if (!res.ok) throw new Error(await res.text())
@@ -256,7 +265,7 @@ export function FeaturesPage() {
     if (updated.raw_yaml) setSavedYaml(updated.raw_yaml)
   }
 
-  const canSave = !saving && !!draft?.name && !!draft?.feature_id && !!draft?.expr
+  const canSave = !saving && (editMode === 'yaml' ? !!yamlContent.trim() : (!!draft?.name && !!draft?.feature_id && !!draft?.expr))
 
   return (
     <div className="flex h-full -mx-6 -my-6 overflow-hidden">
@@ -376,20 +385,16 @@ export function FeaturesPage() {
                 isDirty={yamlContent !== savedYaml}
                 builderContent={<DetailPanel draft={draft} isNew={isNew} onChange={setDraft} />}
                 yamlContent={
-                  !isNew ? (
-                    <YamlEditor
-                      name={`${selectedId}.yaml`}
-                      historyKey={{ type: 'feature', name: selectedId! }}
-                      content={yamlContent}
-                      savedContent={savedYaml}
-                      onChange={setYamlContent}
-                      onSave={handleYamlSave}
-                      hideHeader
-                      hideSaveButton
-                    />
-                  ) : (
-                    <div className="px-4 py-6 text-center text-xs text-muted-foreground">Save the feature first to edit its YAML.</div>
-                  )
+                  <YamlEditor
+                    name={`${selectedId ?? 'new_feature'}.yaml`}
+                    historyKey={{ type: 'feature', name: selectedId ?? '__new__' }}
+                    content={yamlContent}
+                    savedContent={savedYaml}
+                    onChange={setYamlContent}
+                    onSave={isNew ? handleSave : handleYamlSave}
+                    hideHeader
+                    hideSaveButton
+                  />
                 }
                 historyKey={!isNew && selectedId ? { type: 'feature', name: selectedId } : undefined}
                 onRestoreVersion={(content) => setYamlContent(content)}
