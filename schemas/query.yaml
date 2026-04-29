@@ -41,10 +41,10 @@ properties:
     pattern: "^[a-z][a-z0-9_]*$"
   entity:
     type: string
-    pattern: "^[A-Z][A-Za-z]+$"
+    pattern: "^[A-Z][A-Za-z0-9]+(\\.[a-z][a-z0-9_]*)?$"
   root:
     type: string
-    pattern: "^[A-Z][A-Za-z]+$"
+    pattern: "^[A-Z][A-Za-z0-9]+(\\.[a-z][a-z0-9_]*)?$"
   attributes:
     type: array
     items:

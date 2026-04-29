@@ -101,11 +101,6 @@ class EntityDef:
     display_order: list[tuple[str, str]] = field(default_factory=list)  # [(col, "asc"|"desc")]
 
     @property
-    def table_name(self) -> str:
-        """Convert PascalCase name to snake_case table name."""
-        return _to_snake(self.name)
-
-    @property
     def primary_key(self) -> AttributeDef | None:
         for a in self.identity:
             if a.semantic == SemanticHint.PRIMARY_KEY:
@@ -148,3 +143,48 @@ class EntityDef:
             ))
         cols.extend(event.attributes)
         return cols
+
+    def event_entity_def(self, event: EventDef) -> "EntityDef":
+        """Create a synthetic queryable EntityDef for an event sub-entity."""
+        pk = self.primary_key
+        identity = [pk] if pk else []
+        # Event table name overrides the default snake_case(name) convention
+        event_table = self.event_table_name(event)
+        parts = event.name.split("_")
+        event_entity_name = self.name + "".join(p.title() for p in parts) + "Event"
+        ent = EntityDef(
+            name=event_entity_name,
+            description=event.description,
+            identity=identity,
+            attributes=list(event.attributes),
+        )
+        # Override table_name to use the event table
+        ent._event_table_override = event_table
+        return ent
+
+    @property
+    def table_name(self) -> str:
+        """Convert PascalCase name to snake_case table name."""
+        override = getattr(self, "_event_table_override", None)
+        if override:
+            return override
+        return _to_snake(self.name)
+
+
+def expand_event_entities(entities: dict[str, EntityDef]) -> dict[str, EntityDef]:
+    """Expand entities dict to include synthetic queryable event entities.
+
+    For each entity with events, creates entries accessible by both:
+      - dot notation: ``CryptoAsset.price_tick``
+      - PascalCase name: ``CryptoAssetPriceTickEvent``
+
+    This allows queries to use ``root: CryptoAsset.price_tick`` to query
+    the event table directly.
+    """
+    expanded = dict(entities)
+    for parent in entities.values():
+        for event in parent.events:
+            event_ent = parent.event_entity_def(event)
+            expanded[f"{parent.name}.{event.name}"] = event_ent
+            expanded[event_ent.name] = event_ent
+    return expanded
