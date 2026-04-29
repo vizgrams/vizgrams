@@ -116,11 +116,15 @@ def _add_one_to_many_join(
         )
     join_from = from_alias if from_alias is not None else ctx.root_alias
     _from_entity = from_entity if from_entity is not None else ctx.root_entity
-    # Build (parent_col, child_col) pairs.
+    # Build (from_col, to_col) pairs where from=parent, to=child.
+    # rel.via is the FK column on the child table.
+    # via_target (or parent PK) is the column on the parent table.
     if isinstance(rel.via, list):
         join_pairs = [(col, col) for col in rel.via]
     else:
-        join_pairs = [(rel.via, rel.via_target or _from_entity.primary_key.name)]
+        parent_col = rel.via_target or _from_entity.primary_key.name
+        child_col = rel.via
+        join_pairs = [(parent_col, child_col)]
     used = _used_aliases(ctx)
     tgt_alias = _make_alias(rel.target, used)
     ctx.join_steps.append({
@@ -289,6 +293,64 @@ def _resolve_field(expr: FieldRef, ctx: CompileContext) -> str:
                 ctx.joined[join_key] = tgt_alias
             current_alias = ctx.joined[join_key]
             current_entity = target_entity
+            continue
+
+        # Infer ONE_TO_MANY from inverse relation name.
+        # e.g. Route has `source_airport: MANY_TO_ONE via source_airport_code inverse=outbound_routes`
+        # → expression `outbound_routes.route_key` on Airport resolves to a LEFT JOIN to Route.
+        for candidate_entity in ctx.entities.values():
+            inverse_rel = next(
+                (r for r in candidate_entity.relations
+                 if getattr(r, "inverse", None) == entity_name
+                 and r.target == current_entity.name
+                 and r.cardinality == Cardinality.MANY_TO_ONE),
+                None,
+            )
+            if inverse_rel is not None:
+                via_col = inverse_rel.via
+                if not isinstance(via_col, str):
+                    break
+                if entity_name not in ctx.joined:
+                    used = _used_aliases(ctx)
+                    tgt_alias = _make_alias(entity_name, used)
+                    pk = current_entity.primary_key.name
+                    ctx.join_steps.append({
+                        "type": "one_to_many",
+                        "target_table": candidate_entity.table_name,
+                        "target_alias": tgt_alias,
+                        "from_alias": current_alias,
+                        "join_pairs": [(pk, via_col)],
+                    })
+                    ctx.joined[entity_name] = tgt_alias
+                current_alias = ctx.joined[entity_name]
+                current_entity = candidate_entity
+                break
+        if entity_name in ctx.joined:
+            current_alias = ctx.joined[entity_name]
+            continue
+
+        # Check event sub-entities on the current entity.
+        # e.g. CryptoAsset has event "price_tick" → join to crypto_asset_price_tick_event
+        event_match = next(
+            (ev for ev in current_entity.events if ev.name == entity_name),
+            None,
+        )
+        if event_match is not None:
+            event_table = current_entity.event_table_name(event_match)
+            pk_name = current_entity.primary_key.name
+            if entity_name not in ctx.joined:
+                used = _used_aliases(ctx)
+                ev_alias = _make_alias(entity_name, used)
+                ctx.join_steps.append({
+                    "type": "one_to_many",
+                    "target_table": event_table,
+                    "target_alias": ev_alias,
+                    "from_alias": current_alias,
+                    "join_pairs": [(pk_name, pk_name)],
+                })
+                ctx.joined[entity_name] = ev_alias
+            current_alias = ctx.joined[entity_name]
+            # No entity to switch to — event columns are flat
             continue
 
         raise ValueError(

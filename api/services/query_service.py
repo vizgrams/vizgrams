@@ -9,6 +9,7 @@ from pathlib import Path
 from core import metadata_db
 from core.db import get_backend
 from core.model_config import load_database_config
+from semantic.types import expand_event_entities
 from semantic.yaml_adapter import YAMLAdapter
 
 
@@ -93,7 +94,7 @@ def validate_query(model_dir: Path, query_name: str) -> dict:
             query_file = tmp_dir / f"{query_name}.yaml"
             query_file.write_text(content)
             ontology_dir = model_dir / "ontology"
-            entities = {e.name: e for e in YAMLAdapter.load_entities(ontology_dir)}
+            entities = expand_event_entities({e.name: e for e in YAMLAdapter.load_entities(ontology_dir)})
             features_by_entity = _load_features_by_entity(model_dir)
             errors = validate_query_yaml(query_file, entities=entities, features_by_entity=features_by_entity)
         finally:
@@ -115,7 +116,7 @@ def validate_inline_query(model_dir: Path, name: str, content: str) -> dict:
     from semantic.query import validate_query_yaml
 
     ontology_dir = model_dir / "ontology"
-    entities = {e.name: e for e in YAMLAdapter.load_entities(ontology_dir)}
+    entities = expand_event_entities({e.name: e for e in YAMLAdapter.load_entities(ontology_dir)})
     features_by_entity = _load_features_by_entity(model_dir)
 
     tmp_dir = Path(tempfile.mkdtemp())
@@ -168,7 +169,9 @@ def execute_query(
     backend = get_backend(model_dir)
     backend.connect()
     try:
+        from semantic.types import expand_event_entities
         entities = {e.name: e for e in YAMLAdapter.load_entities(model_dir / "ontology")}
+        entities = expand_event_entities(entities)
         root_name = getattr(q, "entity", None) or getattr(q, "root", None)
         root_entity = entities.get(root_name) if root_name else None
         if root_entity and not backend.table_exists(root_entity.table_name):
@@ -345,7 +348,7 @@ def create_or_replace_query(model_dir: Path, query_name: str, content: str) -> d
     from semantic.query import validate_query_yaml
 
     ontology_dir = model_dir / "ontology"
-    entities = {e.name: e for e in YAMLAdapter.load_entities(ontology_dir)}
+    entities = expand_event_entities({e.name: e for e in YAMLAdapter.load_entities(ontology_dir)})
     features_by_entity = _load_features_by_entity(model_dir)
 
     # Use a temp directory so we control the filename (validator checks name == stem)
@@ -377,7 +380,7 @@ def validate_all(model_dir: Path) -> list[dict]:
     from semantic.query import validate_query_yaml
 
     ontology_dir = model_dir / "ontology"
-    entities = {e.name: e for e in YAMLAdapter.load_entities(ontology_dir)}
+    entities = expand_event_entities({e.name: e for e in YAMLAdapter.load_entities(ontology_dir)})
     features_by_entity = _load_features_by_entity(model_dir)
     results = []
     for name in metadata_db.list_artifact_names(model_dir, "query"):
@@ -532,7 +535,7 @@ def _compile_query_or_raise(
     from engine.query_runner import build_aggregate_query, build_detail_query
 
     ontology_dir = model_dir / "ontology"
-    entities = {e.name: e for e in YAMLAdapter.load_entities(ontology_dir)}
+    entities = expand_event_entities({e.name: e for e in YAMLAdapter.load_entities(ontology_dir)})
     features_by_entity = _load_features_by_entity(model_dir)
 
     import re as _re
