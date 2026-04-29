@@ -234,6 +234,9 @@ export function FeaturesPage() {
         { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: yaml }) },
       )
       if (!res.ok) throw new Error(await res.text())
+      setDraft(d => d ? { ...d, entity, feature_id: `${entity.toLowerCase()}.${shortName}` } : d)
+      setSelectedId(`${entity.toLowerCase()}.${shortName}`)
+      setSavedYaml(yaml)
       setIsNew(false)
       setRefreshKey((k) => k + 1)
       setSaved(true); setTimeout(() => setSaved(false), 2000)
@@ -249,9 +252,13 @@ export function FeaturesPage() {
 
   async function handleReconcile() {
     if (!draft) return
+    const entity = editMode === 'yaml'
+      ? (yamlContent.match(/^entity_type:\s*"?(\S+?)"?\s*$/m)?.[1] ?? draft.entity)
+      : draft.entity
+    if (!entity) return
     setReconciling(true); setError(null)
     try {
-      const job = await api.reconcileFeatures(draft.entity)
+      const job = await api.reconcileFeatures(entity)
       await pollJob(api.getJob, job.job_id)
     } catch (e) { setError(e instanceof Error ? e.message : 'Reconcile failed') }
     finally { setReconciling(false) }
