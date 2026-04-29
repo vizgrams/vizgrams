@@ -786,6 +786,14 @@ def _process_rows(backend, config, write_contexts, row_dicts,
             if eval_failed:
                 continue
 
+            # Auto-populate managed columns (e.g. inserted_at for events)
+            if ctx.managed_cols:
+                from datetime import UTC, datetime
+                now_str = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                for col in ctx.managed_cols:
+                    if col not in candidate or candidate[col] is None:
+                        candidate[col] = now_str
+
             if use_bulk and ctx.strategy in ("UPSERT", "DEDUP"):
                 # Buffer for a single bulk insert at the end of the loop.
                 if target.entity_name not in bulk_buffers:
