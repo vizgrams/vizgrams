@@ -261,12 +261,20 @@ def _mask_credential_values(cfg: dict) -> dict:
 
 
 def _validate_no_literal_credentials(tools: dict) -> None:
-    """Raise ValueError if any tool has a credential with a literal value."""
+    """Raise ValueError if any tool has a credential with a literal or masked value."""
     for tool_name, tool_cfg in tools.items():
         if not isinstance(tool_cfg, dict):
             continue
         for key, val in tool_cfg.items():
-            if key in _CREDENTIAL_KEYS and isinstance(val, str) and not val.startswith(("env:", "file:")):
+            if key not in _CREDENTIAL_KEYS or not isinstance(val, str):
+                continue
+            if "***" in val:
+                raise ValueError(
+                    f"Tool '{tool_name}': credential '{key}' contains a masked value "
+                    f"('{val}'). Replace with the actual 'env:VAR_NAME' or "
+                    f"'file:secret_name' reference."
+                )
+            if not val.startswith(("env:", "file:")):
                 raise ValueError(
                     f"Tool '{tool_name}': credential '{key}' must use "
                     f"'env:VAR_NAME' or 'file:secret_name', not a literal value."
