@@ -17,7 +17,7 @@ def _load_entities(model_dir: Path) -> dict:
 
 def _current_filter(entity) -> str:
     """Return a WHERE/AND clause fragment that restricts to current SCD2 rows, or empty string."""
-    return " AND valid_to IS NULL" if entity.history else ""
+    return " AND (valid_to IS NULL OR valid_to = '')" if entity.history else ""
 
 
 def _open_backend(model_dir: Path) -> DBBackend:
