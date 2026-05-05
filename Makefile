@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # ── Compose file sets ─────────────────────────────────────────────────────────
-DC_BASE := docker compose -f docker-compose.yml -f docker-compose.clickhouse.yml
-DC_AUTH := docker compose -f docker-compose.yml -f docker-compose.auth.yml -f docker-compose.clickhouse.yml
-DC_OTEL := docker compose -f docker-compose.yml -f docker-compose.jaeger.yml -f docker-compose.clickhouse.yml
+DC_BASE := docker compose -f docker-compose.yml
+DC_AUTH := docker compose -f docker-compose.yml -f docker-compose.auth.yml
+DC_OTEL := docker compose -f docker-compose.yml -f docker-compose.jaeger.yml
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -73,7 +73,7 @@ dev: ## Start API + batch service + UI locally with hot-reload (requires a runni
 	@echo "  Batch:  http://localhost:8001/docs"
 	@echo "  UI:     http://localhost:5173"
 	@echo ""
-	@echo "  Requires ClickHouse — run 'make clickhouse' first if not already running."
+	@echo "  Requires ClickHouse — run 'make clickhouse' in the vizgrams/ops repo first."
 	@echo ""
 	@trap 'kill 0' EXIT; \
 	  poetry run watchfiles --filter python "poetry run uvicorn api.main:app --port 8000" api core engine semantic tools batch & \
