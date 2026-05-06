@@ -564,7 +564,8 @@ def _compile_query_or_raise(
 
 def _compile_query(q, model_dir: Path) -> str | None:
     try:
-        return _compile_query_or_raise(q, model_dir)
+        dialect = load_database_config(model_dir).get("backend", "sqlite")
+        return _compile_query_or_raise(q, model_dir, dialect=dialect)
     except Exception:
         return None
 
