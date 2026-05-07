@@ -640,3 +640,162 @@ class TestDynamicRelationWithM2O:
         root = entities["Identity"]
         alias = _entity_qualified_alias(["subject", "name"], root, entities)
         assert alias == "subject.name"
+
+
+# ---------------------------------------------------------------------------
+# TestMultiHopOneToManyMetric
+# ---------------------------------------------------------------------------
+
+def _make_person_identity_pr_entities() -> dict[str, EntityDef]:
+    """Person → Identity (O2M) → PullRequest (inferred O2M via inverse)."""
+    team = EntityDef(
+        name="Team",
+        identity=[_pk("team_key")],
+        attributes=[AttributeDef(name="display_name", col_type=ColumnType.STRING)],
+    )
+    person = EntityDef(
+        name="Person",
+        identity=[_pk("person_key")],
+        attributes=[
+            AttributeDef(name="name", col_type=ColumnType.STRING),
+            _fk("primary_team_key", "Team"),
+        ],
+        relations=[
+            RelationDef(
+                name="identities", target="Identity",
+                via=["person_key"],
+                cardinality=Cardinality.ONE_TO_MANY,
+            ),
+            _m2o("team", "Team", "primary_team_key"),
+        ],
+    )
+    identity = EntityDef(
+        name="Identity",
+        identity=[_pk("identity_key")],
+        attributes=[
+            AttributeDef(name="subject_key", col_type=ColumnType.STRING),
+        ],
+        relations=[
+            RelationDef(
+                name="person", target="Person", via="subject_key",
+                cardinality=Cardinality.MANY_TO_ONE,
+            ),
+        ],
+    )
+    pull_request = EntityDef(
+        name="PullRequest",
+        identity=[_pk("pull_request_key")],
+        attributes=[
+            AttributeDef(name="author_identity_key", col_type=ColumnType.STRING),
+            _ts("merged_at"),
+        ],
+        relations=[
+            RelationDef(
+                name="is_authored_by", target="Identity", via="author_identity_key",
+                cardinality=Cardinality.MANY_TO_ONE,
+            ),
+        ],
+    )
+    return {
+        "Team": team,
+        "Person": person,
+        "Identity": identity,
+        "PullRequest": pull_request,
+    }
+
+
+class TestMultiHopOneToManyMetric:
+    """Tests for multi-hop ONE_TO_MANY metrics using the expression compiler path."""
+
+    def test_count_through_two_hops(self):
+        """count(identities.PullRequest.pull_request_key) from Person root."""
+        from semantic.expression import AggExpr, AggFunc, FieldRef
+
+        entities = _make_person_identity_pr_entities()
+        expr_ast = AggExpr(
+            func=AggFunc.COUNT,
+            expr=FieldRef(parts=["identities", "PullRequest", "pull_request_key"]),
+        )
+        q = QueryDef(
+            name="test_multihop",
+            entity="Person",
+            slices=[],
+            metrics={"pr_count": QueryMetric(
+                field="identities.PullRequest.pull_request_key",
+                rollup="count",
+                expr_ast=expr_ast,
+            )},
+            attributes=[_attr("name")],
+        )
+        sql = build_aggregate_query(q, entities)
+        # Should have LEFT JOINs for identity and pull_request
+        sql_lower = sql.lower()
+        assert "left join identity" in sql_lower
+        assert "left join pull_request" in sql_lower
+        assert "count(" in sql_lower
+        assert "as pr_count" in sql_lower
+
+    def test_multihop_with_m2o_slice(self):
+        """Multi-hop metric + MANY_TO_ONE attribute slice work together."""
+        from semantic.expression import AggExpr, AggFunc, FieldRef
+
+        entities = _make_person_identity_pr_entities()
+        expr_ast = AggExpr(
+            func=AggFunc.COUNT,
+            expr=FieldRef(parts=["identities", "PullRequest", "pull_request_key"]),
+        )
+        q = QueryDef(
+            name="test_mixed",
+            entity="Person",
+            slices=[_slice("name")],
+            metrics={"pr_count": QueryMetric(
+                field="identities.PullRequest.pull_request_key",
+                rollup="count",
+                expr_ast=expr_ast,
+            )},
+            attributes=[],
+        )
+        sql = build_aggregate_query(q, entities)
+        sql_lower = sql.lower()
+        # Both the metric joins and the attribute should be present
+        assert "left join identity" in sql_lower
+        assert "left join pull_request" in sql_lower
+        assert "group by" in sql_lower
+
+    def test_existing_single_hop_child_agg_still_works(self):
+        """Backward compat: count(ChildEntity.col) without expr_ast uses subquery path."""
+        entities = _make_person_identity_pr_entities()
+        # No expr_ast → falls through to _build_child_entity_agg
+        q = QueryDef(
+            name="test_single_hop",
+            entity="Person",
+            slices=[_slice("name")],
+            metrics={"identity_count": QueryMetric(
+                field="Identity.identity_key",
+                rollup="count",
+            )},
+            attributes=[],
+        )
+        sql = build_aggregate_query(q, entities)
+        sql_lower = sql.lower()
+        # Should use the subquery pattern
+        assert "left join (" in sql_lower
+        assert "as identity_count" in sql_lower
+
+    def test_parse_measure_expr_sets_ast_for_dotted_field(self):
+        """_parse_measure_expr stores expr_ast when field contains dots."""
+        from semantic.query import _parse_measure_expr
+
+        metric = _parse_measure_expr("count(identities.PullRequest.pull_request_key)")
+        assert isinstance(metric, QueryMetric)
+        assert metric.field == "identities.PullRequest.pull_request_key"
+        assert metric.rollup == "count"
+        assert metric.expr_ast is not None
+
+    def test_parse_measure_expr_no_ast_for_bare_field(self):
+        """_parse_measure_expr does NOT set expr_ast for simple fields."""
+        from semantic.query import _parse_measure_expr
+
+        metric = _parse_measure_expr("count(pull_request_key)")
+        assert isinstance(metric, QueryMetric)
+        assert metric.expr_ast is None

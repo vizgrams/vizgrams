@@ -94,6 +94,7 @@ class QueryMetric:
     format: FormatDef | None = None
     order_position: int | None = None
     order_direction: str = "asc"
+    expr_ast: object = None  # parsed AST for multi-hop expression metrics
 
 
 @dataclass
@@ -265,10 +266,12 @@ def _parse_measure_expr(
         )
 
     if isinstance(expr, AggExpr):
+        field_name = _agg_field_name(expr)
         return QueryMetric(
-            field=_agg_field_name(expr),
+            field=field_name,
             rollup=expr.func.value,
             window=window_def,
+            expr_ast=expr if "." in field_name else None,
         )
 
     raise ValueError(

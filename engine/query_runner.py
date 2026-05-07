@@ -657,6 +657,76 @@ def _build_agg(rollup: str, field_ref: str) -> str:
     return f"{_ROLLUP_FN[rollup]}({field_ref})"
 
 
+def _compile_expression_metric(
+    expr_ast,
+    root_entity: "EntityDef",
+    root_alias: str,
+    entities: dict,
+    join_steps_all: list,
+    joined_entities: dict,
+    used: set,
+    dialect: str = "sqlite",
+) -> str:
+    """Compile a multi-hop metric expression via the expression compiler.
+
+    Uses the expression compiler's traversal logic to resolve multi-hop paths
+    (e.g. ``count(identities.PullRequest.pull_request_key)``), then bridges
+    the resulting join step dicts into the query runner's JoinStep objects.
+    """
+    from engine.expression_compiler import CompileContext, compile_expr
+
+    ctx = CompileContext(
+        root_entity=root_entity,
+        root_alias=root_alias,
+        entities=entities,
+        join_steps=[],
+        joined={k: v for k, v in joined_entities.items()},
+        dialect=dialect,
+    )
+    # Seed the used-alias set so the expression compiler doesn't collide.
+    _used = _used_aliases_from_set(used)
+
+    sql = compile_expr(expr_ast, ctx)
+
+    # Bridge expression-compiler join dicts → query-runner JoinStep objects.
+    for step in ctx.join_steps:
+        alias = step["target_alias"]
+        if alias in used:
+            continue  # already emitted by a prior metric or attribute
+        used.add(alias)
+        if step.get("type") == "one_to_many":
+            parent_col, child_col = step["join_pairs"][0]
+            join_steps_all.append(JoinStep(
+                from_alias=step["from_alias"],
+                from_col=parent_col,
+                target_table=step["target_table"],
+                target_alias=alias,
+                target_pk=child_col,
+                has_history=False,
+            ))
+        else:
+            join_steps_all.append(JoinStep(
+                from_alias=step["from_alias"],
+                from_col=step.get("from_col", ""),
+                target_table=step["target_table"],
+                target_alias=alias,
+                target_pk=step.get("target_pk", ""),
+                has_history=step.get("has_history", False),
+            ))
+
+    # Merge new joined entities back so later metrics/filters can reuse them.
+    for k, v in ctx.joined.items():
+        if k not in joined_entities:
+            joined_entities[k] = v
+
+    return sql
+
+
+def _used_aliases_from_set(used: set) -> set:
+    """Return a copy of the used-alias set for seeding CompileContext."""
+    return set(used)
+
+
 def _build_child_entity_agg(
     metric_def,
     root_entity: "EntityDef",
@@ -965,6 +1035,16 @@ def _build_windowed_aggregate_query(
                 f"{_build_agg(metric_def.denominator.rollup, den_ref)}"
                 f" AS __{metric_name}_den"
             )
+            continue
+        if getattr(metric_def, "expr_ast", None) is not None:
+            agg_sql = _compile_expression_metric(
+                metric_def.expr_ast, root_entity, root_alias, entities,
+                join_steps_all, joined_entities, used, dialect=dialect,
+            )
+            if metric_def.window is None:
+                base_select_parts.append(f"{agg_sql} AS {metric_name}")
+            else:
+                base_select_parts.append(f"{agg_sql} AS __{metric_name}")
             continue
         field_ref = _feature_col_ref(
             metric_def.field, root_entity.name, root_alias,
@@ -1302,6 +1382,13 @@ def build_aggregate_query(
             num_agg = _build_agg(metric_def.numerator.rollup, num_ref)
             den_agg = _build_agg(metric_def.denominator.rollup, den_ref)
             select_parts.append(f"CAST({num_agg} AS REAL) / {den_agg} AS {metric_name}")
+            continue
+        if getattr(metric_def, "expr_ast", None) is not None:
+            agg_sql = _compile_expression_metric(
+                metric_def.expr_ast, root_entity, root_alias, entities,
+                join_steps_all, joined_entities, used, dialect=dialect,
+            )
+            select_parts.append(f"{agg_sql} AS {metric_name}")
             continue
         child_agg = _build_child_entity_agg(
             metric_def, root_entity, entities, root_alias, used, child_agg_joins, rollup_map,
