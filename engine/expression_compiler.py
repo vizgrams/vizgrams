@@ -121,10 +121,12 @@ def _add_one_to_many_join(
     # via_target (or parent PK) is the column on the parent table.
     if isinstance(rel.via, list):
         join_pairs = [(col, col) for col in rel.via]
+    elif rel.via_target:
+        # Explicit > syntax: via=parent_col > via_target=child_col
+        join_pairs = [(rel.via, rel.via_target)]
     else:
-        parent_col = rel.via_target or _from_entity.primary_key.name
-        child_col = rel.via
-        join_pairs = [(parent_col, child_col)]
+        # Bare form: via is the child FK, parent is PK
+        join_pairs = [(_from_entity.primary_key.name, rel.via)]
     used = _used_aliases(ctx)
     tgt_alias = _make_alias(rel.target, used)
     ctx.join_steps.append({
