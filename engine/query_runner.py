@@ -1124,8 +1124,12 @@ def _build_windowed_aggregate_query(
     join_clauses.extend(fv_joins)
 
     where_clause = ""
+    filter_parts = []
+    if root_entity.history is not None:
+        filter_parts.append(
+            f"({root_alias}.valid_to IS NULL OR {root_alias}.valid_to = '')"
+        )
     if query.filters:
-        filter_parts = []
         for filter_str in query.filters:
             sql = compile_filter_yaml(
                 filter_str, alias=root_alias,
@@ -1134,6 +1138,7 @@ def _build_windowed_aggregate_query(
                 dialect=dialect,
             )
             filter_parts.append(sql)
+    if filter_parts:
         where_clause = "WHERE " + "\n  AND ".join(filter_parts)
 
     group_by_clause = ""
@@ -1464,8 +1469,13 @@ def build_aggregate_query(
     join_clauses.extend(child_agg_joins)
 
     where_clause = ""
+    filter_parts = []
+    # SCD2 root entity: filter to current (open) records only.
+    if root_entity.history is not None:
+        filter_parts.append(
+            f"({root_alias}.valid_to IS NULL OR {root_alias}.valid_to = '')"
+        )
     if query.filters:
-        filter_parts = []
         for filter_str in query.filters:
             sql = compile_filter_yaml(
                 filter_str, alias=root_alias,
@@ -1474,6 +1484,7 @@ def build_aggregate_query(
                 dialect=dialect,
             )
             filter_parts.append(sql)
+    if filter_parts:
         where_clause = "WHERE " + "\n  AND ".join(filter_parts)
 
     group_by_clause = ""
