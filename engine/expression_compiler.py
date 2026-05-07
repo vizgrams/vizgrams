@@ -469,6 +469,10 @@ def _compile_agg(expr: AggExpr, ctx: CompileContext) -> str:
         return f"COUNT(DISTINCT {inner_sql})"
     if expr.func == AggFunc.COUNT and inner_sql == "*":
         return "COUNT(*)"
+    # ClickHouse non-Nullable String columns produce '' (not NULL) on LEFT JOIN
+    # misses.  COUNT('') counts them; NULLIF converts '' → NULL so they're skipped.
+    if expr.func == AggFunc.COUNT and ctx.dialect == "clickhouse":
+        return f"COUNT(NULLIF({inner_sql}, ''))"
     return f"{expr.func.value.upper()}({inner_sql})"
 
 
