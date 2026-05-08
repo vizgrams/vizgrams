@@ -244,6 +244,9 @@ function ViewResultFrame({
     api.validateView(name)
       .then((r) => { setValidStatus(r.valid ? 'valid' : 'invalid'); setValidErrors(r.errors) })
       .catch(() => setValidStatus('idle'))
+    // Intentionally fires on name change only: paramValues changes per keystroke
+    // and runView identity tracks viewType — both would cause spurious re-fetches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name])
 
   const handleSaveYaml = useCallback(async () => {
