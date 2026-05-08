@@ -117,6 +117,10 @@ export function useDrillStack(modelKey: string) {
     function onPopstate(e: PopStateEvent) {
       if (navigatingRef.current) return
       const ev = e.state as { stack?: DrillFrame[] } | null
+      // ExploreShell dispatches a synthetic popstate after history.replaceState
+      // to refresh React Router's location. The state object's stack is the
+      // same reference as ours, so bail out — nothing to restore.
+      if (ev?.stack && ev.stack === stackRef.current) return
       const newStack = ev?.stack ?? (() => {
         const f = decodeHash(window.location.hash)
         return f ? [f] : []
