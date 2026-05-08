@@ -760,7 +760,11 @@ export function ExploreShell() {
         url.searchParams.delete('section')
         changed = true
       }
-    } else if (url.searchParams.has('app')) {
+    } else if (current && url.searchParams.has('app')) {
+      // Only strip when there's an actual non-app frame loaded. A null current
+      // means we're still resolving the URL — the searchParams effect will
+      // populate the frame once apps finish loading; stripping here races and
+      // loses the ?app= param before that effect can use it.
       url.searchParams.delete('app')
       changed = true
     }
