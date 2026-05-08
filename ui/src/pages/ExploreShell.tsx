@@ -231,7 +231,7 @@ function ViewResultFrame({
     } finally {
       setLoading(false)
     }
-  }, [api, name])
+  }, [api, name, viewType])
 
   useEffect(() => {
     api.getView(name).then((d) => {
