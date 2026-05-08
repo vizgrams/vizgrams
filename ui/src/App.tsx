@@ -21,7 +21,6 @@ import { ExploreShell } from '@/pages/ExploreShell'
 import { AccountPage } from '@/pages/AccountPage'
 import { FeedPage } from '@/pages/FeedPage'
 import { SavedPage } from '@/pages/SavedPage'
-import { ViewsPage } from '@/pages/ViewsPage'
 import { ModelsPage } from '@/pages/admin/ModelsPage'
 
 // ---------------------------------------------------------------------------
@@ -74,7 +73,7 @@ export default function App() {
             {/* Creator — creator+ */}
             <Route path="/features" element={<ProtectedRoute minRole="creator"><FeaturesPage /></ProtectedRoute>} />
             <Route path="/queries" element={<ProtectedRoute minRole="creator"><QueriesPage /></ProtectedRoute>} />
-            <Route path="/views" element={<ProtectedRoute minRole="creator"><ViewsPage /></ProtectedRoute>} />
+            <Route path="/views" element={<Navigate to="/explore" replace />} />
             <Route path="/graph" element={<ProtectedRoute minRole="creator"><GraphPage /></ProtectedRoute>} />
 
             {/* Admin — admin only */}

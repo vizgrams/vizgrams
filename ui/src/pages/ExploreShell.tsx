@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Activity, BarChart2, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Hash,
-  Loader2, Play, Save, SlidersHorizontal, Table, Upload,
+  Loader2, Play, Plus, Save, SlidersHorizontal, Table, Upload,
 } from 'lucide-react'
 import type { ViewSummary, ViewResult, ParamDef, EntitySummary, ApplicationSummary } from '@/api/client'
 import { publishVizgram, previewCaption } from '@/api/client'
@@ -37,7 +37,7 @@ import type { EditMode } from '@/pages/explore/EditShell'
 import { YamlEditor } from '@/components/YamlEditor'
 
 // ---------------------------------------------------------------------------
-// Type icons / colours (shared with old ViewsPage)
+// Type icons / colours
 // ---------------------------------------------------------------------------
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
@@ -693,8 +693,10 @@ function ViewContent({
 
 export function ExploreShell() {
   const { model, api } = useModel()
+  const { role } = useRole()
   const { stack, current, push, reset, replaceParams } = useDrillStack(model)
   const [searchParams, setSearchParams] = useSearchParams()
+  const canCreate = role === 'admin' || role === 'creator'
 
   const [views, setViews] = useState<ViewSummary[]>([])
   const [entities, setEntities] = useState<EntitySummary[]>([])
@@ -782,6 +784,53 @@ export function ExploreShell() {
     reset({ kind: 'entity-list', entity })
   }
 
+  // Reserved-name validation matching the backend slug rules.
+  const NAME_RE = /^[a-z][a-z0-9_]*$/
+
+  async function startNewView() {
+    const name = window.prompt('New view name (lowercase, underscores only):')?.trim()
+    if (!name) return
+    if (!NAME_RE.test(name)) {
+      alert(`Invalid name "${name}". Use lowercase letters, digits, and underscores; must start with a letter.`)
+      return
+    }
+    if (views.some((v) => v.name === name)) {
+      alert(`A view named "${name}" already exists.`)
+      return
+    }
+    const template = `name: ${name}\ntype: chart\nquery: query_name\nvisualization:\n  chart_type: bar\n  x: x_column\n  y:\n    - y_column\n`
+    try {
+      await api.saveView(name, template)
+      const list = await api.listViews()
+      setViews(list)
+      reset({ kind: 'view', name, params: {} })
+    } catch (e) {
+      alert(`Failed to create view: ${String(e)}`)
+    }
+  }
+
+  async function startNewApp() {
+    const name = window.prompt('New app name (lowercase, underscores only):')?.trim()
+    if (!name) return
+    if (!NAME_RE.test(name)) {
+      alert(`Invalid name "${name}". Use lowercase letters, digits, and underscores; must start with a letter.`)
+      return
+    }
+    if (apps.some((a) => a.name === name)) {
+      alert(`An app named "${name}" already exists.`)
+      return
+    }
+    const template = `name: ${name}\nviews: []\nlayout: []\nparams: []\n`
+    try {
+      await api.saveApplication(name, template)
+      const list = await api.listApplications()
+      setApps(list)
+      reset({ kind: 'app', name, params: {} })
+    } catch (e) {
+      alert(`Failed to create app: ${String(e)}`)
+    }
+  }
+
 
   const handleNavigate = useCallback((frame: DrillFrame) => {
     push(frame)
@@ -824,7 +873,26 @@ export function ExploreShell() {
 
             {/* Views mode (default — no section or app param) */}
             {searchParams.get('section') == null && (
-              views.length === 0
+              <>
+                {canCreate && (
+                  <div className="px-2 pb-2 mb-1 border-b flex gap-1">
+                    <button
+                      onClick={startNewView}
+                      className="flex-1 flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded px-2 py-1.5 transition-colors"
+                      title="Create a new view"
+                    >
+                      <Plus className="h-3 w-3" /> View
+                    </button>
+                    <button
+                      onClick={startNewApp}
+                      className="flex-1 flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded px-2 py-1.5 transition-colors"
+                      title="Create a new app"
+                    >
+                      <Plus className="h-3 w-3" /> App
+                    </button>
+                  </div>
+                )}
+                {views.length === 0
                 ? <p className="px-4 py-6 text-xs text-muted-foreground text-center">Loading…</p>
                 : views.map((v) => {
                     const active = stack.length > 0 && stack[0].kind === 'view' && stack[0].name === v.name
@@ -845,6 +913,8 @@ export function ExploreShell() {
                       </button>
                     )
                   })
+                }
+              </>
             )}
 
           </div>
