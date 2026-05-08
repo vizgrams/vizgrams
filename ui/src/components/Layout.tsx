@@ -128,11 +128,11 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
         <NavSection label="User" collapsed={collapsed} dark>
           <NavItem to="/feed" icon={<Rss className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Feed</NavItem>
           <NavItem to="/saved" icon={<Bookmark className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Saved</NavItem>
+          <NavItem to="/explore" matchExact icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Explore</NavItem>
+          <NavItem to="/explore?section=entities" matchSearch="section=entities" icon={<Layers className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Entity Explorer</NavItem>
           {apps.map((a) => (
             <NavItem key={a.name} to={`/explore?app=${encodeURIComponent(a.name)}`} matchSearch={`app=${encodeURIComponent(a.name)}`} icon={<LayoutGrid className="h-3.5 w-3.5" />} collapsed={collapsed} dark>{a.name}</NavItem>
           ))}
-          <NavItem to="/explore" matchExact icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Explore</NavItem>
-          <NavItem to="/explore?section=entities" matchSearch="section=entities" icon={<Layers className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Entity Explorer</NavItem>
         </NavSection>
 
       </nav>
