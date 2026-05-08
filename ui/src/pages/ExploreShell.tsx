@@ -231,7 +231,7 @@ function ViewResultFrame({
     } finally {
       setLoading(false)
     }
-  }, [api, name])
+  }, [api, name, viewType])
 
   useEffect(() => {
     api.getView(name).then((d) => {
@@ -244,6 +244,9 @@ function ViewResultFrame({
     api.validateView(name)
       .then((r) => { setValidStatus(r.valid ? 'valid' : 'invalid'); setValidErrors(r.errors) })
       .catch(() => setValidStatus('idle'))
+    // Intentionally fires on name change only: paramValues changes per keystroke
+    // and runView identity tracks viewType — both would cause spurious re-fetches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name])
 
   const handleSaveYaml = useCallback(async () => {
@@ -745,17 +748,25 @@ export function ExploreShell() {
   // Sync ?app= search param with current frame so the Layout NavItem
   // stays highlighted correctly, and so stale ?app= params don't trigger
   // the reset effect above when navigating back to a non-app frame.
+  // After history.replaceState we dispatch a synthetic popstate so React
+  // Router's useLocation refreshes — raw history mutations are invisible to
+  // it otherwise, leaving the sidebar selection stuck on the old app.
   useEffect(() => {
     const url = new URL(window.location.href)
+    let changed = false
     if (current?.kind === 'app') {
       if (url.searchParams.get('app') !== current.name) {
         url.searchParams.set('app', current.name)
         url.searchParams.delete('section')
-        history.replaceState(history.state, '', url.pathname + url.search + url.hash)
+        changed = true
       }
     } else if (url.searchParams.has('app')) {
       url.searchParams.delete('app')
+      changed = true
+    }
+    if (changed) {
       history.replaceState(history.state, '', url.pathname + url.search + url.hash)
+      window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
     }
   }, [current])
 
