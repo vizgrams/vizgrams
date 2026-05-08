@@ -362,10 +362,12 @@ export function AppFrame({
   name,
   initialParams,
   onNavigate,
+  onParamsApplied,
 }: {
   name: string
   initialParams: Record<string, string>
   onNavigate: (frame: DrillFrame) => void
+  onParamsApplied?: (params: Record<string, string>) => void
 }) {
   const { api } = useModel()
   const [detail, setDetail] = useState<ApplicationDetail | null>(null)
@@ -460,7 +462,7 @@ export function AppFrame({
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
           {saving ? 'Saving…' : 'Save'}
         </button>
-        <button disabled={loading} onClick={() => executeViews(detail, paramValues)}
+        <button disabled={loading} onClick={() => { executeViews(detail, paramValues); onParamsApplied?.(paramValues) }}
           className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-40">
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
           {loading ? 'Running…' : 'Run'}
@@ -508,7 +510,7 @@ export function AppFrame({
                 value={paramValues[p.name] ?? ''}
                 placeholder={p.optional ? 'all' : (p.default ?? '')}
                 onChange={(e) => setParamValues((prev) => ({ ...prev, [p.name]: e.target.value }))}
-                onKeyDown={(e) => e.key === 'Enter' && executeViews(detail, paramValues)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { executeViews(detail, paramValues); onParamsApplied?.(paramValues) } }}
                 className="h-7 rounded border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring w-full"
               />
             </div>

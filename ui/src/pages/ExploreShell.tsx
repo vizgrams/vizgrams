@@ -6,10 +6,10 @@
  *
  * Left panel: scrollable list of Views + Entities (both sections).
  * Right panel: frame renderer driven by useDrillStack.
- * Breadcrumb: derived from the stack, consistent across view and entity frames.
  *
  * Drilldown: clicking within any frame pushes onto the shared stack.
  * Sidebar clicks reset the stack to a fresh frame.
+ * Param changes update the URL hash — browser back/forward navigates between param states.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -26,7 +26,7 @@ import { Card, ErrorMessage, Spinner } from '@/components/Layout'
 import { LineBarChart } from '@/components/charts/LineBarChart'
 import { CalendarHeatmapChart } from '@/components/charts/CalendarHeatmapChart'
 import { MapChart } from '@/components/charts/MapChart'
-import { useDrillStack, frameLabel } from '@/hooks/useDrillStack'
+import { useDrillStack } from '@/hooks/useDrillStack'
 import type { DrillFrame } from '@/hooks/useDrillStack'
 import { EntityDetailFrame } from '@/pages/explore/EntityDetailFrame'
 import { EntityListFrame } from '@/pages/explore/EntityListFrame'
@@ -185,10 +185,12 @@ function ViewResultFrame({
   name,
   initialParams,
   onNavigate,
+  onParamsApplied,
 }: {
   name: string
   initialParams: Record<string, string>
   onNavigate: (frame: DrillFrame) => void
+  onParamsApplied?: (params: Record<string, string>) => void
 }) {
   const { api, model } = useModel()
   const { role } = useRole()
@@ -345,7 +347,7 @@ function ViewResultFrame({
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
           {saving ? 'Saving…' : 'Save'}
         </button>
-        <button disabled={loading} onClick={() => runView(paramValues)}
+        <button disabled={loading} onClick={() => { runView(paramValues); onParamsApplied?.(paramValues) }}
           className="flex items-center gap-1.5 bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-40">
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
           {loading ? 'Running…' : 'Run'}
@@ -400,7 +402,7 @@ function ViewResultFrame({
                 value={paramValues[p.name] ?? ''}
                 placeholder={p.optional ? 'all' : (p.default ?? '')}
                 onChange={(e) => setParamValues((prev) => ({ ...prev, [p.name]: e.target.value }))}
-                onKeyDown={(e) => e.key === 'Enter' && runView(paramValues)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { runView(paramValues); onParamsApplied?.(paramValues) } }}
                 className="h-7 rounded border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring w-full"
               />
             </div>
@@ -688,7 +690,7 @@ function ViewContent({
 
 export function ExploreShell() {
   const { model, api } = useModel()
-  const { stack, current, push, navigateTo, reset } = useDrillStack(model)
+  const { stack, current, push, reset, replaceParams } = useDrillStack(model)
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [views, setViews] = useState<ViewSummary[]>([])
@@ -740,13 +742,22 @@ export function ExploreShell() {
     }
   }, [searchParams.toString(), entities.length, apps.length])
 
-  // Sync ?app= search param with current app frame so the Layout NavItem
-  // stays highlighted correctly when the frame is initialized from the URL hash.
+  // Sync ?app= search param with current frame so the Layout NavItem
+  // stays highlighted correctly, and so stale ?app= params don't trigger
+  // the reset effect above when navigating back to a non-app frame.
   useEffect(() => {
-    if (current?.kind === 'app' && searchParams.get('app') !== current.name) {
-      setSearchParams({ app: current.name }, { replace: true })
+    const url = new URL(window.location.href)
+    if (current?.kind === 'app') {
+      if (url.searchParams.get('app') !== current.name) {
+        url.searchParams.set('app', current.name)
+        url.searchParams.delete('section')
+        history.replaceState(history.state, '', url.pathname + url.search + url.hash)
+      }
+    } else if (url.searchParams.has('app')) {
+      url.searchParams.delete('app')
+      history.replaceState(history.state, '', url.pathname + url.search + url.hash)
     }
-  }, [current?.kind === 'app' ? current.name : null])
+  }, [current])
 
   function selectView(name: string) {
     reset({ kind: 'view', name, params: {} })
@@ -828,28 +839,6 @@ export function ExploreShell() {
       {/* ── Right panel ── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
 
-        {/* Breadcrumb */}
-        {stack.length > 0 && (
-          <nav className="shrink-0 px-6 py-2.5 border-b flex items-center gap-1 flex-wrap text-xs">
-            {stack.map((frame, i) => (
-              <span key={i} className="flex items-center gap-1">
-                {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />}
-                <button
-                  onClick={() => navigateTo(i)}
-                  className={cn(
-                    'font-mono transition-colors',
-                    i === stack.length - 1
-                      ? 'text-foreground font-medium cursor-default'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {frameLabel(frame)}
-                </button>
-              </span>
-            ))}
-          </nav>
-        )}
-
         {/* Frame content */}
         <div className="flex-1 overflow-y-auto px-6 py-6">
           {!current ? (
@@ -862,6 +851,7 @@ export function ExploreShell() {
               name={current.name}
               initialParams={current.params}
               onNavigate={handleNavigate}
+              onParamsApplied={replaceParams}
             />
           ) : current.kind === 'view' ? (
             <ViewResultFrame
@@ -869,6 +859,7 @@ export function ExploreShell() {
               name={current.name}
               initialParams={current.params}
               onNavigate={handleNavigate}
+              onParamsApplied={replaceParams}
             />
           ) : current.kind === 'entity-list' ? (
             <EntityListFrame
