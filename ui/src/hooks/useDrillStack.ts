@@ -160,7 +160,19 @@ export function useDrillStack(modelKey: string) {
     setStack(newStack)
   }, [setStack])
 
+  /** Update params on the current frame and push a browser history entry.
+   *  Use for explicit user actions (Run button, Enter key) only. */
+  const replaceParams = useCallback((params: Record<string, string>) => {
+    const s = stackRef.current
+    const top = s[s.length - 1]
+    if (!top || (top.kind !== 'view' && top.kind !== 'app')) return
+    const updated: DrillFrame = { ...top, params }
+    const newStack = [...s.slice(0, -1), updated]
+    history.pushState({ stack: newStack }, '', encodeFrame(updated))
+    setStack(newStack)
+  }, [setStack])
+
   const current = effectiveStack[effectiveStack.length - 1] ?? null
 
-  return { stack: effectiveStack, current, push, navigateTo, reset }
+  return { stack: effectiveStack, current, push, navigateTo, reset, replaceParams }
 }
