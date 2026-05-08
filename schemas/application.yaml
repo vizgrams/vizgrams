@@ -9,7 +9,6 @@ properties:
     pattern: "^[a-z][a-z0-9_]*$"
   views:
     type: array
-    minItems: 1
     items:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"

@@ -75,6 +75,9 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   useEffect(() => {
     api.listApplications().then(setApps).catch(() => {})
+    // api is created fresh by ModelProvider on every render — only re-fetch
+    // when the model itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model])
 
   return (
