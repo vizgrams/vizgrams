@@ -694,7 +694,7 @@ function ViewContent({
 export function ExploreShell() {
   const { model, api } = useModel()
   const { role } = useRole()
-  const { stack, current, push, reset, replaceParams } = useDrillStack(model)
+  const { stack, current, push, reset, replaceParams, navigateTo } = useDrillStack(model)
   const [searchParams, setSearchParams] = useSearchParams()
   const canCreate = role === 'admin' || role === 'creator'
 
@@ -744,6 +744,12 @@ export function ExploreShell() {
       }
     } else if (section === 'entities' && entities.length > 0) {
       reset({ kind: 'entity-list', entity: entities[0].name })
+    } else if (current && window.location.hash === '') {
+      // Plain /explore — user clicked the Explore NavItem, which clears both
+      // search and hash. Drop the previously-loaded frame so the views list
+      // appears. Deep links like /explore#view/foo set the hash, so this
+      // branch leaves them alone.
+      navigateTo(-1)
     }
   }, [searchParams.toString(), entities.length, apps.length])
 
