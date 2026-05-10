@@ -61,6 +61,13 @@ class DBBackend(ABC):
     @abstractmethod
     def upsert(self, table: str, row: dict) -> None: ...
 
+    def bulk_upsert(self, table: str, rows: list[dict]) -> None:
+        """Default fallback: per-row upsert. Backends should override for
+        performance — ClickHouse in particular collapses per-row INSERTs into
+        one part each, which causes severe MergeTree state inflation."""
+        for row in rows:
+            self.upsert(table, row)
+
     @abstractmethod
     def append(self, table: str, row: dict) -> None: ...
 
