@@ -189,14 +189,26 @@ def _map_record(output: OutputConfig, record: dict, context: dict | None = None)
     return row
 
 
-def _write_row(output: OutputConfig, db: DBBackend, table_name: str, row: dict) -> None:
-    """Write a single row using the output's write_mode."""
+_WRITE_BATCH_SIZE = 1000
+
+
+def _write_rows(output: OutputConfig, db: DBBackend, table_name: str, rows: list[dict]) -> None:
+    """Write rows in batches.
+
+    Per-row INSERTs against ClickHouse create one part per row, which inflates
+    the MergeTree state, slows extraction by orders of magnitude, and pushes
+    the server's MemoryTracking metric to the cap on small instances. Batching
+    via bulk_upsert collapses N HTTP roundtrips into N/BATCH and one part per
+    batch.
+    """
+    if not rows:
+        return
     if output.write_mode == WriteMode.APPEND:
-        db.append(table_name, row)
-    else:
-        # UPSERT and REPLACE both use upsert for individual rows
-        # (REPLACE truncates the table beforehand)
-        db.upsert(table_name, row)
+        for row in rows:
+            db.append(table_name, row)
+        return
+    for i in range(0, len(rows), _WRITE_BATCH_SIZE):
+        db.bulk_upsert(table_name, rows[i:i + _WRITE_BATCH_SIZE])
 
 
 def _explode_records(
@@ -267,14 +279,12 @@ def _process_output(
         if not exploded:
             return
         table_name = ensure_table(output, context_col_names, [exploded[0][0]], db)
-        for element, merged_context in exploded:
-            row = _map_record(output, element, merged_context)
-            _write_row(output, db, table_name, row)
+        rows = [_map_record(output, element, merged_context) for element, merged_context in exploded]
     else:
         table_name = ensure_table(output, context_col_names, records, db)
-        for record in records:
-            row = _map_record(output, record, context)
-            _write_row(output, db, table_name, row)
+        rows = [_map_record(output, record, context) for record in records]
+
+    _write_rows(output, db, table_name, rows)
 
 
 class JobCancelledError(Exception):
