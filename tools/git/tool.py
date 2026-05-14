@@ -9,6 +9,8 @@ import time
 from collections.abc import Iterator
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from tools.base import BaseTool
 
@@ -61,6 +63,23 @@ class GitHubTool(BaseTool):
         self._session.headers["Accept"] = "application/vnd.github+json"
         self._session.headers["X-GitHub-Api-Version"] = "2022-11-28"
 
+        # Retry transient connection-layer errors (DNS resolution failures,
+        # reset connections, refused sockets) at the adapter level. This is
+        # separate from `_request_with_retry`, which handles HTTP-level
+        # responses; the adapter retries *before* a request resp is produced.
+        # Common triggers: laptop wake before WiFi reconnects, brief upstream
+        # DNS hiccups, GitHub closing keep-alive connections.
+        retry = Retry(
+            total=5, connect=5, read=3,
+            backoff_factor=1,            # 1s, 2s, 4s, 8s, 16s (~31s ceiling)
+            status_forcelist=[],         # leave HTTP retries to _request_with_retry
+            allowed_methods=None,        # retry all verbs incl. POST (GraphQL)
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
+
     # ------------------------------------------------------------------
     # HTTP primitives
     # ------------------------------------------------------------------
@@ -93,7 +112,21 @@ class GitHubTool(BaseTool):
         """
         max_retries = 3
         for attempt in range(max_retries + 1):
-            resp = self._session.request(method, url, timeout=30, **kwargs)
+            try:
+                resp = self._session.request(method, url, timeout=30, **kwargs)
+            except requests.RequestException as exc:
+                # Adapter-level retries already exhausted (DNS still down, etc.).
+                # Back off once more at the application layer in case the
+                # connectivity window is wider than the adapter's ceiling.
+                if attempt < max_retries:
+                    delay = 2 ** (attempt + 1)
+                    logger.warning(
+                        "%s %s: connection error %s, retrying in %ds",
+                        method, url, exc.__class__.__name__, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
             if resp.status_code == 200:
                 return resp
             if resp.status_code == 404:
