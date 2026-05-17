@@ -395,3 +395,34 @@ def test_get_backend_raw_namespace_uses_raw_database(tmp_path, monkeypatch):
     assert isinstance(backend, ClickHouseBackend)
     assert backend.database == f"{tmp_path.name}_raw"
     assert backend.always_final is True
+
+
+# ---------------------------------------------------------------------------
+# bulk_upsert — heterogeneous key sets (regression for multi-group mappers)
+# ---------------------------------------------------------------------------
+
+def test_bulk_upsert_handles_heterogeneous_row_keys(ch):
+    """Rows with different key sets should all write — keys missing from a
+    given row default to NULL, not silently dropping the row."""
+    ch.create_table(
+        "test_table",
+        {"id": "STRING", "name": "STRING", "score": "FLOAT", "tag": "STRING"},
+        primary_keys=["id"],
+    )
+    # Row 1 sets {name}, row 2 sets {score}, row 3 sets {tag} — no overlap on
+    # the data columns. Pre-fix, this would KeyError inside bulk_upsert (the
+    # row that defined col_names had keys the others didn't). Post-fix, all
+    # three rows write, with NULL where each one doesn't supply a value.
+    ch.bulk_upsert("test_table", [
+        {"id": "a", "name": "Alice"},
+        {"id": "b", "score": 1.5},
+        {"id": "c", "tag": "alpha"},
+    ])
+    rows = ch.execute(
+        "SELECT id, name, score, tag FROM test_table FINAL ORDER BY id"
+    )
+    assert [tuple(r) for r in rows] == [
+        ("a", "Alice", None, None),
+        ("b", None, 1.5, None),
+        ("c", None, None, "alpha"),
+    ]
