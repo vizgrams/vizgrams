@@ -646,6 +646,8 @@ function ViewContent({
             rows={result.rows} columns={result.columns} height={320}
             formats={result.formats ?? undefined}
             onClickPoint={handleClickPoint}
+            groupBy={viz.group_by as string | undefined}
+            stack={viz.stack as 'absolute' | 'percent' | undefined}
           />
         </Card>
       )
