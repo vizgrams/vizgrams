@@ -11,6 +11,23 @@ class BaseTool(ABC):
     """Abstract base for data pipeline tools.
 
     Each tool connects to an external system and yields raw records.
+
+    Resilience convention
+    ---------------------
+    Tools making external network calls SHOULD survive transient connection
+    failures (DNS resolution flaps, VPN handoffs, laptop wake-from-sleep,
+    upstream socket resets). Two equivalent patterns are supported:
+
+    1. **`urllib3.Retry` adapter** mounted on a `requests.Session`.
+       Preferred when the tool issues HTTP calls directly. See `tools/git`
+       for the canonical setup (~10 lines in `__init__`).
+
+    2. **`core.retry.retry_on_transient(fn, *args, **kwargs)`** wrapper around
+       each external call. Use when a third-party SDK hides its Session
+       (e.g. `atlassian-python-api` for jira). See `tools/jira/_call`.
+
+    Tools that don't make network calls (file readers, codeowner parsers)
+    are exempt.
     """
 
     PARAMS: dict[str, dict] = {}

@@ -25,12 +25,13 @@ def _is_rate_limited(exc: Exception) -> bool:
     return http_err is not None and getattr(http_err, "status_code", None) == 429
 
 
-def retry_on_transient(fn, *args, max_retries=3, **kwargs):
+def retry_on_transient(fn, *args, max_retries=5, **kwargs):
     """Call fn(*args, **kwargs) with retry on transient network errors and 429s.
 
-    Retries up to max_retries times with exponential backoff (2s, 4s, 8s).
-    HTTP 429 (rate limit) responses are also retried with the same backoff.
-    Re-raises the exception after exhausting retries.
+    Retries up to max_retries times with exponential backoff: 2s, 4s, 8s, 16s, 32s
+    — a ~62s ceiling that's wide enough to ride out laptop wake and VPN handoffs,
+    which routinely take 15-30s. HTTP 429 (rate limit) responses are also retried
+    with the same backoff. Re-raises the exception after exhausting retries.
     """
     for attempt in range(max_retries + 1):
         try:
