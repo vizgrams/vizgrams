@@ -3,6 +3,7 @@
 
 """Execution engine for semantic layer mappers."""
 
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -12,6 +13,8 @@ from engine.python_evaluator import evaluate
 from semantic.expression import parse_expression_str as _parse_expression_str
 from semantic.mapper_types import JoinCondition, MapperConfig, RowGroup, TargetDef
 from semantic.types import EntityDef, SemanticHint
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data structures
