@@ -153,3 +153,55 @@ def test_execute_mapper_passes_correct_args_to_run_mapper(model_dir_with_mapper)
         assert positional[1] == [mock_entity]
         # Third arg must be the backend object
         assert positional[2] == mock_backend
+
+
+# ---------------------------------------------------------------------------
+# create_or_replace_mapper — one-mapper-per-entity rule
+# ---------------------------------------------------------------------------
+
+_GADGET_MAPPER_YAML = """\
+mapper: gadget_v2
+description: "Second mapper targeting Widget — should be rejected"
+
+sources:
+  - alias: g
+    table: raw_gadgets
+    columns: [widget_key, name]
+
+targets:
+  - entity: Widget
+    rows:
+      - from: g
+        columns:
+          - name: widget_key
+            expr: g.widget_key
+          - name: name
+            expr: g.name
+"""
+
+
+def test_create_mapper_rejects_duplicate_target_entity(model_dir_with_mapper):
+    """A second mapper targeting an entity already owned by another mapper must
+    be rejected — each entity has exactly one source of truth."""
+    from api.services.mapper_service import (
+        MapperValidationError,
+        create_or_replace_mapper,
+    )
+
+    with pytest.raises(MapperValidationError) as exc_info:
+        create_or_replace_mapper(model_dir_with_mapper, "gadget_v2", _GADGET_MAPPER_YAML)
+
+    err = exc_info.value.errors[0]
+    assert err["path"] == "targets"
+    assert "Widget" in err["message"]
+    assert "already mapped by 'widget'" in err["message"]
+
+
+def test_create_mapper_can_replace_itself(model_dir_with_mapper):
+    """Re-saving the same mapper name (overwrite) must NOT trigger the
+    duplicate-entity rule against itself."""
+    from api.services.mapper_service import create_or_replace_mapper
+
+    # Same name, same target — pure overwrite, should succeed.
+    result = create_or_replace_mapper(model_dir_with_mapper, "widget", _WIDGET_MAPPER_YAML)
+    assert result["name"] == "widget"

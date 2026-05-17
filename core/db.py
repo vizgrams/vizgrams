@@ -627,18 +627,38 @@ class ClickHouseBackend(DBBackend):
         self._client.insert(table, [list(prepared.values())], column_names=list(prepared.keys()))
 
     def bulk_upsert(self, table: str, rows: list[dict]) -> None:
-        """INSERT many rows in a single call — much faster than repeated upsert()."""
+        """INSERT many rows in a single call — much faster than repeated upsert().
+
+        Tolerates heterogeneous key sets across rows: multi-group mappers can
+        produce candidate dicts where one group sets `repository_key` and
+        another sets `issue_key` (with the unset relation column absent).
+        We compute the union of keys across all rows and write every row
+        with that full shape, defaulting missing values to None — ClickHouse
+        Nullable columns then store NULL where each row didn't supply a value.
+        """
         if not rows:
             return
         assert self._client is not None, "Not connected"
         col_types = self._get_col_types(table)
         version = self._version_now()
-        # Prepare all rows; use the first row's keys for column names
-        col_names: list[str] | None = None
+
+        # Pass 1: union of all keys, preserving insertion order (Python 3.7+
+        # ordered dict semantics) for stable column-name ordering.
+        all_keys: dict[str, None] = {}
+        for row in rows:
+            for k in row:
+                all_keys.setdefault(k, None)
+        col_names = [*all_keys.keys(), "_version"]
+
+        # Pass 2: build each row's value list, defaulting missing keys to None.
         data: list[list] = []
         for row in rows:
-            out = {}
-            for k, v in row.items():
+            out: dict = {}
+            for k in col_names:
+                if k == "_version":
+                    out[k] = version
+                    continue
+                v = row.get(k)
                 ch_type = col_types.get(k, "")
                 if isinstance(v, (dict, list)):
                     out[k] = json.dumps(v)
@@ -648,9 +668,6 @@ class ClickHouseBackend(DBBackend):
                     out[k] = str(v)
                 else:
                     out[k] = v
-            out["_version"] = version
-            if col_names is None:
-                col_names = list(out.keys())
             data.append([out[c] for c in col_names])
         self._client.insert(table, data, column_names=col_names)
 

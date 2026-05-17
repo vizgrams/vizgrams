@@ -678,7 +678,21 @@ def run_mapper(
                 except Exception as e:
                     if strict:
                         raise MapperError(f"Bulk write failed for {entity_name}: {e}") from e
+                    # Surface bulk failures as RowFailure entries — otherwise
+                    # they're invisible in the job summary and the mapper
+                    # appears to succeed even when zero rows were written.
+                    logger.exception(
+                        "Bulk write failed for %s — %d candidate rows dropped",
+                        entity_name, len(candidates),
+                    )
                     stats.failed += len(candidates)
+                    result.failures.append(RowFailure(
+                        grain_key="<bulk>",
+                        grain_value={"count": len(candidates)},
+                        target_object=entity_name,
+                        reason=f"{type(e).__name__}: {e}",
+                        source_values={},
+                    ))
 
         except Exception:
             raise
@@ -844,6 +858,10 @@ def _process_rows(backend, config, write_contexts, row_dicts,
         except Exception as e:
             if strict:
                 raise MapperError(f"Bulk write failed for {entity_name}: {e}") from e
+            logger.exception(
+                "Bulk write failed for %s — %d candidate rows dropped",
+                entity_name, len(candidates),
+            )
             stats.failed += len(candidates)
 
 

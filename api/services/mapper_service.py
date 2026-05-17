@@ -147,8 +147,28 @@ def create_or_replace_mapper(model_dir: Path, name: str, content: str) -> dict:
         except OSError:
             pass
 
-    metadata_db.record_version(model_dir, "mapper", name, content)
     mc = parse_mapper_dict(_yaml.safe_load(content))
+
+    # Each entity must be the target of exactly one mapper. Reject this save
+    # if any other mapper already targets one of mc's entities.
+    incoming_targets = {t.entity_name for t in mc.targets}
+    if incoming_targets:
+        for other in YAMLAdapter.load_mappers(model_dir / "mappers"):
+            if other.name == name:
+                continue  # the mapper we're replacing
+            collisions = incoming_targets & {t.entity_name for t in other.targets}
+            if collisions:
+                conflict = ", ".join(sorted(collisions))
+                raise MapperValidationError([{
+                    "path": "targets",
+                    "message": (
+                        f"entity '{conflict}' is already mapped by '{other.name}'. "
+                        "Each entity must have exactly one mapper — combine the targets "
+                        "into a single mapper or rename one of the entities."
+                    ),
+                }])
+
+    metadata_db.record_version(model_dir, "mapper", name, content)
     return _mapper_to_dict(mc, model_dir)
 
 
