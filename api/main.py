@@ -99,6 +99,7 @@ from api.routers import (
     me,
     models,
     queries,
+    service_accounts,
     tool_config,
     tools,
     views,
@@ -165,6 +166,7 @@ app.include_router(explore.router, prefix=PREFIX)
 app.include_router(jobs.router, prefix=PREFIX)
 app.include_router(input_data.router, prefix=PREFIX)
 app.include_router(vizgrams.router, prefix=PREFIX)
+app.include_router(service_accounts.router, prefix=PREFIX)
 
 # ---------------------------------------------------------------------------
 # OTel instrumentation — must run after app + routers are fully configured
