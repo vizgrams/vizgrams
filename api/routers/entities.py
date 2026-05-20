@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.batch_client import BatchServiceError, submit_materialize_job
-from api.dependencies import resolve_entity, resolve_model_dir
+from api.dependencies import require_user_or_service_account, resolve_entity, resolve_model_dir
 from api.routers.jobs import _to_job_out
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.entity import EntityCreate, EntityDetail, EntitySummary
@@ -19,7 +19,10 @@ router = APIRouter(prefix="/model/{model}/entity", tags=["entities"])
 
 
 @router.get("", response_model=list[EntitySummary])
-def list_entities(model_dir: str = Depends(resolve_model_dir)):
+def list_entities(
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     return entity_service.list_entities(model_dir)
 
 
@@ -67,7 +70,11 @@ def reconcile_all(
 
 
 @router.get("/{entity}", response_model=EntityDetail)
-def get_entity(entity: str = Depends(resolve_entity), model_dir: str = Depends(resolve_model_dir)):
+def get_entity(
+    entity: str = Depends(resolve_entity),
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     try:
         return entity_service.get_entity(model_dir, entity)
     except KeyError:
@@ -80,6 +87,7 @@ def upsert_entity(
     model: str,
     entity: str = Depends(resolve_entity),
     model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
 ):
     """Validate, write/overwrite entity YAML, and rematerialize its DB table in the background.
 
@@ -160,6 +168,7 @@ def save_entity_yaml(
     body: YAMLContent,
     entity: str = Depends(resolve_entity),
     model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
 ):
     """Overwrite the entity's ontology YAML directly (no materialization triggered)."""
     try:

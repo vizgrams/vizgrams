@@ -175,3 +175,88 @@ def test_delete_rejects_non_admin(model_dir: Path):
     sa = client.post(URL_BASE, json={"name": "ci-bot"}, headers=_auth(ADMIN)).json()
     r = client.delete(f"{URL_BASE}/{sa['id']}", headers=_auth(VIEWER))
     assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# X-API-Key auth on artifact endpoints (VG-133)
+# ---------------------------------------------------------------------------
+
+def _mint_token_for_model(model: str) -> str:
+    body = client.post(
+        f"/api/v1/model/{model}/service-accounts",
+        json={"name": "vzctl"},
+        headers=_auth(ADMIN),
+    )
+    return body.json()["token"]
+
+
+def test_artifact_list_accepts_api_key(model_dir: Path):
+    """X-API-Key scoped to the model can list entities without an OIDC session."""
+    token = _mint_token_for_model("test_model")
+    # No OIDC headers, only X-API-Key
+    r = client.get(
+        "/api/v1/model/test_model/entity",
+        headers={"X-API-Key": token, "X-Auth-Request-Email": ""},
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_artifact_list_rejects_api_key_for_other_model(monkeypatch, tmp_path):
+    """An SA scoped to model_a cannot read model_b's artefacts."""
+    models = tmp_path / "models"
+    (models / "model_a").mkdir(parents=True)
+    (models / "model_b").mkdir(parents=True)
+    monkeypatch.setenv("VZ_MODELS_DIR", str(models))
+
+    body = client.post(
+        "/api/v1/model/model_a/service-accounts",
+        json={"name": "vzctl"},
+        headers=_auth(ADMIN),
+    )
+    token = body.json()["token"]
+
+    r = client.get(
+        "/api/v1/model/model_b/entity",
+        headers={"X-API-Key": token, "X-Auth-Request-Email": ""},
+    )
+    assert r.status_code == 403
+
+
+def test_artifact_list_rejects_unknown_api_key_with_no_oidc(model_dir: Path, monkeypatch):
+    """No OIDC headers + invalid X-API-Key → 401."""
+    monkeypatch.delenv("DEV_USER", raising=False)
+    r = client.get(
+        "/api/v1/model/test_model/entity",
+        headers={"X-API-Key": "vzsa_bogus"},
+    )
+    assert r.status_code == 401
+
+
+def test_artifact_list_still_accepts_oidc(model_dir: Path):
+    """OIDC path unchanged — existing UI continues to work."""
+    r = client.get(
+        "/api/v1/model/test_model/entity",
+        headers=_auth(VIEWER),
+    )
+    assert r.status_code == 200
+
+
+def test_view_upsert_accepts_api_key(model_dir: Path):
+    """SA can PUT a view artefact via X-API-Key — the GitOps write path."""
+    token = _mint_token_for_model("test_model")
+    yaml = (
+        "name: smoke_view\n"
+        "type: metric\n"
+        "query: smoke\n"
+        "visualization:\n"
+        "  measure: x\n"
+    )
+    r = client.put(
+        "/api/v1/model/test_model/view/smoke_view",
+        json={"content": yaml},
+        headers={"X-API-Key": token, "X-Auth-Request-Email": ""},
+    )
+    # Will 422 (no query named 'smoke') — but proves auth passed: the request
+    # reached the validator, not bounced at the dependency.
+    assert r.status_code in (200, 201, 422), r.text
+    assert r.status_code != 401 and r.status_code != 403

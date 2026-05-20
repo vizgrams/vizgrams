@@ -5,7 +5,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import Path as PathParam
 
-from api.dependencies import get_job_service, resolve_entity, resolve_model_dir
+from api.dependencies import (
+    get_job_service,
+    require_user_or_service_account,
+    resolve_entity,
+    resolve_model_dir,
+)
 from api.schemas.common import YAMLContent
 from api.schemas.feature import FeatureDetail, FeatureSummary
 from api.schemas.job import JobOut
@@ -25,12 +30,21 @@ model_feature_router = APIRouter(prefix="/model/{model}/feature", tags=["feature
 
 
 @router.get("", response_model=list[FeatureSummary])
-def list_features(entity: str = Depends(resolve_entity), model_dir: str = Depends(resolve_model_dir)):
+def list_features(
+    entity: str = Depends(resolve_entity),
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     return feature_service.list_features(model_dir, entity)
 
 
 @router.get("/{feature}", response_model=FeatureDetail)
-def get_feature(feature: str, entity: str = Depends(resolve_entity), model_dir: str = Depends(resolve_model_dir)):
+def get_feature(
+    feature: str,
+    entity: str = Depends(resolve_entity),
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     try:
         return feature_service.get_feature(model_dir, entity, feature)
     except KeyError:
@@ -46,6 +60,7 @@ def upsert_feature(
     feature: str = PathParam(...),
     entity: str = Depends(resolve_entity),
     model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
 ):
     """Validate YAML content and write (create or overwrite) a feature file."""
     try:
