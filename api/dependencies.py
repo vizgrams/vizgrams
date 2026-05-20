@@ -201,3 +201,45 @@ def require_creator(email: str = Depends(get_current_user_email)) -> str:
     if not is_creator(email):
         raise HTTPException(status_code=403, detail="Requires creator access.")
     return email
+
+
+# ---------------------------------------------------------------------------
+# Service-account auth (machine-to-machine, scoped to one model)
+# ---------------------------------------------------------------------------
+
+def get_service_account_from_header(request: Request) -> dict | None:
+    """Return the service account behind the X-API-Key header, or None.
+
+    Returns None when the header is absent or the token doesn't match an
+    active service account. Side effect: a successful verify updates
+    last_used_at via verify_token.
+    """
+    token = request.headers.get("X-API-Key")
+    if not token:
+        return None
+    from core.service_accounts import verify_token  # noqa: PLC0415
+    return verify_token(token)
+
+
+def require_service_account(
+    request: Request,
+    model: str = PathParam(...),
+) -> dict:
+    """Require a valid service-account token scoped to the path's *model*.
+
+    Returns the service-account metadata dict (no token/hash). Raises:
+      - 401 if X-API-Key is missing or invalid
+      - 403 if the token is valid but scoped to a different model
+    """
+    sa = get_service_account_from_header(request)
+    if sa is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid X-API-Key.",
+        )
+    if sa.get("model_id") != model:
+        raise HTTPException(
+            status_code=403,
+            detail="Service account is not authorised for this model.",
+        )
+    return sa
