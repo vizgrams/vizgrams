@@ -147,3 +147,88 @@ def test_get_models_dir_wt_models_dir_overrides_base_dir(tmp_path):
     with patch.dict(os.environ, env, clear=True):
         result = get_models_dir(base_dir=tmp_path)
     assert result == custom
+
+
+# ---------------------------------------------------------------------------
+# Service-account auth
+# ---------------------------------------------------------------------------
+
+def _mock_request_with_api_key(api_key: str | None) -> MagicMock:
+    req = MagicMock()
+    req.headers.get = lambda key, default=None: api_key if key == "X-API-Key" else default
+    return req
+
+
+def test_get_service_account_from_header_returns_none_when_absent(monkeypatch, tmp_path):
+    from api.dependencies import get_service_account_from_header
+    monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
+    req = _mock_request_with_api_key(None)
+    assert get_service_account_from_header(req) is None
+
+
+def test_get_service_account_from_header_returns_dict_for_valid_token(monkeypatch, tmp_path):
+    from api.dependencies import get_service_account_from_header
+    from core.service_accounts import create_service_account
+    db = tmp_path / "api.db"
+    monkeypatch.setenv("API_DB_PATH", str(db))
+    sa = create_service_account("iagai", "ci-bot", "user-1", db_path=db)
+    req = _mock_request_with_api_key(sa["token"])
+    result = get_service_account_from_header(req)
+    assert result is not None
+    assert result["id"] == sa["id"]
+    assert result["model_id"] == "iagai"
+    assert "token" not in result and "token_hash" not in result
+
+
+def test_get_service_account_from_header_returns_none_for_unknown_token(monkeypatch, tmp_path):
+    from api.dependencies import get_service_account_from_header
+    monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
+    req = _mock_request_with_api_key("vzsa_not-a-real-token")
+    assert get_service_account_from_header(req) is None
+
+
+def test_require_service_account_raises_401_when_header_missing(monkeypatch, tmp_path):
+    from fastapi import HTTPException
+
+    from api.dependencies import require_service_account
+    monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
+    req = _mock_request_with_api_key(None)
+    with pytest.raises(HTTPException) as exc:
+        require_service_account(req, model="iagai")
+    assert exc.value.status_code == 401
+
+
+def test_require_service_account_raises_401_for_invalid_token(monkeypatch, tmp_path):
+    from fastapi import HTTPException
+
+    from api.dependencies import require_service_account
+    monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
+    req = _mock_request_with_api_key("vzsa_bogus")
+    with pytest.raises(HTTPException) as exc:
+        require_service_account(req, model="iagai")
+    assert exc.value.status_code == 401
+
+
+def test_require_service_account_returns_sa_when_scope_matches(monkeypatch, tmp_path):
+    from api.dependencies import require_service_account
+    from core.service_accounts import create_service_account
+    db = tmp_path / "api.db"
+    monkeypatch.setenv("API_DB_PATH", str(db))
+    sa = create_service_account("iagai", "ci-bot", "user-1", db_path=db)
+    req = _mock_request_with_api_key(sa["token"])
+    result = require_service_account(req, model="iagai")
+    assert result["id"] == sa["id"]
+
+
+def test_require_service_account_raises_403_when_scope_mismatches(monkeypatch, tmp_path):
+    from fastapi import HTTPException
+
+    from api.dependencies import require_service_account
+    from core.service_accounts import create_service_account
+    db = tmp_path / "api.db"
+    monkeypatch.setenv("API_DB_PATH", str(db))
+    sa = create_service_account("iagai", "ci-bot", "user-1", db_path=db)
+    req = _mock_request_with_api_key(sa["token"])
+    with pytest.raises(HTTPException) as exc:
+        require_service_account(req, model="default")  # different model
+    assert exc.value.status_code == 403
