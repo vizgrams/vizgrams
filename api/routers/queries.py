@@ -13,7 +13,7 @@ from core.db import BackendUnavailableError
 _log = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 
-from api.dependencies import resolve_model_dir
+from api.dependencies import require_user_or_service_account, resolve_model_dir
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.query import QueryDetail, QueryResult, QuerySummary
 from api.services import query_service
@@ -44,12 +44,19 @@ def execute_inline(
 
 
 @router.get("", response_model=list[QuerySummary])
-def list_queries(model_dir: str = Depends(resolve_model_dir)):
+def list_queries(
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     return query_service.list_queries(model_dir)
 
 
 @router.get("/{query}", response_model=QueryDetail)
-def get_query(query: str, model_dir: str = Depends(resolve_model_dir)):
+def get_query(
+    query: str,
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     try:
         return query_service.get_query(model_dir, query)
     except KeyError:
@@ -137,6 +144,7 @@ def upsert_query(
     query: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
 ):
     """Validate YAML content and write (create or overwrite) a query file."""
     try:

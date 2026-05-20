@@ -243,3 +243,44 @@ def require_service_account(
             detail="Service account is not authorised for this model.",
         )
     return sa
+
+
+def require_user_or_service_account(
+    request: Request,
+    model: str = PathParam(...),
+) -> dict:
+    """Accept either a valid OIDC identity OR a service-account token scoped
+    to the path *model*. Returns a normalised principal dict so callers don't
+    need to know which auth path was used.
+
+    Principal shape:
+      ``{"kind": "user", "id": <uuid>, "email": <email>}``
+      ``{"kind": "service_account", "id": <sa_id>, "model_id": <model>}``
+
+    Used on artifact upsert/read endpoints so `vzctl sync` (CI) can call them
+    via an X-API-Key while interactive users continue with OIDC.
+
+    Raises 401 if neither auth path is valid; 403 if the SA token is scoped
+    to a different model.
+    """
+    sa = get_service_account_from_header(request)
+    if sa is not None:
+        if sa.get("model_id") != model:
+            raise HTTPException(
+                status_code=403,
+                detail="Service account is not authorised for this model.",
+            )
+        return {
+            "kind": "service_account",
+            "id": sa["id"],
+            "model_id": sa["model_id"],
+        }
+    # Fall back to OIDC identity.
+    provider, external_id, email, display_name = _resolve_identity(request)
+    if not external_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthenticated — provide a valid OIDC session or X-API-Key.",
+        )
+    uid = _user_uuid(provider, external_id, email, display_name)
+    return {"kind": "user", "id": uid, "email": email}

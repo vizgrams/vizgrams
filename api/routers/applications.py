@@ -5,7 +5,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.dependencies import resolve_model_dir
+from api.dependencies import require_user_or_service_account, resolve_model_dir
 from api.schemas.application import ApplicationDetail, ApplicationSummary
 from api.schemas.common import ValidationResult, YAMLContent
 from api.services import application_service
@@ -19,12 +19,19 @@ router = APIRouter(prefix="/model/{model}/application", tags=["applications"])
 
 
 @router.get("", response_model=list[ApplicationSummary])
-def list_applications(model_dir: str = Depends(resolve_model_dir)):
+def list_applications(
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     return application_service.list_applications(model_dir)
 
 
 @router.get("/{app}", response_model=ApplicationDetail)
-def get_application(app: str, model_dir: str = Depends(resolve_model_dir)):
+def get_application(
+    app: str,
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     try:
         return application_service.get_application(model_dir, app)
     except KeyError:
@@ -44,6 +51,7 @@ def upsert_application(
     app: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
 ):
     try:
         return application_service.create_or_replace_application(model_dir, app, body.content)

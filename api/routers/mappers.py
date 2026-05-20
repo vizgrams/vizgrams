@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.batch_client import BatchServiceError, submit_mapper_job
-from api.dependencies import resolve_entity, resolve_model_dir
+from api.dependencies import require_user_or_service_account, resolve_entity, resolve_model_dir
 from api.routers.jobs import _to_job_out
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.job import JobOut
@@ -21,12 +21,19 @@ crud_router = APIRouter(prefix="/model/{model}/mapper", tags=["mappers"])
 
 
 @crud_router.get("", response_model=list[MapperOut])
-def list_mappers(model_dir: str = Depends(resolve_model_dir)):
+def list_mappers(
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     return mapper_service.list_mappers(model_dir)
 
 
 @crud_router.get("/{mapper_name}", response_model=MapperOut)
-def get_mapper_by_name(mapper_name: str, model_dir: str = Depends(resolve_model_dir)):
+def get_mapper_by_name(
+    mapper_name: str,
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     try:
         return mapper_service.get_mapper_by_name(model_dir, mapper_name)
     except KeyError as exc:
@@ -54,6 +61,7 @@ def upsert_mapper(
     mapper_name: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
 ):
     """Validate YAML content and write (create or overwrite) a mapper file."""
     try:

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from api.dependencies import resolve_model_dir
+from api.dependencies import require_user_or_service_account, resolve_model_dir
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.view import ViewDetail, ViewResult, ViewSummary
 from api.services import view_service
@@ -20,12 +20,19 @@ router = APIRouter(prefix="/model/{model}/view", tags=["views"])
 
 
 @router.get("", response_model=list[ViewSummary])
-def list_views(model_dir: str = Depends(resolve_model_dir)):
+def list_views(
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     return view_service.list_views(model_dir)
 
 
 @router.get("/{view}", response_model=ViewDetail)
-def get_view(view: str, model_dir: str = Depends(resolve_model_dir)):
+def get_view(
+    view: str,
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
     try:
         return view_service.get_view(model_dir, view)
     except KeyError:
@@ -67,6 +74,7 @@ def upsert_view(
     view: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
 ):
     try:
         return view_service.create_or_replace_view(model_dir, view, body.content)
