@@ -1618,3 +1618,67 @@ class TestIntegration:
     def test_load_mapper_by_name_not_found(self, tmp_path):
         _write_yaml(tmp_path, _minimal_mapper(), "m1.yaml")
         assert load_mapper_by_name("nonexistent", tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# _merge_duplicate_candidates — multi-group dedupe
+# ---------------------------------------------------------------------------
+
+class TestMergeDuplicateCandidates:
+    """The merge helper collapses multi-group emissions sharing a primary key."""
+
+    def test_passes_through_when_no_duplicates(self):
+        from engine.mapper import _merge_duplicate_candidates
+
+        cands = [
+            {"person_key": "p1", "name": "Alice", "team": "alpha"},
+            {"person_key": "p2", "name": "Bob",   "team": "beta"},
+        ]
+        out = _merge_duplicate_candidates(cands, "person_key")
+        assert out == cands
+
+    def test_first_seed_wins_on_set_fields(self):
+        from engine.mapper import _merge_duplicate_candidates
+
+        cands = [
+            {"person_key": "p1", "name": "Alice", "team": "alpha"},
+            {"person_key": "p1", "name": "ALICE", "team": "beta"},  # later — must NOT overwrite
+        ]
+        out = _merge_duplicate_candidates(cands, "person_key")
+        assert len(out) == 1
+        assert out[0] == {"person_key": "p1", "name": "Alice", "team": "alpha"}
+
+    def test_later_candidate_fills_empty_fields(self):
+        """The iagai person/person_from_issues scenario: jira_users supplies
+        team, jira_issues supplies only name. Merge yields complete record."""
+        from engine.mapper import _merge_duplicate_candidates
+
+        cands = [
+            {"person_key": "p1", "name": "Alice", "team": "alpha"},
+            # No team field at all — jira_issues mapper doesn't populate it
+            {"person_key": "p1", "name": "Alice", "extra": "x"},
+        ]
+        out = _merge_duplicate_candidates(cands, "person_key")
+        assert len(out) == 1
+        assert out[0]["team"] == "alpha"
+        assert out[0]["extra"] == "x"
+
+    def test_empty_string_treated_like_none(self):
+        from engine.mapper import _merge_duplicate_candidates
+
+        cands = [
+            {"person_key": "p1", "team": ""},
+            {"person_key": "p1", "team": "alpha"},
+        ]
+        out = _merge_duplicate_candidates(cands, "person_key")
+        assert out[0]["team"] == "alpha"
+
+    def test_handles_none_primary_keys(self):
+        from engine.mapper import _merge_duplicate_candidates
+
+        cands = [
+            {"person_key": None, "name": "A"},
+            {"person_key": None, "name": "B"},
+        ]
+        out = _merge_duplicate_candidates(cands, "person_key")
+        assert len(out) == 2  # don't collapse None keys
