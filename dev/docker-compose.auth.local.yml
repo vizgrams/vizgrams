@@ -1,0 +1,38 @@
+# Local-dev only — Traefik routing for the auth stack when running on
+# localhost via `make up-auth`. NOT canonical deployment topology: prod sets
+# up equivalent routing in vizgrams/ops (deploy/docker-compose.prod.yml), and
+# self-hosters using a different reverse proxy will write their own.
+#
+# What this overlay does:
+#   - Routes /oauth2/* to oauth2-proxy (auth flow, sign-out, callback).
+#   - Re-routes the root path (/) through oauth2-proxy so unauth'd browser
+#     visits get bounced to the IdP login.
+#   - Wires the api router through a ForwardAuth middleware that consults
+#     oauth2-proxy's /oauth2/auth endpoint for session validation.
+#
+# Read alongside docker-compose.auth.yml — that file defines the services;
+# this file defines where requests land.
+
+services:
+
+  oauth2-proxy:
+    labels:
+      traefik.enable: "true"
+      traefik.http.services.oauth2-proxy.loadbalancer.server.port: "4180"
+      traefik.http.routers.oauth2-proxy.rule: PathPrefix(`/oauth2`)
+      traefik.http.routers.oauth2-proxy.entrypoints: web
+      traefik.http.routers.oauth2-proxy.priority: "20"
+      traefik.http.routers.oauth2-proxy.service: oauth2-proxy
+      traefik.http.middlewares.auth.forwardauth.address: "http://oauth2-proxy:4180/oauth2/auth"
+      traefik.http.middlewares.auth.forwardauth.trustforwardheader: "true"
+      traefik.http.middlewares.auth.forwardauth.authresponseheaders: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
+
+  # Send root-path browser traffic through oauth2-proxy instead of straight to nginx.
+  ui:
+    labels:
+      traefik.http.routers.ui.service: oauth2-proxy@docker
+
+  # Validate the OIDC session on every /api request via ForwardAuth.
+  api:
+    labels:
+      traefik.http.routers.api.middlewares: auth@docker

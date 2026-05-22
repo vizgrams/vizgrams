@@ -3,7 +3,7 @@
 
 # ── Compose file sets ─────────────────────────────────────────────────────────
 DC_BASE := docker compose -f docker-compose.yml
-DC_AUTH := docker compose -f docker-compose.yml -f docker-compose.auth.yml
+DC_AUTH := docker compose -f docker-compose.yml -f docker-compose.auth.yml -f dev/docker-compose.auth.local.yml
 DC_OTEL := docker compose -f docker-compose.yml -f docker-compose.jaeger.yml
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

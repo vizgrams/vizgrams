@@ -1,17 +1,19 @@
-# Auth layer — adds oauth2-proxy and protects routes.
-# Never used standalone. Always layered on top of docker-compose.yml:
+# Auth layer — adds the oauth2-proxy service and disables the dev bypass on api.
+# Never used standalone. Always layered on top of docker-compose.yml.
 #
-#   With Dex (local):  docker-compose.yml + docker-compose.auth.yml + docker-compose.dex.yml
-#   With real OIDC:    docker-compose.yml + docker-compose.auth.yml
+# This file is intentionally *topology-free*: it declares the oauth2-proxy
+# service, but the routing rules that put it in front of the UI and apply
+# ForwardAuth to the API live in a deployment overlay:
 #
-# Use 'make up-auth' or 'make up-prod' rather than running directly.
+#   Local dev:  dev/docker-compose.auth.local.yml   (in this repo)
+#   Production: deploy/docker-compose.prod.yml      (in vizgrams/ops)
 #
-# Architecture:
-#   UI traffic  → Traefik → oauth2-proxy (handles auth + proxies to ui:8080)
-#   API traffic → Traefik → ForwardAuth (validates session cookie) → api
+# Keeping the routing topology in the deployment layer means self-hosters who
+# use a different reverse proxy (nginx, Caddy, Cloudflare Tunnel) don't have
+# to inherit Traefik decisions baked into the public app.
 #
-# This ensures unauthenticated browser visits are redirected to the IdP login
-# page by oauth2-proxy rather than receiving a bare 401.
+# Use 'make up-auth' (local) or the ops deploy pipeline (prod) rather than
+# running this file directly.
 
 services:
 
@@ -39,8 +41,6 @@ services:
       OAUTH2_PROXY_COOKIE_SECURE: "${OAUTH2_COOKIE_SECURE:-false}"
       OAUTH2_PROXY_EMAIL_DOMAINS: "${ALLOWED_EMAIL_DOMAINS:-*}"
       OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
-      # Proxy authenticated requests to the UI; /api/* is routed by Traefik before
-      # it reaches oauth2-proxy so the API service is unaffected.
       OAUTH2_PROXY_UPSTREAMS: "http://ui:8080"
       OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
       OAUTH2_PROXY_PASS_ACCESS_TOKEN: "false"
@@ -54,32 +54,12 @@ services:
       OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
     tmpfs:
       - /tmp:size=32m,mode=1777
-    labels:
-      traefik.enable: "true"
-      # Service definition (port 4180)
-      traefik.http.services.oauth2-proxy.loadbalancer.server.port: "4180"
-      # Route /oauth2/* (callback, sign-in, etc.) to oauth2-proxy at high priority
-      traefik.http.routers.oauth2-proxy.rule: PathPrefix(`/oauth2`)
-      traefik.http.routers.oauth2-proxy.entrypoints: web
-      traefik.http.routers.oauth2-proxy.priority: "20"
-      traefik.http.routers.oauth2-proxy.service: oauth2-proxy
-      # ForwardAuth middleware — used only by the API router
-      traefik.http.middlewares.auth.forwardauth.address: "http://oauth2-proxy:4180/oauth2/auth"
-      traefik.http.middlewares.auth.forwardauth.trustforwardheader: "true"
-      traefik.http.middlewares.auth.forwardauth.authresponseheaders: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
     networks:
       - proxy
 
-  # Override the ui router to route through oauth2-proxy instead of directly to nginx.
-  # oauth2-proxy validates the session and proxies authenticated requests to ui:8080.
-  ui:
-    labels:
-      traefik.http.routers.ui.service: oauth2-proxy@docker
-
-  # API still uses ForwardAuth — the browser already holds the session cookie
-  # from logging in via the UI, so the check passes transparently.
+  # Disable the DEV_USER bypass when auth is active — every request must carry
+  # either a valid session header (OIDC users, set by oauth2-proxy upstream of
+  # this service) or an X-API-Key (service accounts, validated inside FastAPI).
   api:
     environment:
-      DEV_USER: ""    # disable the dev bypass when auth is active
-    labels:
-      traefik.http.routers.api.middlewares: auth@docker
+      DEV_USER: ""
