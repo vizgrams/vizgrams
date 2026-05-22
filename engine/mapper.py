@@ -427,6 +427,41 @@ def _make_row_dict(row: dict) -> dict[str, dict[str, object]]:
     return result
 
 
+def _merge_duplicate_candidates(candidates: list[dict], key_col: str) -> list[dict]:
+    """Collapse candidates sharing the same primary key into one.
+
+    Multi-group mappers can emit the same entity from different sources with
+    disjoint column sets (e.g. one group has a `primary_team_key`, another
+    only `name`). bulk_scd2 reads existing state once and processes each
+    candidate independently — two candidates for the same key produce two
+    competing writes with the same _version, and ReplacingMergeTree picks
+    one non-deterministically. Pre-merging here makes that impossible.
+
+    Merge rule: for each key, the FIRST candidate seen seeds the dict.
+    Subsequent candidates fill in fields that the seed left as None or "".
+    Order of `candidates` is the order groups produced them — declaring the
+    authoritative source first in the mapper YAML therefore wins.
+    """
+    if not candidates or not key_col:
+        return candidates
+    merged: dict = {}
+    for cand in candidates:
+        pk = cand.get(key_col)
+        if pk is None:
+            # No primary key — can't dedupe; pass through.
+            merged[id(cand)] = cand
+            continue
+        if pk not in merged:
+            merged[pk] = dict(cand)
+            continue
+        target = merged[pk]
+        for k, v in cand.items():
+            existing = target.get(k)
+            if (existing is None or existing == "") and v not in (None, ""):
+                target[k] = v
+    return list(merged.values())
+
+
 def _fetch_rows(backend, query: str) -> list[dict]:
     """Execute a SELECT query and return rows as a list of dicts."""
     rows = backend.execute(query)
@@ -670,6 +705,14 @@ def run_mapper(
             for entity_name, (ctx, stats, candidates) in bulk_buffers.items():
                 if not candidates:
                     continue
+                # Multi-group mappers (`rows:`) can emit the same primary key
+                # from different groups with disjoint column sets — e.g. the
+                # iagai person mapper emits a row from jira_users (with team)
+                # and another from jira_issues (without team) for the same
+                # account. Merge such duplicates so bulk_scd2 sees one
+                # complete candidate per key: non-NULL / non-empty values win,
+                # falling back to whichever entry has them.
+                candidates = _merge_duplicate_candidates(candidates, ctx.key_col)
                 try:
                     if ctx.strategy == "SCD2":
                         inserted, versioned = backend.bulk_scd2(ctx.table_name, candidates, ctx)
