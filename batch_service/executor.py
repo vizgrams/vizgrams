@@ -162,6 +162,24 @@ def _run_mapper_job(model_dir: Path, job_id: str, mapper_name: str | None) -> No
         ontology_entities = YAMLAdapter.load_entities(model_dir / "ontology")
         all_mappers = YAMLAdapter.load_mappers(model_dir / "mappers")
 
+        # Pre-execution gate: exactly one mapper per target entity. Multiple
+        # mappers stomping the same entity is the SCD2 oscillation bug (see
+        # iagai's person / person_from_issues collision 2026-05-22). Fail
+        # fast with a clear error rather than silently corrupting data.
+        _by_entity: dict[str, list[str]] = {}
+        for mc in all_mappers:
+            for tgt in mc.targets:
+                _by_entity.setdefault(tgt.entity_name, []).append(mc.name)
+        _dupes = {e: ms for e, ms in _by_entity.items() if len(ms) > 1}
+        if _dupes:
+            lines = [f"  {e}: {ms}" for e, ms in _dupes.items()]
+            raise RuntimeError(
+                "Mapper run aborted — entities are targeted by more than one "
+                "mapper, which causes non-deterministic SCD2 writes:\n"
+                + "\n".join(lines)
+                + "\nRefactor the duplicates into a single mapper or remove one."
+            )
+
         if mapper_name:
             target = next((mc for mc in all_mappers if mc.name == mapper_name), None)
             if target is None:

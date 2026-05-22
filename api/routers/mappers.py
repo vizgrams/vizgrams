@@ -28,6 +28,19 @@ def list_mappers(
     return mapper_service.list_mappers(model_dir)
 
 
+# Must be declared BEFORE the {mapper_name} path-param route below, otherwise
+# the catch-all matches `_violations` as a mapper name and returns 404.
+@crud_router.get("/_violations")
+def list_target_violations(model_dir: str = Depends(resolve_model_dir)):
+    """Diagnostic: entities targeted by more than one mapper in this model.
+
+    The "exactly one mapper per entity" rule is enforced on PUT, but legacy
+    models may have pre-existing violations that cause non-deterministic SCD2
+    behaviour (mappers stomping each other's fields). Returns empty when clean.
+    """
+    return {"violations": mapper_service.find_duplicate_target_mappers(model_dir)}
+
+
 @crud_router.get("/{mapper_name}", response_model=MapperOut)
 def get_mapper_by_name(
     mapper_name: str,

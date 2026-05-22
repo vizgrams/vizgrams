@@ -29,6 +29,22 @@ def list_mappers(model_dir: Path) -> list[dict]:
     return [_mapper_to_dict(mc, model_dir) for mc in YAMLAdapter.load_mappers(mappers_dir)]
 
 
+def find_duplicate_target_mappers(model_dir: Path) -> dict[str, list[str]]:
+    """Find entities that are targeted by more than one mapper.
+
+    Returns `{entity_name: [mapper_name, ...]}` for entities with > 1 mapper.
+    The "exactly one mapper per entity" rule is enforced on PUT by
+    `create_or_replace_mapper`, but legacy models predating that rule may
+    have violations — this helper surfaces them.
+    """
+    mappers_dir = model_dir / "mappers"
+    by_entity: dict[str, list[str]] = {}
+    for mc in YAMLAdapter.load_mappers(mappers_dir):
+        for tgt in mc.targets:
+            by_entity.setdefault(tgt.entity_name, []).append(mc.name)
+    return {e: ms for e, ms in by_entity.items() if len(ms) > 1}
+
+
 def get_mapper_by_name(model_dir: Path, mapper_name: str) -> dict:
     """Get full mapper detail by mapper name (not entity name)."""
     mappers_dir = model_dir / "mappers"

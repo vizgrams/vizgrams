@@ -205,3 +205,28 @@ def test_create_mapper_can_replace_itself(model_dir_with_mapper):
     # Same name, same target — pure overwrite, should succeed.
     result = create_or_replace_mapper(model_dir_with_mapper, "widget", _WIDGET_MAPPER_YAML)
     assert result["name"] == "widget"
+
+
+# ---------------------------------------------------------------------------
+# find_duplicate_target_mappers — diagnostic for legacy violations
+# ---------------------------------------------------------------------------
+
+def test_find_duplicate_target_mappers_empty_when_clean(model_dir_with_mapper):
+    """A model with only one mapper per entity reports no violations."""
+    from api.services.mapper_service import find_duplicate_target_mappers
+
+    assert find_duplicate_target_mappers(model_dir_with_mapper) == {}
+
+
+def test_find_duplicate_target_mappers_surfaces_existing_violation(model_dir):
+    """When two mappers already target the same entity (e.g. seeded directly
+    into the DB, bypassing the PUT-time check), the helper surfaces them."""
+    from api.services.mapper_service import find_duplicate_target_mappers
+    from tests.conftest import seed_artifact
+
+    seed_artifact(model_dir, "mapper", "widget", _WIDGET_MAPPER_YAML)
+    seed_artifact(model_dir, "mapper", "gadget_v2", _GADGET_MAPPER_YAML)
+
+    dupes = find_duplicate_target_mappers(model_dir)
+    assert "Widget" in dupes
+    assert sorted(dupes["Widget"]) == ["gadget_v2", "widget"]
