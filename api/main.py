@@ -80,6 +80,28 @@ async def lifespan(app: FastAPI):
     # Discover external tools from VZ_TOOLS_DIR (VG-150).
     from core.tool_service import init_system_tools
     init_system_tools()
+
+    # Scan every model for the "exactly one mapper per entity" rule and log a
+    # loud warning on any violation. Doesn't crash startup — a broken model
+    # shouldn't take the whole API down — but the mapper run will refuse
+    # to execute (see batch_service/executor.py) until the model is fixed.
+    if models_dir.is_dir():
+        from api.services.mapper_service import find_duplicate_target_mappers
+        for model_dir in sorted(models_dir.iterdir()):
+            if not model_dir.is_dir():
+                continue
+            try:
+                dupes = find_duplicate_target_mappers(model_dir)
+            except Exception as exc:
+                _startup_logger.debug("Skip mapper-violation scan for %s: %s", model_dir.name, exc)
+                continue
+            for entity, mappers in dupes.items():
+                _startup_logger.warning(
+                    "Model %r has %d mappers writing to entity %r: %s. "
+                    "Mapper runs will refuse to execute until this is resolved.",
+                    model_dir.name, len(mappers), entity, mappers,
+                )
+
     yield
 
 
