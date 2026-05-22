@@ -78,8 +78,27 @@ services:
 
   # API still uses ForwardAuth — the browser already holds the session cookie
   # from logging in via the UI, so the check passes transparently.
+  #
+  # A second router `api-sa` (X-API-Key bypass) matches /api requests carrying
+  # an X-API-Key header and skips the OIDC ForwardAuth so CI clients (vzctl
+  # sync, dogfooded GitOps for vizgrams.com, future enterprise customers)
+  # can reach FastAPI directly. The FastAPI dependency
+  # `require_user_or_service_account` then enforces SA-scope auth at the
+  # application layer. Higher priority (30 > 10) ensures it wins routing
+  # when both routers match.
+  #
+  # The bypass spans /api as a whole, not just artifact paths — relying on
+  # the FastAPI dependencies to enforce per-route auth is the simpler
+  # contract. Routes that should remain OIDC-only (e.g. the service-accounts
+  # CRUD router that mints/revokes SA tokens) reject SA-only requests with
+  # 401 inside FastAPI.
   api:
     environment:
       DEV_USER: ""    # disable the dev bypass when auth is active
     labels:
       traefik.http.routers.api.middlewares: auth@docker
+
+      traefik.http.routers.api-sa.rule: PathPrefix(`/api`) && HeadersRegexp(`X-API-Key`, `.+`)
+      traefik.http.routers.api-sa.entrypoints: web
+      traefik.http.routers.api-sa.service: api
+      traefik.http.routers.api-sa.priority: "30"
