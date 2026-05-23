@@ -11,7 +11,7 @@
  *   scatter    → table fallback for v1 (recharts scatter wiring is a follow-up)
  */
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { AlertCircle, ChevronDown, ChevronUp, Code, FileCode } from 'lucide-react'
 
 import type { ChatResponse } from '@/api/client'
@@ -74,7 +74,7 @@ interface SourceToggleProps {
 }
 
 function SourceToggle({ response, openTab, setOpenTab }: SourceToggleProps) {
-  const tabs: { key: SourceTab; label: string; content: string | null; icon: JSX.Element }[] = [
+  const tabs: { key: SourceTab; label: string; content: string | null; icon: ReactNode }[] = [
     { key: 'query_yaml', label: 'Query YAML', content: response.query_yaml, icon: <FileCode className="h-3 w-3" /> },
     { key: 'view_yaml', label: 'View YAML', content: response.view_yaml, icon: <FileCode className="h-3 w-3" /> },
     { key: 'sql', label: 'SQL', content: response.sql, icon: <Code className="h-3 w-3" /> },
