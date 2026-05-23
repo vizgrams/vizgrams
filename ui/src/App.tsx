@@ -18,6 +18,7 @@ import { GraphPage } from '@/pages/GraphPage'
 import { QueriesPage } from '@/pages/QueriesPage'
 import { FeaturesPage } from '@/pages/FeaturesPage'
 import { ExploreShell } from '@/pages/ExploreShell'
+import ChatPage from '@/pages/ChatPage'
 import { AccountPage } from '@/pages/AccountPage'
 import { FeedPage } from '@/pages/FeedPage'
 import { SavedPage } from '@/pages/SavedPage'
@@ -65,6 +66,7 @@ export default function App() {
             {/* User — open to all */}
             <Route path="/feed" element={<FeedPage />} />
             <Route path="/saved" element={<SavedPage />} />
+            <Route path="/chat" element={<ProtectedRoute minRole="creator"><ChatPage /></ProtectedRoute>} />
             <Route path="/explore" element={<ExploreShell />} />
             <Route path="/explore/:entity" element={<EntityListPage />} />
             <Route path="/explore/:entity/:id" element={<EntityDetailPage />} />
