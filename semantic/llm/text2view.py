@@ -128,21 +128,53 @@ def view_yaml(
     x_field: str | None,
     y_field: str | None,
     color_field: str | None,
-    caption: str,
+    caption: str,  # noqa: ARG001 — kept in signature for callers; not in view schema
+    columns: list[str] | None = None,
 ) -> str:
-    """Render a minimal ViewDef YAML matching the existing view schema."""
-    body: dict = {
-        "name": name,
-        "query": query_name,
-        "chart": {"type": chart_type},
-        "caption": caption,
-    }
-    if x_field:
-        body["chart"]["x"] = x_field
-    if y_field:
-        body["chart"]["y"] = y_field
-    if color_field:
-        body["chart"]["color"] = color_field
+    """Render a ViewDef YAML matching ``schemas/view.yaml``.
+
+    Maps our chart-picker enum onto the four allowed view types:
+
+      kpi          → type: metric   (measure: single column)
+      table        → type: table    (visualization.columns: all)
+      bar / line / scatter → type: chart  (visualization.chart_type + x + y)
+
+    The caption is *not* part of the view schema; callers keep it
+    alongside on the orchestrator's ``ChatTurnResult`` so this function
+    can produce something the validator accepts.
+    """
+    if chart_type == "kpi":
+        measure = y_field or (columns[0] if columns else "")
+        body: dict = {
+            "name": name,
+            "type": "metric",
+            "query": query_name,
+            "measure": measure,
+            "visualization": {},
+        }
+    elif chart_type == "table":
+        body = {
+            "name": name,
+            "type": "table",
+            "query": query_name,
+            "visualization": {
+                "columns": list(columns or []),
+            },
+        }
+    else:  # bar, line, scatter
+        viz: dict = {"chart_type": chart_type}
+        if x_field:
+            viz["x"] = x_field
+        if y_field:
+            viz["y"] = [y_field]
+        if color_field:
+            viz["color"] = color_field
+        body = {
+            "name": name,
+            "type": "chart",
+            "query": query_name,
+            "visualization": viz,
+        }
     return yaml.safe_dump(body, sort_keys=False)
 
 
@@ -158,8 +190,8 @@ def text2view_yaml(
     user_intent: str | None = None,
     llm_client: LLMClient,
     llm_model: str | None = None,
-    view_name: str = "_text2view",
-    query_name: str = "_text2query",
+    view_name: str = "text2view",
+    query_name: str = "text2query",
     rows_to_llm: int = 20,
 ) -> Text2ViewResult:
     """Pick a chart spec + caption for a query result.
@@ -225,6 +257,7 @@ def text2view_yaml(
             y_field=args.get("y_field"),
             color_field=args.get("color_field"),
             caption=caption,
+            columns=columns,
         ),
         raw_args=args,
     )
