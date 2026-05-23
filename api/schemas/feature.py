@@ -1,10 +1,12 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import BaseModel
+from pydantic import BaseModel  # noqa: F401  (kept for any future plain-model additions)
+
+from api.schemas.common import CertFields
 
 
-class FeatureSummary(BaseModel):
+class FeatureSummary(CertFields):
     feature_id: str | None = None
     name: str
     entity: str

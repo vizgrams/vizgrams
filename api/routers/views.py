@@ -6,11 +6,17 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from api.dependencies import require_user_or_service_account, resolve_model_dir
+from api.dependencies import (
+    get_current_user,
+    require_creator,
+    require_user_or_service_account,
+    resolve_model_dir,
+)
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.view import ViewDetail, ViewResult, ViewSummary
 from api.services import view_service
 from api.services.view_service import ViewValidationError
+from core import metadata_db
 from core.db import BackendUnavailableError
 from core.version_routes import make_version_routes
 
@@ -99,6 +105,37 @@ def validate_view(view: str, model_dir: str = Depends(resolve_model_dir)):
         return view_service.validate_view(model_dir, view)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"View '{view}' not found.") from None
+
+
+# VG-258 / VG-259: certification toggle. Creator-gated — same role bar as
+# the rest of the artifact write surface.
+@router.post("/{view}/certify", response_model=ViewDetail)
+def certify_view(
+    view: str,
+    model_dir: str = Depends(resolve_model_dir),
+    user_id: str = Depends(get_current_user),
+    _=Depends(require_creator),
+):
+    try:
+        view_service.get_view(model_dir, view)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"View '{view}' not found.") from None
+    metadata_db.certify(model_dir, "view", view, user_id=user_id)
+    return view_service.get_view(model_dir, view)
+
+
+@router.delete("/{view}/certify", response_model=ViewDetail)
+def uncertify_view(
+    view: str,
+    model_dir: str = Depends(resolve_model_dir),
+    _=Depends(require_creator),
+):
+    try:
+        view_service.get_view(model_dir, view)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"View '{view}' not found.") from None
+    metadata_db.uncertify(model_dir, "view", view)
+    return view_service.get_view(model_dir, view)
 
 
 @router.put("/{view}", response_model=ViewDetail)

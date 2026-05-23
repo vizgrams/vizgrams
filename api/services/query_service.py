@@ -16,15 +16,27 @@ from semantic.yaml_adapter import YAMLAdapter
 def list_queries(model_dir: Path) -> list[dict]:
     queries_dir = model_dir / "queries"
     queries = YAMLAdapter.load_queries(queries_dir)
+    from api.services.certification_service import list_cert_payloads
+    certs = list_cert_payloads(model_dir, "query")
     return [
         {
             "name": q.name,
             "root": _root(q),
             "measure_count": _measure_count(q),
             "group_by_count": len(q.slices) if hasattr(q, "slices") and q.slices else 0,
+            **certs.get(q.name, _cert_default()),
         }
         for q in queries
     ]
+
+
+def _cert_default() -> dict:
+    return {
+        "is_certified": False,
+        "certified_by": None,
+        "certified_by_display": None,
+        "certified_at": None,
+    }
 
 
 def get_query(model_dir: Path, query_name: str) -> dict:
@@ -50,6 +62,7 @@ def get_query(model_dir: Path, query_name: str) -> dict:
             "optional": p.optional,
         })
 
+    from api.services.certification_service import get_cert_payload
     return {
         "name": q.name,
         "root": _root(q),
@@ -72,6 +85,7 @@ def get_query(model_dir: Path, query_name: str) -> dict:
         "order_by": _order_by(q),
         "compiled_sql": compiled_sql,
         "raw_yaml": raw_yaml,
+        **get_cert_payload(model_dir, "query", query_name),
     }
 
 

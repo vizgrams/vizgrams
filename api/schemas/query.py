@@ -5,8 +5,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from api.schemas.common import CertFields
 
-class QuerySummary(BaseModel):
+
+class QuerySummary(CertFields):
     name: str
     root: str | None = None
     measure_count: int = 0
@@ -25,7 +27,7 @@ class SliceDetail(BaseModel):
     format_pattern: str = ""
 
 
-class QueryDetail(BaseModel):
+class QueryDetail(CertFields):
     name: str
     root: str | None = None
     description: str | None = None

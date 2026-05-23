@@ -15,7 +15,12 @@ _log = logging.getLogger(__name__)
 def list_views(model_dir: Path) -> list[dict]:
     views_dir = model_dir / "views"
     views = YAMLAdapter.load_views(views_dir)
-    return [{"name": v.name, "type": v.type, "query": v.query} for v in views]
+    from api.services.certification_service import list_cert_payloads
+    certs = list_cert_payloads(model_dir, "view")
+    return [
+        {"name": v.name, "type": v.type, "query": v.query, **certs.get(v.name, _cert_default())}
+        for v in views
+    ]
 
 
 def get_view(model_dir: Path, view_name: str) -> dict:
@@ -24,7 +29,22 @@ def get_view(model_dir: Path, view_name: str) -> dict:
     if v is None:
         raise KeyError(f"View '{view_name}' not found.")
     raw_yaml = metadata_db.get_current_content(model_dir, "view", view_name)
-    return {**_view_detail(v, raw_yaml), "params": _query_params(model_dir, v.query)}
+    from api.services.certification_service import get_cert_payload
+    return {
+        **_view_detail(v, raw_yaml),
+        "params": _query_params(model_dir, v.query),
+        **get_cert_payload(model_dir, "view", view_name),
+    }
+
+
+def _cert_default() -> dict:
+    """Shape used when an artifact has no certification row."""
+    return {
+        "is_certified": False,
+        "certified_by": None,
+        "certified_by_display": None,
+        "certified_at": None,
+    }
 
 
 def execute_view(

@@ -51,7 +51,84 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_current
     WHERE is_current = 1;
 CREATE INDEX IF NOT EXISTS ix_history
     ON artifact_versions (model_id, type, name, version_num);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    name        TEXT    PRIMARY KEY,
+    applied_at  TEXT    NOT NULL
+);
+
+-- VG-258: certification marker for views / queries / features. One row
+-- per (model_id, type, name); stays sticky across edits. Backfilled
+-- once for pre-existing artifacts by the ``backfill_certify_existing``
+-- migration so the new default ("only certified is visible") doesn't
+-- accidentally hide everything.
+CREATE TABLE IF NOT EXISTS artifact_certifications (
+    model_id      TEXT NOT NULL,
+    type          TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    certified_by  TEXT,
+    certified_at  TEXT NOT NULL,
+    PRIMARY KEY (model_id, type, name)
+);
 """
+
+
+# Type literals eligible for certification. Entities / mappers / extractors
+# are admin-only and don't appear in the user-facing library, so they don't
+# need (or get) a certification surface.
+CERTIFIABLE_TYPES = frozenset({"view", "query", "feature"})
+
+
+# ---------------------------------------------------------------------------
+# Migrations
+#
+# One-shot data migrations live here. Each is keyed by a stable name written
+# to ``schema_migrations`` after success; subsequent connects skip it.
+# Pure DDL changes go in ``_DDL`` (idempotent CREATE / ALTER IF NOT EXISTS);
+# migrations are for *data* fixes that mustn't repeat.
+# ---------------------------------------------------------------------------
+
+def _migration_backfill_certify_existing(conn: sqlite3.Connection) -> None:
+    """Mark every view/query/feature currently in artifact_versions as certified.
+
+    Runs once per database. New artifacts created after this point default
+    to uncertified, which is the whole point of the cert filter — but if we
+    didn't backfill, the first deploy would hide every existing library
+    item from every user.
+    """
+    now = datetime.now(UTC).isoformat()
+    rows = conn.execute(
+        "SELECT DISTINCT model_id, type, name FROM artifact_versions "
+        "WHERE is_current=1 AND type IN ('view','query','feature')"
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            "INSERT OR IGNORE INTO artifact_certifications "
+            "(model_id, type, name, certified_by, certified_at) "
+            "VALUES (?, ?, ?, NULL, ?)",
+            (r["model_id"], r["type"], r["name"], now),
+        )
+
+
+_MIGRATIONS: dict[str, callable] = {
+    "backfill_certify_existing": _migration_backfill_certify_existing,
+}
+
+
+def _run_pending_migrations(conn: sqlite3.Connection) -> None:
+    """Apply any migration not already recorded in ``schema_migrations``."""
+    applied = {
+        r["name"] for r in conn.execute("SELECT name FROM schema_migrations").fetchall()
+    }
+    now = datetime.now(UTC).isoformat()
+    for name, fn in _MIGRATIONS.items():
+        if name in applied:
+            continue
+        fn(conn)
+        conn.execute(
+            "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+            (name, now),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +161,7 @@ def _connect(model_dir: Path, db_path: Path | None = None) -> Generator[sqlite3.
     conn.execute("PRAGMA journal_mode=WAL")
     try:
         conn.executescript(_DDL)
+        _run_pending_migrations(conn)
         yield conn
         conn.commit()
     except Exception:
@@ -319,6 +397,112 @@ def seed_from_directory(model_dir: Path, db_path: Path | None = None) -> int:
                 count += 1
 
     return count
+
+
+# ---------------------------------------------------------------------------
+# Certification (VG-258)
+# ---------------------------------------------------------------------------
+
+
+def certify(
+    model_dir: Path, artifact_type: str, name: str,
+    user_id: str | None = None,
+    db_path: Path | None = None,
+) -> None:
+    """Mark ``(model, type, name)`` as certified by ``user_id``.
+
+    Idempotent — re-certifying an already-certified artifact just refreshes
+    the timestamp + user. Raises ``ValueError`` for types outside
+    ``CERTIFIABLE_TYPES``.
+    """
+    if artifact_type not in CERTIFIABLE_TYPES:
+        raise ValueError(
+            f"Cannot certify type {artifact_type!r}; "
+            f"only {sorted(CERTIFIABLE_TYPES)} are certifiable."
+        )
+    model_id = Path(model_dir).name
+    now = datetime.now(UTC).isoformat()
+    with _connect(model_dir, db_path) as conn:
+        conn.execute(
+            "INSERT INTO artifact_certifications "
+            "(model_id, type, name, certified_by, certified_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (model_id, type, name) DO UPDATE SET "
+            "certified_by=excluded.certified_by, certified_at=excluded.certified_at",
+            (model_id, artifact_type, name, user_id, now),
+        )
+
+
+def uncertify(
+    model_dir: Path, artifact_type: str, name: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Remove the certification marker. Returns True if a row was deleted."""
+    model_id = Path(model_dir).name
+    with _connect(model_dir, db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM artifact_certifications "
+            "WHERE model_id=? AND type=? AND name=?",
+            (model_id, artifact_type, name),
+        )
+        return cur.rowcount > 0
+
+
+def get_certification(
+    model_dir: Path, artifact_type: str, name: str,
+    db_path: Path | None = None,
+) -> dict | None:
+    """Return ``{certified_by, certified_at}`` or None if uncertified."""
+    model_id = Path(model_dir).name
+    with _connect(model_dir, db_path) as conn:
+        row = conn.execute(
+            "SELECT certified_by, certified_at FROM artifact_certifications "
+            "WHERE model_id=? AND type=? AND name=?",
+            (model_id, artifact_type, name),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"certified_by": row["certified_by"], "certified_at": row["certified_at"]}
+
+
+def is_certified(
+    model_dir: Path, artifact_type: str, name: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Whether ``(model, type, name)`` has a certification row."""
+    return get_certification(model_dir, artifact_type, name, db_path=db_path) is not None
+
+
+def list_certifications(
+    model_dir: Path, artifact_type: str | None = None,
+    db_path: Path | None = None,
+) -> dict[tuple[str, str], dict]:
+    """All certifications for a model, keyed by ``(type, name)``.
+
+    Used by list endpoints to populate certification fields in one query
+    instead of N. Filter by ``artifact_type`` to scope to a single kind.
+    """
+    model_id = Path(model_dir).name
+    with _connect(model_dir, db_path) as conn:
+        if artifact_type is not None:
+            rows = conn.execute(
+                "SELECT type, name, certified_by, certified_at "
+                "FROM artifact_certifications WHERE model_id=? AND type=?",
+                (model_id, artifact_type),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT type, name, certified_by, certified_at "
+                "FROM artifact_certifications WHERE model_id=?",
+                (model_id,),
+            ).fetchall()
+    return {
+        (r["type"], r["name"]): {
+            "certified_by": r["certified_by"],
+            "certified_at": r["certified_at"],
+        }
+        for r in rows
+    }
 
 
 def migrate_from_legacy_db(model_dir: Path, db_path: Path | None = None) -> int:

@@ -13,11 +13,17 @@ from core.db import BackendUnavailableError
 _log = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 
-from api.dependencies import require_user_or_service_account, resolve_model_dir
+from api.dependencies import (
+    get_current_user,
+    require_creator,
+    require_user_or_service_account,
+    resolve_model_dir,
+)
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.query import QueryDetail, QueryResult, QuerySummary
 from api.services import query_service
 from api.services.query_service import QueryValidationError
+from core import metadata_db
 from core.version_routes import make_version_routes
 
 router = APIRouter(prefix="/model/{model}/query", tags=["queries"])
@@ -61,6 +67,36 @@ def get_query(
         return query_service.get_query(model_dir, query)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Query '{query}' not found.") from None
+
+
+# VG-258 / VG-259: certification toggle. Creator-gated.
+@router.post("/{query}/certify", response_model=QueryDetail)
+def certify_query(
+    query: str,
+    model_dir: str = Depends(resolve_model_dir),
+    user_id: str = Depends(get_current_user),
+    _=Depends(require_creator),
+):
+    try:
+        query_service.get_query(model_dir, query)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Query '{query}' not found.") from None
+    metadata_db.certify(model_dir, "query", query, user_id=user_id)
+    return query_service.get_query(model_dir, query)
+
+
+@router.delete("/{query}/certify", response_model=QueryDetail)
+def uncertify_query(
+    query: str,
+    model_dir: str = Depends(resolve_model_dir),
+    _=Depends(require_creator),
+):
+    try:
+        query_service.get_query(model_dir, query)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Query '{query}' not found.") from None
+    metadata_db.uncertify(model_dir, "query", query)
+    return query_service.get_query(model_dir, query)
 
 
 @router.post("/{query}/execute")

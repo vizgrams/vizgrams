@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import Path as PathParam
 
 from api.dependencies import (
+    get_current_user,
     get_job_service,
+    require_creator,
     require_user_or_service_account,
     resolve_entity,
     resolve_model_dir,
@@ -17,6 +19,7 @@ from api.schemas.job import JobOut
 from api.services import feature_service
 from api.services.feature_service import FeatureValidationError
 from api.services.job_service import JobService
+from core import metadata_db
 from core.db import BackendUnavailableError
 from core.version_routes import make_version_routes
 
@@ -126,6 +129,35 @@ def list_all_features(
     if entity:
         features = [f for f in features if f.get("entity") == entity]
     return features
+
+
+# VG-258 / VG-259: certification toggle keyed on feature_id at the
+# model-level path so callers don't need the owning entity.
+@model_feature_router.post("/{feature_id}/certify", response_model=FeatureSummary)
+def certify_feature(
+    feature_id: str,
+    model_dir: str = Depends(resolve_model_dir),
+    user_id: str = Depends(get_current_user),
+    _=Depends(require_creator),
+):
+    if metadata_db.get_current_content(model_dir, "feature", feature_id) is None:
+        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
+    metadata_db.certify(model_dir, "feature", feature_id, user_id=user_id)
+    matches = [f for f in feature_service.list_all_features(model_dir) if f["feature_id"] == feature_id]
+    return matches[0]
+
+
+@model_feature_router.delete("/{feature_id}/certify", response_model=FeatureSummary)
+def uncertify_feature(
+    feature_id: str,
+    model_dir: str = Depends(resolve_model_dir),
+    _=Depends(require_creator),
+):
+    if metadata_db.get_current_content(model_dir, "feature", feature_id) is None:
+        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
+    metadata_db.uncertify(model_dir, "feature", feature_id)
+    matches = [f for f in feature_service.list_all_features(model_dir) if f["feature_id"] == feature_id]
+    return matches[0]
 
 
 @model_feature_router.post("/reconcile", response_model=JobOut, status_code=202)
