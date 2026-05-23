@@ -12,7 +12,7 @@
  */
 
 import { useState } from 'react'
-import { AlertCircle, ChevronDown, ChevronUp, Code } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronUp, Code, FileCode } from 'lucide-react'
 
 import type { ChatResponse } from '@/api/client'
 import { Card } from '@/components/Layout'
@@ -23,8 +23,10 @@ interface Props {
   response: ChatResponse
 }
 
+type SourceTab = 'query_yaml' | 'view_yaml' | 'sql'
+
 export function ChatTurnCard({ response }: Props) {
-  const [showSql, setShowSql] = useState(false)
+  const [openTab, setOpenTab] = useState<SourceTab | null>(null)
 
   if (!response.success) {
     return (
@@ -54,25 +56,64 @@ export function ChatTurnCard({ response }: Props) {
         </p>
       )}
 
-      {response.sql && (
-        <div className="border-t pt-2">
-          <button
-            type="button"
-            onClick={() => setShowSql((s) => !s)}
-            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-          >
-            <Code className="h-3 w-3" />
-            {showSql ? 'Hide' : 'Show'} SQL
-            {showSql ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          </button>
-          {showSql && (
-            <pre className="mt-2 text-xs bg-muted rounded p-3 overflow-x-auto whitespace-pre-wrap">
-              {response.sql}
-            </pre>
-          )}
-        </div>
-      )}
+      <SourceToggle response={response} openTab={openTab} setOpenTab={setOpenTab} />
     </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Source viewer — Query YAML / View YAML / SQL tabs.
+// The YAMLs are the canonical artifacts (validated against the same schemas
+// the existing query / view endpoints use). SQL is shown for debugging.
+// ---------------------------------------------------------------------------
+
+interface SourceToggleProps {
+  response: ChatResponse
+  openTab: SourceTab | null
+  setOpenTab: (tab: SourceTab | null) => void
+}
+
+function SourceToggle({ response, openTab, setOpenTab }: SourceToggleProps) {
+  const tabs: { key: SourceTab; label: string; content: string | null; icon: JSX.Element }[] = [
+    { key: 'query_yaml', label: 'Query YAML', content: response.query_yaml, icon: <FileCode className="h-3 w-3" /> },
+    { key: 'view_yaml', label: 'View YAML', content: response.view_yaml, icon: <FileCode className="h-3 w-3" /> },
+    { key: 'sql', label: 'SQL', content: response.sql, icon: <Code className="h-3 w-3" /> },
+  ]
+  const available = tabs.filter((t) => t.content)
+  if (available.length === 0) return null
+
+  function toggle(key: SourceTab) {
+    setOpenTab(openTab === key ? null : key)
+  }
+
+  const current = available.find((t) => t.key === openTab)
+  return (
+    <div className="border-t pt-2">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        {available.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => toggle(t.key)}
+            className={cn(
+              'flex items-center gap-1 hover:text-foreground transition-colors',
+              openTab === t.key && 'text-foreground font-medium',
+            )}
+          >
+            {t.icon}
+            {t.label}
+            {openTab === t.key
+              ? <ChevronUp className="h-3 w-3" />
+              : <ChevronDown className="h-3 w-3" />}
+          </button>
+        ))}
+      </div>
+      {current && (
+        <pre className="mt-2 text-xs bg-muted rounded p-3 overflow-x-auto whitespace-pre-wrap">
+          {current.content}
+        </pre>
+      )}
+    </div>
   )
 }
 
