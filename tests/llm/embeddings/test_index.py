@@ -30,6 +30,36 @@ def test_query_text_includes_root_measures_filters():
     assert "merged" in text
 
 
+def test_query_text_renders_measures_as_alias_equals_expr():
+    """LLMs need both the alias AND the underlying field — render both."""
+    content = (
+        "name: dora_clt_trend\n"
+        "root: PullRequest\n"
+        "measures:\n"
+        "  - avg_clt_prd:\n"
+        "      expr: avg(change_lead_time_prd)\n"
+        "  - avg_merge_time:\n"
+        "      expr: avg(merge_time)\n"
+    )
+    text = build_embedding_text("query", "dora_clt_trend", content)
+    # Both alias and inner field must appear so the LLM can extract field paths
+    assert "avg_clt_prd=avg(change_lead_time_prd)" in text
+    assert "avg_merge_time=avg(merge_time)" in text
+
+
+def test_query_text_falls_back_to_bare_name_when_no_expr():
+    """Some queries define measures via the legacy flat shape (no `expr:` key)."""
+    content = (
+        "name: legacy\n"
+        "root: X\n"
+        "measures:\n"
+        "  - just_a_name: count(some_col)\n"
+    )
+    text = build_embedding_text("query", "legacy", content)
+    # No nested expr → fall back to just the alias rather than rendering oddly
+    assert "just_a_name" in text
+
+
 def test_view_text_includes_chart_type_and_query():
     content = (
         "name: pr_trend\n"
