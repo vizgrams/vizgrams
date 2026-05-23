@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+# Explicit token scopes. Defaults to none at the org level, which broke
+# actions/checkout ("could not read Username for 'https://github.com'")
+# on every PR run. Only the minimum each job actually needs:
+#   contents: read   — every job (checkout the repo)
+#   actions: read    — required by actions/cache to look up + restore
+#   packages: read   — buildx pulls cached layers from GHCR
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
 jobs:
   # ---------------------------------------------------------------------------
   # Python: lint + test
