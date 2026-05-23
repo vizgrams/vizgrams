@@ -76,19 +76,22 @@ class _FakeExecutor:
         return self.results.pop(0)
 
 
-def test_chat_turn_happy_path(monkeypatch):
+def test_chat_turn_happy_path_returns_inline_view(monkeypatch):
+    """VG-237: text2query + text2view path C → inline_view payload."""
     _stub_loaders(monkeypatch)
+    # Skip view-YAML validation since text2view's output references a
+    # transient query name the validator can't resolve through the stub.
+    monkeypatch.setattr(
+        "api.services.explore_chat.view_service.validate_inline_view",
+        lambda *a, **k: {"valid": True, "errors": []},
+    )
     llm = FakeLLMClient()
-    # text2query: build_and_run_query → executor success → success
     llm.responses.append(response_with_tool("build_and_run_query", {
         "root_entity": "Widget",
         "measures": [{"name": "n", "field": "widget_key", "rollup": "count"}],
     }))
-    # text2view: present_view
     llm.responses.append(response_with_tool("present_view", {
-        "chart_type": "kpi",
-        "y_field": "n",
-        "caption": "42 widgets total.",
+        "chart_type": "kpi", "y_field": "n", "caption": "42 widgets.",
     }))
     executor = _FakeExecutor([QueryExecutionResult(
         success=True, rows=[[42]], columns=["n"], row_count=1, sql="SELECT ...",
@@ -101,16 +104,17 @@ def test_chat_turn_happy_path(monkeypatch):
     )
 
     assert result.success
-    assert result.content == "42 widgets total."
-    assert result.chart_type == "kpi"
-    assert result.y_field == "n"
-    assert result.rows == [[42]]
-    assert result.columns == ["n"]
-    assert result.row_count == 1
+    # Path C — query authored ourselves; both YAMLs are inline.
+    assert result.saved_view is None
+    assert result.inline_view is not None
+    assert "view_yaml" in result.inline_view
+    assert result.inline_view["view_yaml"]
+    assert result.inline_view["query_yaml"]  # transient query yaml carried inline
+    assert result.iterations == 1
+    # Diagnostics — populated for the "Show your work" tab
     assert result.query_yaml is not None
     assert result.view_yaml is not None
     assert result.sql.startswith("SELECT")
-    assert result.iterations == 1
 
 
 def test_chat_turn_failure_returns_error_without_calling_text2view(monkeypatch):
@@ -132,8 +136,13 @@ def test_chat_turn_failure_returns_error_without_calling_text2view(monkeypatch):
     assert len(llm.received) == 1
 
 
-def test_chat_turn_falls_back_to_table_when_text2view_fails(monkeypatch):
+def test_chat_turn_falls_back_to_table_view_when_text2view_fails(monkeypatch):
+    """When text2view fails, orchestrator emits a minimal table-view YAML."""
     _stub_loaders(monkeypatch)
+    monkeypatch.setattr(
+        "api.services.explore_chat.view_service.validate_inline_view",
+        lambda *a, **k: {"valid": True, "errors": []},
+    )
     llm = FakeLLMClient()
     llm.responses.append(response_with_tool("build_and_run_query", {
         "root_entity": "Widget",
@@ -151,11 +160,12 @@ def test_chat_turn_falls_back_to_table_when_text2view_fails(monkeypatch):
         llm_client=llm, executor=executor,
     )
 
-    # Partial success: query worked, chart picker fell back to table.
+    # Partial success: query worked, view-fallback is a table.
     assert result.success
-    assert result.chart_type == "table"
-    assert result.rows == [[42]]
-    assert "Chart selection failed" in result.content
+    assert result.inline_view is not None
+    assert "type: table" in result.inline_view["view_yaml"]
+    # Inline query YAML carried — path C
+    assert result.inline_view["query_yaml"]
 
 
 def test_chat_turn_passes_history_through_to_text2query(monkeypatch):
@@ -191,14 +201,13 @@ def test_chat_turn_passes_history_through_to_text2query(monkeypatch):
     assert first_call_msgs[3]["content"] == "follow-up"
 
 
-def test_chat_turn_uses_view_spec_when_run_saved_view_succeeded(monkeypatch):
-    """VG-234: text2view's chart pick is overridden by a saved view's spec."""
+def test_chat_turn_returns_saved_view_ref_when_run_saved_view_succeeded(monkeypatch):
+    """VG-237: run_saved_view → saved_view ref; text2view is NOT called."""
     _stub_loaders(monkeypatch)
 
-    # Simulate a text2query result that came from run_saved_view: it
-    # carries a view_spec with the saved chart shape.
     from semantic.llm.text2query import Text2QueryResult
-    from semantic.llm.text2view import Text2ViewResult
+
+    text2view_call_count = []
 
     def fake_text2query(**kwargs):
         return Text2QueryResult(
@@ -209,41 +218,16 @@ def test_chat_turn_uses_view_spec_when_run_saved_view_succeeded(monkeypatch):
             row_count=1,
             sql="SELECT ...",
             iterations=1,
-            # Saved view spec — bar chart (text2view would have said line)
-            view_spec={
-                "chart_type": "bar",
-                "x_field": "team",
-                "y_field": "avg_clt",
-                "color_field": None,
-                "drilldown": None,
-            },
             view_yaml="name: dora_clt_by_team\ntype: chart\n",
             saved_view_name="dora_clt_by_team",
         )
 
     def fake_text2view(**kwargs):
-        # text2view would pick LINE (different from the saved bar) and
-        # writes its own caption. Orchestrator should use the caption
-        # but override the chart shape with the view_spec.
-        return Text2ViewResult(
-            success=True,
-            chart_type="line",
-            x_field="team", y_field="avg_clt", color_field=None,
-            caption="Alpha team leads at 12.",
-            yaml="name: text2view\ntype: chart\n",
-        )
+        text2view_call_count.append(1)
+        raise AssertionError("text2view must not be called on path A")
 
-    monkeypatch.setattr(
-        "api.services.explore_chat.text2query_yaml", fake_text2query,
-    )
-    monkeypatch.setattr(
-        "api.services.explore_chat.text2view_yaml", fake_text2view,
-    )
-    # Skip view validation — saved view YAML is already validated.
-    monkeypatch.setattr(
-        "api.services.explore_chat.view_service.validate_inline_view",
-        lambda *a, **k: {"valid": True, "errors": []},
-    )
+    monkeypatch.setattr("api.services.explore_chat.text2query_yaml", fake_text2query)
+    monkeypatch.setattr("api.services.explore_chat.text2view_yaml", fake_text2view)
 
     result = chat_turn(
         model_dir=Path("/fake/m"), message="show me dora clt by team",
@@ -251,14 +235,13 @@ def test_chat_turn_uses_view_spec_when_run_saved_view_succeeded(monkeypatch):
     )
 
     assert result.success
-    # Chart shape from the SAVED VIEW, not text2view's pick:
-    assert result.chart_type == "bar"
-    assert result.x_field == "team"
-    assert result.y_field == "avg_clt"
-    # Caption still from text2view (data-aware):
-    assert result.content == "Alpha team leads at 12."
-    # View YAML is the saved one, not text2view's:
+    # Path A — saved_view ref, no inline_view
+    assert result.saved_view == {"name": "dora_clt_by_team", "params": {}}
+    assert result.inline_view is None
+    # The saved view's YAML is in diagnostics (for "Show your work")
     assert "dora_clt_by_team" in result.view_yaml
+    # text2view was NOT invoked (saved view carries its own chart spec)
+    assert text2view_call_count == []
 
 
 # ---------------------------------------------------------------------------

@@ -104,6 +104,77 @@ def validate_view(model_dir: Path, view_name: str) -> dict:
     }
 
 
+def execute_inline_view(
+    model_dir: Path,
+    view_yaml: str,
+    query_yaml: str | None = None,
+    params: dict | None = None,
+    limit: int = 1000,
+    offset: int = 0,
+) -> dict:
+    """Execute a view defined as YAML content (no saved artifact required).
+
+    Used by the chat (Epic 20 VG-237) for transient inline views.
+
+    Two modes:
+      - ``query_yaml=None``: the view's ``query:`` field must name an
+        already-saved query. We execute that saved query and apply the
+        view's visualization on top.
+      - ``query_yaml`` given: a transient query that doesn't exist in
+        ``api.db``. The view's ``query:`` field should match the inline
+        query's name; we execute the inline query and apply the view.
+    """
+    import yaml as _yaml
+
+    from semantic.view import parse_view_dict
+
+    try:
+        view_data = _yaml.safe_load(view_yaml)
+        view = parse_view_dict(view_data)
+    except Exception as exc:
+        raise ValueError(f"Could not parse inline view YAML: {exc}") from exc
+
+    # Execute the underlying query — either inline or by saved name.
+    if query_yaml is not None:
+        from api.services.query_service import execute_inline_yaml
+        query_result = execute_inline_yaml(
+            model_dir, view.query, query_yaml, limit=limit, offset=offset,
+        )
+    else:
+        from api.services.query_service import execute_query
+        query_result = execute_query(
+            model_dir, view.query, limit=limit, offset=offset, params=params,
+        )
+
+    # Optional column validation — same checks ``execute_view`` does for
+    # saved views. Skipped if the view doesn't declare columns explicitly.
+    viz = view.visualization or {}
+    declared_cols = viz.get("columns", []) if isinstance(viz, dict) else []
+    if declared_cols:
+        result_col_set = set(query_result["columns"])
+        missing = [c for c in declared_cols if c not in result_col_set]
+        if missing:
+            raise ValueError(
+                "Inline view references columns not produced by query: "
+                + ", ".join(repr(c) for c in missing)
+            )
+
+    col_formats = viz.get("column_formats", {}) if isinstance(viz, dict) else {}
+    formats = {**query_result.get("formats", {}), **col_formats}
+
+    return {
+        **_view_detail(view, raw_yaml=view_yaml),
+        "params": [],  # inline views don't carry a param schema separately
+        "columns": query_result["columns"],
+        "rows": query_result["rows"],
+        "row_count": query_result["row_count"],
+        "total_row_count": query_result["total_row_count"],
+        "duration_ms": query_result["duration_ms"],
+        "truncated": query_result["truncated"],
+        "formats": formats,
+    }
+
+
 def validate_inline_view(
     model_dir: Path,
     view_name: str,

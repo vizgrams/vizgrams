@@ -393,6 +393,18 @@ export function makeApi(model: string) {
     executeView: (name: string, limit = 1000, offset = 0, params?: Record<string, string>) =>
       post<ViewResult>(`${BASE}/view/${encodeURIComponent(name)}/execute?limit=${limit}&offset=${offset}`, params ? { params } : {}),
 
+    executeViewInline: (
+      view_yaml: string,
+      query_yaml?: string | null,
+      params?: Record<string, string>,
+      limit = 1000,
+    ) =>
+      post<ViewResult>(`${BASE}/view/_execute-inline?limit=${limit}`, {
+        view_yaml,
+        query_yaml: query_yaml ?? null,
+        params: params ?? {},
+      }),
+
     validateEntity: (entity: string) =>
       post<ValidationResult>(`${BASE}/entity/${encodeURIComponent(entity)}/validate`, {}),
 
@@ -489,13 +501,6 @@ export interface ChatHistoryTurn {
   content: string
 }
 
-export interface ChatChartSpec {
-  chart_type: 'bar' | 'line' | 'table' | 'scatter' | 'kpi' | null
-  x_field: string | null
-  y_field: string | null
-  color_field: string | null
-}
-
 /** One tool invocation in the LLM's reasoning trace (VG-239). */
 export interface ChatTraceStep {
   name: string
@@ -505,19 +510,33 @@ export interface ChatTraceStep {
   payload: Record<string, unknown>
 }
 
-export interface ChatResponse extends ChatChartSpec {
+/** Path A — render an existing saved view by name. */
+export interface ChatSavedView {
+  name: string
+  params: Record<string, string>
+}
+
+/** Paths B / C — render a transient view YAML.
+ *  ``query_yaml`` is null when the view references an already-saved query (B);
+ *  set when the query was also authored this turn (C). */
+export interface ChatInlineView {
+  view_yaml: string
+  query_yaml: string | null
+  params: Record<string, string>
+}
+
+export interface ChatResponse {
   success: boolean
-  content: string
   error: string | null
+  iterations: number
+  trace: ChatTraceStep[]
+  // Exactly one is non-null on success:
+  saved_view: ChatSavedView | null
+  inline_view: ChatInlineView | null
+  // Diagnostics — feed the "Show your work" tab; not user-facing chrome.
   query_yaml: string | null
   view_yaml: string | null
   sql: string | null
-  columns: string[]
-  rows: (string | number | null)[][]
-  row_count: number
-  truncated: boolean
-  iterations: number
-  trace: ChatTraceStep[]
 }
 
 export interface QuerySummary {
