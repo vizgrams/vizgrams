@@ -282,6 +282,9 @@ export function makeApi(model: string) {
         `${BASE}/explore/${entity}/${encodeURIComponent(id)}/related/${relationship}?limit=${limit}&offset=${offset}`,
       ),
 
+    chatTurn: (message: string, history: ChatHistoryTurn[]) =>
+      post<ChatResponse>(`${BASE}/explore/chat`, { message, history }),
+
     runMapper: (entity: string) =>
       post<JobOut>(`${BASE}/entity/${entity}/mapper/execute`, {}),
 
@@ -475,6 +478,36 @@ export interface ApplicationDetail {
   layout: { row: string[] }[]
   params: ParamDef[]
   raw_yaml: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Explore Chat (Epic 19) — natural-language → query + chart + caption
+// ---------------------------------------------------------------------------
+
+export interface ChatHistoryTurn {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface ChatChartSpec {
+  chart_type: 'bar' | 'line' | 'table' | 'scatter' | 'kpi' | null
+  x_field: string | null
+  y_field: string | null
+  color_field: string | null
+}
+
+export interface ChatResponse extends ChatChartSpec {
+  success: boolean
+  content: string
+  error: string | null
+  query_yaml: string | null
+  view_yaml: string | null
+  sql: string | null
+  columns: string[]
+  rows: (string | number | null)[][]
+  row_count: number
+  truncated: boolean
+  iterations: number
 }
 
 export interface QuerySummary {
