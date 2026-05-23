@@ -35,7 +35,7 @@ def test_returns_chart_spec_from_present_view_call(fake_llm):
     assert result.yaml is not None
 
 
-def test_kpi_chart_omits_x_field_in_yaml(fake_llm):
+def test_kpi_chart_emits_type_metric(fake_llm):
     fake_llm.responses.append(response_with_tool("present_view", {
         "chart_type": "kpi",
         "y_field": "n",
@@ -49,9 +49,10 @@ def test_kpi_chart_omits_x_field_in_yaml(fake_llm):
 
     assert result.success
     body = yaml.safe_load(result.yaml)
-    assert body["chart"]["type"] == "kpi"
-    assert "x" not in body["chart"]
-    assert body["chart"]["y"] == "n"
+    # kpi maps onto the schema's `type: metric` shape; measure carries the column.
+    assert body["type"] == "metric"
+    assert body["measure"] == "n"
+    assert body["visualization"] == {}
 
 
 def test_user_intent_and_rows_reach_the_llm(fake_llm):
@@ -145,7 +146,7 @@ def test_returns_failure_when_wrong_tool_called(fake_llm):
 # ---------------------------------------------------------------------------
 
 
-def test_view_yaml_includes_all_axes():
+def test_view_yaml_chart_emits_type_chart_and_axes():
     out = view_yaml(
         name="my_view", query_name="my_query",
         chart_type="bar", x_field="a", y_field="b", color_field="c",
@@ -153,15 +154,32 @@ def test_view_yaml_includes_all_axes():
     )
     body = yaml.safe_load(out)
     assert body["name"] == "my_view"
+    assert body["type"] == "chart"
     assert body["query"] == "my_query"
-    assert body["chart"] == {"type": "bar", "x": "a", "y": "b", "color": "c"}
+    assert body["visualization"]["chart_type"] == "bar"
+    assert body["visualization"]["x"] == "a"
+    assert body["visualization"]["y"] == ["b"]
+    assert body["visualization"]["color"] == "c"
 
 
-def test_view_yaml_omits_none_axes():
+def test_view_yaml_kpi_emits_type_metric():
     out = view_yaml(
         name="v", query_name="q",
         chart_type="kpi", x_field=None, y_field="value", color_field=None,
         caption="single",
     )
     body = yaml.safe_load(out)
-    assert body["chart"] == {"type": "kpi", "y": "value"}
+    assert body["type"] == "metric"
+    assert body["measure"] == "value"
+
+
+def test_view_yaml_table_emits_columns_list():
+    out = view_yaml(
+        name="v", query_name="q",
+        chart_type="table", x_field=None, y_field=None, color_field=None,
+        caption="x",
+        columns=["a", "b", "c"],
+    )
+    body = yaml.safe_load(out)
+    assert body["type"] == "table"
+    assert body["visualization"]["columns"] == ["a", "b", "c"]

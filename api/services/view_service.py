@@ -104,6 +104,38 @@ def validate_view(model_dir: Path, view_name: str) -> dict:
     }
 
 
+def validate_inline_view(
+    model_dir: Path,
+    view_name: str,
+    content: str,
+    known_query_columns: dict[str, list[str]] | None = None,
+) -> dict:
+    """Validate ViewDef YAML content without saving to disk.
+
+    Mirrors ``query_service.validate_inline_query``. ``known_query_columns``
+    maps query name → its result columns; pass it when the underlying
+    query hasn't been saved yet (e.g. the inline query authored by
+    text2query) so axes-vs-columns validation still runs.
+    """
+    import shutil
+    import tempfile
+
+    from semantic.view import validate_view as _validate_view
+
+    tmp_dir = Path(tempfile.mkdtemp())
+    try:
+        tmp_path = tmp_dir / f"{view_name}.yaml"
+        tmp_path.write_text(content)
+        errors = _validate_view(tmp_path, known_query_columns=known_query_columns)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": [{"path": e.path, "message": e.message} for e in errors],
+    }
+
+
 class ViewValidationError(Exception):
     def __init__(self, errors: list[dict]):
         self.errors = errors

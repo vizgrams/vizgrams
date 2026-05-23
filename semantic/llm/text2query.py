@@ -215,11 +215,36 @@ BUILD_AND_RUN_QUERY_TOOL = {
 # ---------------------------------------------------------------------------
 
 
-def build_querydef(args: dict, name: str = "_text2query") -> QueryDef:
-    """Convert tool arguments to a ``QueryDef`` ready for execution."""
+_IDENTIFIER_RE = __import__("re").compile(r"^[a-z][a-z0-9_]*$")
+
+
+def build_querydef(args: dict, name: str = "text2query") -> QueryDef:
+    """Convert tool arguments to a ``QueryDef`` ready for execution.
+
+    Raises ``ValueError`` if any measure name or group-by alias isn't a
+    valid snake_case identifier — those become SQL aliases and the engine
+    doesn't quote them, so spaces / camelCase break compilation. The LLM
+    consumes the error and retries with corrected names.
+    """
     root = args.get("root_entity", "")
     measures_in = args.get("measures") or []
     group_by_in = args.get("group_by") or []
+
+    for m in measures_in:
+        nm = m.get("name", "")
+        if not _IDENTIFIER_RE.match(nm):
+            raise ValueError(
+                f"measure name {nm!r} is not a valid SQL identifier — "
+                f"use snake_case (lowercase letters, digits, underscores, "
+                f"must start with a letter). e.g. 'pr_count' not 'PR Count'."
+            )
+    for g in group_by_in:
+        alias = g.get("alias")
+        if alias and not _IDENTIFIER_RE.match(alias):
+            raise ValueError(
+                f"group_by alias {alias!r} is not a valid SQL identifier — "
+                f"use snake_case. e.g. 'month' not 'Month Bucket'."
+            )
 
     slices = [
         SliceDef(
@@ -320,6 +345,9 @@ Rules:
   `identity:` line). Never use `*`.
 - `filters` are SQL-ish expressions: `created_at >= '2026-04-01'`,
   `state == 'merged'`.
+- Measure NAMES (the output column aliases) and group_by ALIASES must be
+  snake_case: lowercase letters, digits, underscores only, starting with a
+  letter. Bad: "PR Count", "byAuthor". Good: "pr_count", "by_author".
 - On error, fix the args and retry. Don't retry the same conceptual query
   more than twice — adjust the approach.
 
@@ -387,7 +415,7 @@ def text2query_yaml(
     max_iter: int = 5,
     rows_to_llm: int = 40,
     llm_model: str | None = None,
-    query_name: str = "_text2query",
+    query_name: str = "text2query",
 ) -> Text2QueryResult:
     """Convert ``prompt`` into a validated, executed ``QueryDef``.
 

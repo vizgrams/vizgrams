@@ -96,7 +96,7 @@ def test_returns_success_after_one_successful_tool_call(
     assert result.sql.startswith("SELECT")
     assert result.yaml is not None
     assert "root: PullRequest" in result.yaml
-    assert "name: _text2query" in result.yaml
+    assert "name: text2query" in result.yaml
     assert len(result.tool_calls) == 1
 
 
