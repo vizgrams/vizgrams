@@ -19,13 +19,14 @@
  * carry a drill stack — browser back/forward returns here.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, ChevronDown, ChevronUp, Code, FileCode, Loader2, Wand2 } from 'lucide-react'
 
 import type { ChatResponse, ChatTraceStep, ViewResult } from '@/api/client'
 import { Card } from '@/components/Layout'
 import { ViewContent } from '@/components/view/ViewContent'
+import { ViewParamBar } from '@/components/view/ViewParamBar'
 import { useModel } from '@/context/ModelContext'
 import { frameToUrl, type DrillFrame } from '@/components/view/drilldown'
 import { cn } from '@/lib/utils'
@@ -78,38 +79,53 @@ function ChatViewBody({ response }: { response: ChatResponse }) {
   const [result, setResult] = useState<ViewResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // The values the user is editing in the param bar. Seeded from the chat
+  // response (the params the LLM picked); the schema (label/default/optional)
+  // arrives in ``result.params`` after the first execute and is rendered by
+  // ``ViewParamBar``.
+  const initialParams = (response.saved_view?.params || response.inline_view?.params) ?? {}
+  const [paramValues, setParamValues] = useState<Record<string, string>>(initialParams)
+
+  const runWithParams = useCallback(async (values: Record<string, string>) => {
+    setLoading(true); setError(null)
+    try {
+      const r = response.saved_view
+        ? await api.executeView(response.saved_view.name, 1000, 0, values)
+        : response.inline_view
+        ? await api.executeViewInline(
+            response.inline_view.view_yaml,
+            response.inline_view.query_yaml,
+            values,
+          )
+        : null
+      if (!r) {
+        setError('No view in response')
+        return
+      }
+      setResult(r)
+      // Saved views with no values supplied default each param from its
+      // schema — surface those in the bar so the user sees what's being
+      // applied instead of empty inputs.
+      if (Object.keys(values).length === 0 && r.params?.length) {
+        const defaults: Record<string, string> = {}
+        for (const p of r.params) {
+          if (p.default != null) defaults[p.name] = p.default
+        }
+        setParamValues((prev) => ({ ...defaults, ...prev }))
+      }
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [api, response.saved_view, response.inline_view])
 
   useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setLoading(true); setError(null); setResult(null)
-      try {
-        const r = response.saved_view
-          ? await api.executeView(
-              response.saved_view.name, 1000, 0, response.saved_view.params,
-            )
-          : response.inline_view
-          ? await api.executeViewInline(
-              response.inline_view.view_yaml,
-              response.inline_view.query_yaml,
-              response.inline_view.params,
-            )
-          : null
-        if (cancelled) return
-        if (!r) {
-          setError('No view in response')
-          return
-        }
-        setResult(r)
-      } catch (e) {
-        if (!cancelled) setError(String(e))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    load()
-    return () => { cancelled = true }
-  }, [api, response.saved_view, response.inline_view])
+    runWithParams(initialParams)
+    // initialParams is derived from response.* which is in runWithParams's
+    // deps; we only want this to fire when the response itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runWithParams])
 
   // Clicking a drilldown target navigates into the appropriate surface
   // (/views, /entities, /apps). ``frameToUrl`` is the single source of
@@ -119,16 +135,6 @@ function ChatViewBody({ response }: { response: ChatResponse }) {
     navigate(frameToUrl(frame))
   }
 
-  if (loading) {
-    return (
-      <Card>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading view…
-        </div>
-      </Card>
-    )
-  }
   if (error) {
     return (
       <Card>
@@ -142,19 +148,41 @@ function ChatViewBody({ response }: { response: ChatResponse }) {
       </Card>
     )
   }
-  if (!result) return null
+  if (!result) {
+    return (
+      <Card>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading view…
+        </div>
+      </Card>
+    )
+  }
 
   const viz = (result.visualization as Record<string, unknown>) || {}
   const rowDrilldown = (viz.row_drilldown ?? viz.app_drilldown) as Parameters<typeof ViewContent>[0]['rowDrilldown']
-  const params = (response.saved_view?.params || response.inline_view?.params) ?? {}
 
   return (
-    <ViewContent
-      result={result}
-      rowDrilldown={rowDrilldown}
-      paramValues={params}
-      onNavigate={handleNavigate}
-    />
+    <div className="space-y-3">
+      <ViewParamBar
+        params={result.params ?? []}
+        values={paramValues}
+        onChange={setParamValues}
+        onApply={() => runWithParams(paramValues)}
+      />
+      {loading && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Updating…
+        </div>
+      )}
+      <ViewContent
+        result={result}
+        rowDrilldown={rowDrilldown}
+        paramValues={paramValues}
+        onNavigate={handleNavigate}
+      />
+    </div>
   )
 }
 

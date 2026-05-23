@@ -244,6 +244,64 @@ def test_chat_turn_returns_saved_view_ref_when_run_saved_view_succeeded(monkeypa
     assert text2view_call_count == []
 
 
+def test_chat_turn_path_b_passes_saved_query_name_to_text2view(monkeypatch):
+    """Path B (run_saved_query): the wrapper view YAML must reference the
+    saved query's *actual* name, not the "text2query" placeholder.
+
+    Regression: live "Show me the most prolific developers" returned a
+    wrapper view with ``query: text2query`` which the inline-view endpoint
+    then couldn't find — "Query 'text2query' not found.".
+    """
+    _stub_loaders(monkeypatch)
+
+    from semantic.llm.text2query import Text2QueryResult
+    from semantic.llm.text2view import Text2ViewResult
+
+    captured: dict = {}
+
+    def fake_text2query(**kwargs):
+        # querydef=None signals "ran a saved query, not built one inline"
+        return Text2QueryResult(
+            success=True,
+            yaml="name: top_pr_authors\nroot: PullRequest\n",
+            querydef=None,
+            saved_query_name="top_pr_authors",  # the real saved name
+            rows=[["alice", 42]],
+            columns=["author", "n"],
+            row_count=1,
+            sql="SELECT ...",
+            iterations=1,
+        )
+
+    def fake_text2view(**kwargs):
+        captured["query_name"] = kwargs.get("query_name")
+        return Text2ViewResult(
+            success=True,
+            yaml=f"name: text2view\ntype: chart\nquery: {kwargs['query_name']}\n",
+            chart_type="bar",
+        )
+
+    monkeypatch.setattr("api.services.explore_chat.text2query_yaml", fake_text2query)
+    monkeypatch.setattr("api.services.explore_chat.text2view_yaml", fake_text2view)
+    # Skip validation — it'd need the actual saved query to resolve columns.
+    monkeypatch.setattr(
+        "api.services.explore_chat.view_service.validate_inline_view",
+        lambda *a, **k: {"valid": True, "errors": []},
+    )
+
+    result = chat_turn(
+        model_dir=Path("/fake/m"), message="most prolific developers",
+        llm_client=FakeLLMClient(), executor=_FakeExecutor([]),
+    )
+
+    assert result.success
+    # The view YAML must reference the saved query, NOT the placeholder.
+    assert captured["query_name"] == "top_pr_authors"
+    assert "query: top_pr_authors" in result.inline_view["view_yaml"]
+    # Path B → query is saved, no inline yaml in the payload.
+    assert result.inline_view["query_yaml"] is None
+
+
 # ---------------------------------------------------------------------------
 # SemanticLayerExecutor — surface-level error handling
 # ---------------------------------------------------------------------------

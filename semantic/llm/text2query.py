@@ -113,6 +113,11 @@ class Text2QueryResult:
     view_spec: dict | None = None
     view_yaml: str | None = None
     saved_view_name: str | None = None
+    # When the successful tool was ``run_saved_query``, the saved query's
+    # actual name. The orchestrator threads this into the wrapper view
+    # YAML so the inline-view endpoint can look up the right saved query
+    # (otherwise it falls back to the "text2query" placeholder and 404s).
+    saved_query_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +445,10 @@ def text2query_yaml(
                     result.extras.get("saved_view_name")
                     if tc.name == "run_saved_view" else None
                 )
+                saved_query_name = (
+                    result.extras.get("saved_query_name")
+                    if tc.name == "run_saved_query" else None
+                )
                 return Text2QueryResult(
                     success=True,
                     yaml=qd_yaml,
@@ -457,6 +466,7 @@ def text2query_yaml(
                     view_spec=view_spec,
                     view_yaml=view_yaml,
                     saved_view_name=saved_view_name,
+                    saved_query_name=saved_query_name,
                 )
 
             if not result.success:

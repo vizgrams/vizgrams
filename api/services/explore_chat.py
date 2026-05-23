@@ -304,17 +304,26 @@ def chat_turn(
     # Paths B (run_saved_query) and C (build_and_run_query) both need
     # text2view to PICK a chart shape that wraps the data. The wrapper
     # view becomes the inline-view we return.
+    #
+    # ``query_name`` is what text2view writes into the view's ``query:``
+    # field. The inline-view endpoint uses it to find the underlying
+    # query — saved-by-name for path B, inline by-the-same-name for path
+    # C. We resolve through three sources in order: the inline querydef
+    # (path C), the saved query's real name (path B), and finally the
+    # placeholder (defensive — both prior should cover live runs).
+    wrapper_query_name = (
+        (q_result.querydef.name if q_result.querydef else None)
+        or q_result.saved_query_name
+        or QUERY_ARTIFACT_NAME
+    )
+
     v_result: Text2ViewResult = text2view_yaml(
         columns=q_result.columns,
         rows=q_result.rows,
         registry=reg,
         user_intent=message,
         llm_client=client,
-        # text2view's generated view YAML references this query name.
-        # For path C the inline query carries the same name; for path B
-        # we need it to be the saved query's actual name so the inline-view
-        # endpoint can look it up.
-        query_name=(q_result.querydef.name if q_result.querydef else QUERY_ARTIFACT_NAME),
+        query_name=wrapper_query_name,
         view_name=VIEW_ARTIFACT_NAME,
         **(text2view_kwargs or {}),
     )
@@ -324,7 +333,7 @@ def chat_turn(
         # UI still has something to render through the standard path.
         fallback_view = _fallback_table_view_yaml(
             view_name=VIEW_ARTIFACT_NAME,
-            query_name=q_result.querydef.name if q_result.querydef else QUERY_ARTIFACT_NAME,
+            query_name=wrapper_query_name,
             columns=q_result.columns,
         )
         return ChatTurnResult(
@@ -349,9 +358,7 @@ def chat_turn(
         try:
             view_validation = view_service.validate_inline_view(
                 model_dir, VIEW_ARTIFACT_NAME, v_result.yaml,
-                known_query_columns={
-                    (q_result.querydef.name if q_result.querydef else QUERY_ARTIFACT_NAME): q_result.columns
-                },
+                known_query_columns={wrapper_query_name: q_result.columns},
             )
             if not view_validation.get("valid", False):
                 errs = view_validation.get("errors") or []
