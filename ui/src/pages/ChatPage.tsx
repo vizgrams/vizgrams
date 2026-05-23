@@ -172,7 +172,7 @@ export default function ChatPage() {
       {/* Header */}
       <div className="border-b px-6 py-3 flex items-center justify-between bg-card">
         <div>
-          <h1 className="text-lg font-semibold">Explore</h1>
+          <h1 className="text-lg font-semibold">Chat</h1>
           <p className="text-xs text-muted-foreground">
             Ask questions in plain English; we'll author a query, run it, and chart the result.
           </p>

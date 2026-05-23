@@ -7,7 +7,7 @@ import {
   PanelLeftClose, PanelLeftOpen,
   Download, Shuffle, Sparkles,
   Layers, BarChart2, Share2,
-  Compass, LayoutGrid,
+  Compass, LayoutGrid, MessageSquare,
   Clock, Settings, User, Rss, Bookmark, Box,
 } from 'lucide-react'
 import type { ApplicationSummary } from '@/api/client'
@@ -132,8 +132,9 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <NavItem to="/feed" icon={<Rss className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Feed</NavItem>
           <NavItem to="/saved" icon={<Bookmark className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Saved</NavItem>
           {(role === 'creator' || role === 'admin') && (
-            <NavItem to="/chat" matchExact icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Explore</NavItem>
+            <NavItem to="/chat" matchExact icon={<MessageSquare className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Chat</NavItem>
           )}
+          <NavItem to="/explore" matchExact icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Views</NavItem>
           <NavItem to="/explore?section=entities" matchSearch="section=entities" icon={<Layers className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Entity Explorer</NavItem>
           {apps.map((a) => (
             <NavItem key={a.name} to={`/explore?app=${encodeURIComponent(a.name)}`} matchSearch={`app=${encodeURIComponent(a.name)}`} icon={<LayoutGrid className="h-3.5 w-3.5" />} collapsed={collapsed} dark>{a.name}</NavItem>
