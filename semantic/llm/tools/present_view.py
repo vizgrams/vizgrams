@@ -71,6 +71,14 @@ def _handler(args: dict, ctx: ToolContext) -> ToolResult:  # noqa: ARG001 — ct
     )
 
 
+def _summarize(result: ToolResult) -> str:
+    """One-line trace summary for VG-239 'Show your work'."""
+    p = result.payload
+    x = p.get("x_field") or "—"
+    y = p.get("y_field") or "—"
+    return f"chart={p.get('chart_type')} x={x} y={y}"
+
+
 PRESENT_VIEW = Tool(
     name="present_view",
     description=(
@@ -81,4 +89,5 @@ PRESENT_VIEW = Tool(
     handler=_handler,
     tags=("view_selection",),
     terminal=True,
+    summarize=_summarize,
 )

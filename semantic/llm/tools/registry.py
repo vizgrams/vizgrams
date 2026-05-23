@@ -136,6 +136,49 @@ class Tool:
     # tools whose semantics are "this is the final answer" (the LLM
     # equivalent of ``return``).
     terminal: bool = False
+    # Optional per-tool result formatter for the "Show your work" trace
+    # (Epic 20 VG-239). Returns a one-line human summary of a successful
+    # result. Failed results use a generic "error: …" rendering.
+    summarize: Callable[[ToolResult], str] | None = None
+
+
+@dataclass
+class ToolCallTrace:
+    """One step in the LLM's tool-use loop, captured for VG-239 "Show your work".
+
+    Carries the tool name + arguments (raw) + outcome (success + a
+    one-line human summary + the LLM-visible payload). The full payload
+    is bounded — tools are expected to keep it small or rely on row
+    truncation in ``ToolResult.to_tool_message_content``.
+    """
+
+    name: str
+    arguments: dict
+    success: bool
+    summary: str
+    payload: dict = field(default_factory=dict)
+
+
+def summarize_tool_result(
+    name: str,  # noqa: ARG001 — kept for future per-name fallbacks
+    result: ToolResult,
+    summarize_hook: Callable[[ToolResult], str] | None = None,
+) -> str:
+    """Render a one-line trace summary for a tool result.
+
+    On success, delegates to the tool's own ``summarize`` callable if
+    provided, else falls back to a generic ``ok``. On failure, surfaces
+    the payload's ``error`` field (truncated).
+    """
+    if not result.success:
+        err = (result.payload.get("error") or "failed")
+        return f"error: {err[:160]}"
+    if summarize_hook is not None:
+        try:
+            return summarize_hook(result)
+        except Exception:  # noqa: BLE001 — summary is cosmetic; never raise
+            return "ok"
+    return "ok"
 
 
 class ToolRegistry:

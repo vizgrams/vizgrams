@@ -36,6 +36,16 @@ class ChatRequest(BaseModel):
     history: list[HistoryTurn] = Field(default_factory=list)
 
 
+class TraceStep(BaseModel):
+    """One tool invocation in the LLM's reasoning trace (VG-239)."""
+
+    name: str
+    arguments: dict
+    success: bool
+    summary: str
+    payload: dict = Field(default_factory=dict)
+
+
 class ChatResponse(BaseModel):
     success: bool
     content: str = ""
@@ -52,6 +62,7 @@ class ChatResponse(BaseModel):
     y_field: str | None = None
     color_field: str | None = None
     iterations: int = 0
+    trace: list[TraceStep] = Field(default_factory=list)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -91,4 +102,11 @@ def chat(
         y_field=result.y_field,
         color_field=result.color_field,
         iterations=result.iterations,
+        trace=[
+            TraceStep(
+                name=t.name, arguments=t.arguments,
+                success=t.success, summary=t.summary, payload=t.payload,
+            )
+            for t in result.trace
+        ],
     )

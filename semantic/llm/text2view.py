@@ -28,7 +28,12 @@ from typing import Literal
 import yaml
 
 from semantic.llm.provider import LLMClient
-from semantic.llm.tools.registry import ToolContext, ToolRegistry  # noqa: F401 — ToolRegistry used in signature
+from semantic.llm.tools.registry import (
+    ToolCallTrace,
+    ToolContext,
+    ToolRegistry,
+    summarize_tool_result,
+)
 
 ChartType = Literal["bar", "line", "table", "scatter", "kpi"]
 
@@ -44,6 +49,10 @@ class Text2ViewResult:
     caption: str = ""
     error: str | None = None
     raw_args: dict = field(default_factory=dict)
+    # VG-239: single-step trace (text2view always makes exactly one LLM
+    # call; carrying it as a list keeps the shape consistent with
+    # ``Text2QueryResult.trace`` so the orchestrator can concat them.)
+    trace: list[ToolCallTrace] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -198,11 +207,24 @@ def text2view_yaml(
     # present_view doesn't read from ctx, so the default is fine.
     result = registry.dispatch(tc.name, tc.arguments, ToolContext())
 
+    # Capture the single trace step regardless of success.
+    tool_def = registry.get(tc.name)
+    trace = [ToolCallTrace(
+        name=tc.name, arguments=tc.arguments,
+        success=result.success,
+        summary=summarize_tool_result(
+            tc.name, result,
+            summarize_hook=tool_def.summarize if tool_def else None,
+        ),
+        payload=dict(result.payload),
+    )]
+
     if not result.success:
         return Text2ViewResult(
             success=False,
             error=result.payload.get("error") or "present_view returned failure",
             raw_args=tc.arguments,
+            trace=trace,
         )
 
     chart_type = result.payload["chart_type"]
@@ -225,4 +247,5 @@ def text2view_yaml(
             columns=columns,
         ),
         raw_args=tc.arguments,
+        trace=trace,
     )

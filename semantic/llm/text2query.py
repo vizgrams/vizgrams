@@ -29,7 +29,12 @@ from typing import Protocol, runtime_checkable
 import yaml
 
 from semantic.llm.provider import LLMClient, LLMResponse, ToolCall
-from semantic.llm.tools.registry import ToolContext, ToolRegistry
+from semantic.llm.tools.registry import (
+    ToolCallTrace,
+    ToolContext,
+    ToolRegistry,
+    summarize_tool_result,
+)
 from semantic.query import (
     PaginationDef,
     QueryAttribute,
@@ -93,6 +98,10 @@ class Text2QueryResult:
     sql: str | None = None
     error: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    # VG-239: structured trace of every tool the LLM called in this turn.
+    # Surfaced by the orchestrator + UI so users (and us) can audit what
+    # the model actually did — esp. helpful when find_artifacts is in the loop.
+    trace: list[ToolCallTrace] = field(default_factory=list)
     messages: list[dict] = field(default_factory=list)
     iterations: int = 0
 
@@ -320,6 +329,7 @@ def text2query_yaml(
     openai_tools = registry.to_openai_tools(tags=tool_tags)
 
     tool_calls_seen: list[ToolCall] = []
+    trace: list[ToolCallTrace] = []
     last_error: str | None = None
 
     for iteration in range(max_iter):
@@ -341,12 +351,27 @@ def text2query_yaml(
                     "role": "tool", "tool_call_id": tc.id,
                     "content": json.dumps({"error": f"unknown tool {tc.name!r}"}),
                 })
+                trace.append(ToolCallTrace(
+                    name=tc.name, arguments=tc.arguments,
+                    success=False, summary=f"unknown tool {tc.name!r}",
+                ))
                 continue
 
             messages.append({
                 "role": "tool", "tool_call_id": tc.id,
                 "content": result.to_tool_message_content(max_rows=rows_to_llm),
             })
+            # Capture this step in the trace.
+            tool_def = registry.get(tc.name)
+            trace.append(ToolCallTrace(
+                name=tc.name, arguments=tc.arguments,
+                success=result.success,
+                summary=summarize_tool_result(
+                    tc.name, result,
+                    summarize_hook=tool_def.summarize if tool_def else None,
+                ),
+                payload=dict(result.payload),
+            ))
 
             if result.success and tc.name == success_tool:
                 # Pull the orchestrator-only pieces out of extras.
@@ -367,6 +392,7 @@ def text2query_yaml(
                               or row_count > rows_to_llm,
                     sql=sql,
                     tool_calls=tool_calls_seen,
+                    trace=trace,
                     messages=messages,
                     iterations=iteration + 1,
                 )
@@ -380,6 +406,7 @@ def text2query_yaml(
         success=False,
         error=last_error or "no tool calls produced a successful query",
         tool_calls=tool_calls_seen,
+        trace=trace,
         messages=messages,
         iterations=max_iter,
     )

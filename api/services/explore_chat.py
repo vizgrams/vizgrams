@@ -33,7 +33,7 @@ from semantic.llm.text2query import (
     text2query_yaml,
 )
 from semantic.llm.text2view import Text2ViewResult, text2view_yaml
-from semantic.llm.tools import ToolContext, ToolRegistry, build_default_registry
+from semantic.llm.tools import ToolCallTrace, ToolContext, ToolRegistry, build_default_registry
 from semantic.query import QueryDef
 from semantic.yaml_adapter import YAMLAdapter
 
@@ -161,12 +161,17 @@ class ChatTurnResult:
     y_field: str | None = None
     color_field: str | None = None
     iterations: int = 0
+    # VG-239: tool-use trace across text2query + text2view for the
+    # "Show your work" UI tab. Ordered; first entry = first tool call.
+    trace: list[ToolCallTrace] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.columns is None:
             self.columns = []
         if self.rows is None:
             self.rows = []
+        if self.trace is None:
+            self.trace = []
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +281,7 @@ def chat_turn(
             success=False,
             error=q_result.error or "query authoring failed",
             iterations=q_result.iterations,
+            trace=list(q_result.trace),
         )
 
     v_result: Text2ViewResult = text2view_yaml(
@@ -303,6 +309,7 @@ def chat_turn(
             truncated=q_result.truncated,
             chart_type="table",
             iterations=q_result.iterations,
+            trace=list(q_result.trace) + list(v_result.trace),
         )
 
     # Run the generated view YAML through the same validator the
@@ -342,4 +349,5 @@ def chat_turn(
         y_field=v_result.y_field,
         color_field=v_result.color_field,
         iterations=q_result.iterations,
+        trace=list(q_result.trace) + list(v_result.trace),
     )
