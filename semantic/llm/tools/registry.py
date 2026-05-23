@@ -238,15 +238,17 @@ class ToolRegistry:
 def build_default_registry() -> ToolRegistry:
     """Return a registry pre-loaded with the in-process tools we ship.
 
-    Today: ``build_and_run_query`` (text2query) + ``present_view`` (text2view).
-    Epic 20 will add ``find_artifacts``, ``run_saved_query``, ``run_saved_view``
-    behind this same function.
+    Today: ``build_and_run_query`` + ``present_view`` + ``find_artifacts``.
+    VG-233/234 will add ``run_saved_query`` and ``run_saved_view`` behind
+    this same function.
     """
     # Imported here to avoid a circular import (tools import the registry).
     from semantic.llm.tools.build_and_run_query import BUILD_AND_RUN_QUERY
+    from semantic.llm.tools.find_artifacts import FIND_ARTIFACTS
     from semantic.llm.tools.present_view import PRESENT_VIEW
 
     reg = ToolRegistry()
     reg.register(BUILD_AND_RUN_QUERY)
+    reg.register(FIND_ARTIFACTS)
     reg.register(PRESENT_VIEW)
     return reg

@@ -191,6 +191,32 @@ def _history_to_openai(history: list[dict] | None) -> list[dict]:
     return out
 
 
+def _build_semantic_search():
+    """Return a configured ``SemanticSearch`` or None if embeddings are off.
+
+    Centralises the graceful-degradation logic: missing API key or CH
+    means ``find_artifacts`` returns an empty match list instead of
+    crashing the turn.
+    """
+    try:
+        from semantic.llm.embeddings import get_default_provider
+        from semantic.llm.embeddings.search import SemanticSearch
+        from semantic.llm.embeddings.store import EmbeddingsStore
+
+        provider = get_default_provider()
+        if provider is None:
+            return None
+        store = EmbeddingsStore()
+        # Don't ensure_schema() here — that runs at app startup
+        # (api/main.py lifespan). If the table doesn't exist, find()
+        # will fail loudly and the tool will degrade with a warning,
+        # which is the right signal.
+        return SemanticSearch(provider=provider, store=store)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Semantic search unavailable for this turn: %s", exc)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
@@ -218,7 +244,15 @@ def chat_turn(
     client = llm_client or get_default_client()
     exec_ = executor or SemanticLayerExecutor(model_dir=model_dir)
     reg = registry or build_default_registry()
-    ctx = ToolContext(model_id=model_name, model_dir=model_dir, executor=exec_)
+    # Wire the semantic-search adapter for the find_artifacts tool. If
+    # embeddings aren't configured (no OPENAI_API_KEY, or ClickHouse
+    # unavailable), search stays None and find_artifacts degrades to an
+    # empty match list — chat keeps working.
+    search = _build_semantic_search()
+    ctx = ToolContext(
+        model_id=model_name, model_dir=model_dir,
+        executor=exec_, search=search,
+    )
 
     entities = YAMLAdapter.load_entities(model_dir / "ontology")
     features_by_entity: dict[str, list[FeatureDef]] = {}
