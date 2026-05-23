@@ -29,6 +29,17 @@ from semantic.llm.embeddings.store import INDEXED_ARTIFACT_TYPES, EmbeddingsStor
 
 logger = logging.getLogger(__name__)
 
+# Bump when ANY of the per-kind text builders below changes. Self-heal
+# logic in ``reconcile.py`` re-embeds rows whose stored
+# ``text_builder_version`` is older than this — so prod heals itself on
+# next startup rather than requiring a manual ``--force`` reindex.
+#
+# History:
+#   v1 — initial release. Queries rendered measures as bare aliases.
+#   v2 — queries now render measures as ``alias=expr(field)`` so the LLM
+#        can lift the inner field cleanly (see PR #74).
+TEXT_BUILDER_VERSION = 2
+
 # Module-level state set up at app startup. Tests pass providers directly
 # via ``index_now()``; production wires them once via ``configure()``.
 _PROVIDER: EmbeddingProvider | None = None
@@ -219,11 +230,17 @@ def index_now(
     content: str,
     provider: EmbeddingProvider | None = None,
     store: EmbeddingsStore | None = None,
+    force: bool = False,
 ) -> bool:
     """Synchronous index of one artifact. Returns True on success.
 
     Used by the reindex CLI and by tests; production goes via
     ``index_artifact_async``. Both end up here.
+
+    ``force=True`` bypasses the content-hash short-circuit — required by
+    ``reconcile`` when the stored ``text_builder_version`` is older than
+    the current one but the rendered text happens to be unchanged for
+    this kind. Without force, the version stamp would never catch up.
     """
     provider = provider or _PROVIDER
     store = store or _STORE
@@ -237,17 +254,18 @@ def index_now(
     text = build_embedding_text(artifact_type, name, content)
     text_hash = content_hash(text)
 
-    try:
-        existing = store.current_hash(
-            model_id=model_id, artifact_type=artifact_type,
-            artifact_name=name, embed_model=provider.model,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not check existing embedding hash: %s", exc)
-        existing = None
+    if not force:
+        try:
+            existing = store.current_hash(
+                model_id=model_id, artifact_type=artifact_type,
+                artifact_name=name, embed_model=provider.model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not check existing embedding hash: %s", exc)
+            existing = None
 
-    if existing == text_hash:
-        return False  # unchanged — skip re-embed
+        if existing == text_hash:
+            return False  # unchanged — skip re-embed
 
     try:
         embedding = provider.embed_one(text).vector
@@ -256,6 +274,7 @@ def index_now(
             artifact_name=name, description=text,
             content_hash_val=text_hash, embed_model=provider.model,
             embedding=embedding,
+            text_builder_version=TEXT_BUILDER_VERSION,
         )
         return True
     except Exception as exc:  # noqa: BLE001

@@ -112,9 +112,15 @@ class EmbeddingsStore:
         self._backend = backend
 
     def ensure_schema(self) -> None:
-        """Create the embeddings table if it doesn't exist. Idempotent."""
+        """Create the embeddings table (and any new columns) if needed.
+
+        Idempotent: ``CREATE TABLE IF NOT EXISTS`` covers fresh deployments;
+        ``ALTER TABLE ADD COLUMN IF NOT EXISTS`` covers in-place upgrades
+        for installs that pre-date a column. Old rows get the column's
+        ``DEFAULT`` automatically.
+        """
         self._ensure_connected()
-        sql = (
+        self._backend.execute(
             f"CREATE TABLE IF NOT EXISTS `{self.DATABASE}`.`{self.TABLE}` ("
             "  model_id String,"
             "  artifact_type LowCardinality(String),"
@@ -124,11 +130,18 @@ class EmbeddingsStore:
             "  embed_dim UInt16,"
             "  embedding Array(Float32),"
             "  description String,"
+            "  text_builder_version UInt16 DEFAULT 1,"
             "  indexed_at DateTime"
             ") ENGINE = ReplacingMergeTree(indexed_at) "
             "ORDER BY (model_id, artifact_type, artifact_name, embed_model)"
         )
-        self._backend.execute(sql)
+        # Migration for installs that pre-date the column. Default = 1
+        # tags every legacy row as "first version", which is what we want —
+        # the reconciler will pick them up if TEXT_BUILDER_VERSION is now > 1.
+        self._backend.execute(
+            f"ALTER TABLE `{self.DATABASE}`.`{self.TABLE}` "
+            "ADD COLUMN IF NOT EXISTS text_builder_version UInt16 DEFAULT 1"
+        )
 
     def close(self) -> None:
         if self._backend is not None:
@@ -149,6 +162,7 @@ class EmbeddingsStore:
         content_hash_val: str,
         embed_model: str,
         embedding: list[float],
+        text_builder_version: int = 1,
     ) -> None:
         """Insert one embedding row. ReplacingMergeTree dedupes on the ORDER BY key."""
         self._ensure_connected()
@@ -158,12 +172,13 @@ class EmbeddingsStore:
             [[
                 model_id, artifact_type, artifact_name, content_hash_val,
                 embed_model, len(embedding), embedding, description,
+                int(text_builder_version),
                 datetime.now(UTC).replace(tzinfo=None),
             ]],
             column_names=[
                 "model_id", "artifact_type", "artifact_name", "content_hash",
                 "embed_model", "embed_dim", "embedding", "description",
-                "indexed_at",
+                "text_builder_version", "indexed_at",
             ],
         )
 
@@ -180,6 +195,24 @@ class EmbeddingsStore:
             parameters={"m": model_id, "t": artifact_type, "n": artifact_name, "em": embed_model},
         ).result_rows
         return rows[0][0] if rows else None
+
+    def find_outdated(
+        self, *, model_id: str, embed_model: str, current_version: int,
+    ) -> list[tuple[str, str]]:
+        """Return ``(artifact_type, artifact_name)`` for rows older than ``current_version``.
+
+        Used by ``reconcile.reconcile_model`` on startup to find embeddings
+        that were written by an earlier text-builder and need refreshing.
+        """
+        self._ensure_connected()
+        client = self._backend._client  # noqa: SLF001
+        rows = client.query(
+            f"SELECT artifact_type, artifact_name FROM `{self.DATABASE}`.`{self.TABLE}` FINAL "
+            "WHERE model_id = {m:String} AND embed_model = {em:String} "
+            "AND text_builder_version < {v:UInt16}",
+            parameters={"m": model_id, "em": embed_model, "v": int(current_version)},
+        ).result_rows
+        return [(r[0], r[1]) for r in rows]
 
     def delete(
         self, *, model_id: str, artifact_type: str, artifact_name: str,

@@ -62,16 +62,25 @@ class FakeStore:
         self.schema_ensured += 1
 
     def upsert(self, *, model_id, artifact_type, artifact_name, description,
-               content_hash_val, embed_model, embedding):
+               content_hash_val, embed_model, embedding, text_builder_version=1):
         key = (model_id, artifact_type, artifact_name, embed_model)
         self.rows[key] = {
             "description": description, "content_hash": content_hash_val,
             "embedding": list(embedding),
+            "text_builder_version": text_builder_version,
         }
 
     def current_hash(self, *, model_id, artifact_type, artifact_name, embed_model):
         row = self.rows.get((model_id, artifact_type, artifact_name, embed_model))
         return row["content_hash"] if row else None
+
+    def find_outdated(self, *, model_id, embed_model, current_version):
+        return [
+            (key[1], key[2])
+            for key, row in self.rows.items()
+            if key[0] == model_id and key[3] == embed_model
+            and row.get("text_builder_version", 1) < current_version
+        ]
 
     def delete(self, *, model_id, artifact_type, artifact_name):
         for key in [k for k in self.rows if k[:3] == (model_id, artifact_type, artifact_name)]:
