@@ -10,12 +10,13 @@
  *                      → execute via the inline-view endpoint
  *
  * Either way the actual chart / table / metric / map rendering goes through
- * the same ``ViewContent`` component the explorer uses. Charts, drilldowns,
- * formatters, sorts — uniform across the product without chat-specific code.
+ * the same ``ViewContent`` component every other surface uses. Charts,
+ * drilldowns, formatters, sorts — uniform across the product without
+ * chat-specific code.
  *
- * Drilldown clicks navigate the user into ``/explore`` so they land on the
- * saved-view surface where drill stacks work. The chat itself doesn't carry
- * a drill stack.
+ * Drilldown clicks navigate the user into ``/views``, ``/entities`` or
+ * ``/apps`` so they land on the right surface. The chat itself doesn't
+ * carry a drill stack — browser back/forward returns here.
  */
 
 import { useEffect, useState } from 'react'
@@ -26,7 +27,7 @@ import type { ChatResponse, ChatTraceStep, ViewResult } from '@/api/client'
 import { Card } from '@/components/Layout'
 import { ViewContent } from '@/components/view/ViewContent'
 import { useModel } from '@/context/ModelContext'
-import type { DrillFrame } from '@/hooks/useDrillStack'
+import { frameToUrl, type DrillFrame } from '@/components/view/drilldown'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -110,20 +111,12 @@ function ChatViewBody({ response }: { response: ChatResponse }) {
     return () => { cancelled = true }
   }, [api, response.saved_view, response.inline_view])
 
-  // Clicking a drilldown target navigates into the explorer where the
-  // saved-view + drill-stack machinery already exists.
+  // Clicking a drilldown target navigates into the appropriate surface
+  // (/views, /entities, /apps). ``frameToUrl`` is the single source of
+  // truth for that mapping — using it here keeps chat drilldowns
+  // indistinguishable from in-surface drilldowns.
   const handleNavigate = (frame: DrillFrame) => {
-    if (frame.kind === 'entity-detail') {
-      navigate(`/explore/${encodeURIComponent(frame.entity)}/${encodeURIComponent(frame.id)}`)
-    } else if (frame.kind === 'view') {
-      const qs = new URLSearchParams()
-      Object.entries(frame.params ?? {}).forEach(([k, v]) => qs.set(k, v))
-      navigate(`/explore?view=${encodeURIComponent(frame.name)}&${qs}`)
-    } else if (frame.kind === 'app') {
-      const qs = new URLSearchParams({ app: frame.name })
-      Object.entries(frame.params ?? {}).forEach(([k, v]) => qs.set(k, v))
-      navigate(`/explore?${qs}`)
-    }
+    navigate(frameToUrl(frame))
   }
 
   if (loading) {

@@ -32,22 +32,58 @@ interface UserTurn {
 
 type Turn = UserTurn | AssistantTurn
 
+// Per-model sessionStorage key. Session-scoped so the chat survives
+// drilldown round-trips into /views, /entities, or /apps and back, but is
+// cleared when the tab closes — chat state isn't meant to outlive the session.
+function storageKey(model: string) {
+  return `vizgrams:chat:turns:${model}`
+}
+
+function loadTurns(model: string): Turn[] {
+  if (!model) return []
+  try {
+    const raw = sessionStorage.getItem(storageKey(model))
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as Turn[]) : []
+  } catch {
+    return []
+  }
+}
+
 export default function ChatPage() {
   const { api, model } = useModel()
-  const [turns, setTurns] = useState<Turn[]>([])
+  const [turns, setTurns] = useState<Turn[]>(() => loadTurns(model))
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [globalError, setGlobalError] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<string[]>([])
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
-  // Reset the conversation when the model changes — a chat about one
-  // model's data makes no sense if the user switches mid-stream.
+  // Switching models loads that model's chat (or starts fresh). Each model
+  // gets its own session-scoped buffer so a chat about openflights doesn't
+  // leak into iagai.
   useEffect(() => {
-    setTurns([])
+    setTurns(loadTurns(model))
     setInput('')
     setGlobalError(null)
   }, [model])
+
+  // Persist turns whenever they change. Skipping when empty keeps the empty
+  // state clean (no stray storage entries for models never chatted with).
+  useEffect(() => {
+    if (!model) return
+    if (turns.length === 0) {
+      sessionStorage.removeItem(storageKey(model))
+    } else {
+      try {
+        sessionStorage.setItem(storageKey(model), JSON.stringify(turns))
+      } catch {
+        // Quota or serialization issues — degrade silently; chat still works
+        // in-memory, you just lose round-trip persistence for this turn.
+      }
+    }
+  }, [model, turns])
 
   // Build empty-state suggestion prompts from the model's saved views.
   // Falls back to entity-based prompts when the model has no views yet.
@@ -136,7 +172,7 @@ export default function ChatPage() {
       {/* Header */}
       <div className="border-b px-6 py-3 flex items-center justify-between bg-card">
         <div>
-          <h1 className="text-lg font-semibold">Explore</h1>
+          <h1 className="text-lg font-semibold">Chat</h1>
           <p className="text-xs text-muted-foreground">
             Ask questions in plain English; we'll author a query, run it, and chart the result.
           </p>

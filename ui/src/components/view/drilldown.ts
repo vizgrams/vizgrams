@@ -2,18 +2,43 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Drilldown configuration types + resolvers shared between ExploreShell
- * (the canonical view-rendering surface) and any other surface that
- * renders a saved view — currently the chat (VG-237).
+ * Drilldown configuration types + resolvers shared between every view-
+ * rendering surface (ViewsPage, EntitiesPage, AppPage, chat).
  *
  * A "drilldown" turns a chart-point click / table-row click / map-marker
  * click into a navigation target — typically another view, an app, or
  * an entity detail page. Resolvers take the raw click data + the
- * current view's param values and produce a typed ``DrillFrame`` the
- * caller can navigate to.
+ * current view's param values and produce a typed ``DrillFrame``;
+ * ``frameToUrl`` converts that to a router path the caller can navigate to.
  */
 
-import type { DrillFrame } from '@/hooks/useDrillStack'
+// ---------------------------------------------------------------------------
+// Frame types + URL serialization
+// ---------------------------------------------------------------------------
+
+export type DrillFrame =
+  | { kind: 'view'; name: string; params: Record<string, string> }
+  | { kind: 'entity-list'; entity: string }
+  | { kind: 'entity-detail'; entity: string; id: string }
+  | { kind: 'app'; name: string; params: Record<string, string> }
+
+/** Serialize a ``DrillFrame`` to a router path. Pair with ``navigate()``. */
+export function frameToUrl(frame: DrillFrame): string {
+  switch (frame.kind) {
+    case 'view': {
+      const qs = new URLSearchParams(frame.params).toString()
+      return `/views/${encodeURIComponent(frame.name)}${qs ? '?' + qs : ''}`
+    }
+    case 'app': {
+      const qs = new URLSearchParams(frame.params).toString()
+      return `/apps/${encodeURIComponent(frame.name)}${qs ? '?' + qs : ''}`
+    }
+    case 'entity-list':
+      return `/entities/${encodeURIComponent(frame.entity)}`
+    case 'entity-detail':
+      return `/entities/${encodeURIComponent(frame.entity)}/${encodeURIComponent(frame.id)}`
+  }
+}
 
 export interface ViewDrilldownConfig {
   label?: string

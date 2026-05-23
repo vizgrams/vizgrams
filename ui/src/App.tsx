@@ -8,16 +8,16 @@ import { RoleProvider } from '@/context/RoleContext'
 import { useRole } from '@/context/RoleContext'
 import type { PlatformRole } from '@/api/client'
 import { Layout } from '@/components/Layout'
-import { EntityListPage } from '@/pages/EntityListPage'
-import { EntityDetailPage } from '@/pages/EntityDetailPage'
 import { EntitiesPage } from '@/pages/EntitiesPage'
+import { OntologyPage } from '@/pages/OntologyPage'
 import { JobLogPage } from '@/pages/JobLogPage'
 import { ToolsPage } from '@/pages/ToolsPage'
 import { MappersPage } from '@/pages/MappersPage'
 import { GraphPage } from '@/pages/GraphPage'
 import { QueriesPage } from '@/pages/QueriesPage'
 import { FeaturesPage } from '@/pages/FeaturesPage'
-import { ExploreShell } from '@/pages/ExploreShell'
+import { ViewsPage } from '@/pages/ViewsPage'
+import { AppPage } from '@/pages/AppPage'
 import ChatPage from '@/pages/ChatPage'
 import { AccountPage } from '@/pages/AccountPage'
 import { FeedPage } from '@/pages/FeedPage'
@@ -67,26 +67,25 @@ export default function App() {
             <Route path="/feed" element={<FeedPage />} />
             <Route path="/saved" element={<SavedPage />} />
             <Route path="/chat" element={<ProtectedRoute minRole="creator"><ChatPage /></ProtectedRoute>} />
-            <Route path="/explore" element={<ExploreShell />} />
-            <Route path="/explore/:entity" element={<EntityListPage />} />
-            <Route path="/explore/:entity/:id" element={<EntityDetailPage />} />
+            <Route path="/views" element={<ViewsPage />} />
+            <Route path="/views/:name" element={<ViewsPage />} />
+            <Route path="/entities" element={<EntitiesPage />} />
+            <Route path="/entities/:entity" element={<EntitiesPage />} />
+            <Route path="/entities/:entity/:id" element={<EntitiesPage />} />
+            <Route path="/apps/:name" element={<AppPage />} />
             <Route path="/account" element={<AccountPage />} />
 
             {/* Creator — creator+ */}
             <Route path="/features" element={<ProtectedRoute minRole="creator"><FeaturesPage /></ProtectedRoute>} />
             <Route path="/queries" element={<ProtectedRoute minRole="creator"><QueriesPage /></ProtectedRoute>} />
-            <Route path="/views" element={<Navigate to="/explore" replace />} />
             <Route path="/graph" element={<ProtectedRoute minRole="creator"><GraphPage /></ProtectedRoute>} />
 
             {/* Admin — admin only */}
             <Route path="/admin/models" element={<ProtectedRoute minRole="admin"><ModelsPage /></ProtectedRoute>} />
             <Route path="/tools" element={<ProtectedRoute minRole="admin"><ToolsPage /></ProtectedRoute>} />
             <Route path="/mappers" element={<ProtectedRoute minRole="admin"><MappersPage /></ProtectedRoute>} />
-            <Route path="/entities" element={<ProtectedRoute minRole="admin"><EntitiesPage /></ProtectedRoute>} />
+            <Route path="/ontology" element={<ProtectedRoute minRole="admin"><OntologyPage /></ProtectedRoute>} />
             <Route path="/jobs" element={<ProtectedRoute minRole="admin"><JobLogPage /></ProtectedRoute>} />
-
-            {/* Legacy redirects */}
-            <Route path="/applications" element={<Navigate to="/explore" replace />} />
           </Routes>
         </Layout>
       </ModelProvider>

@@ -209,7 +209,7 @@ export function GraphPage() {
         nb.addClass('highlighted').removeClass('dimmed')
       })
       cy.on('mouseout',  'node', () => cy.elements().removeClass('dimmed highlighted'))
-      cy.on('tap',       'node', (e) => navigate(`/explore/${e.target.id()}`))
+      cy.on('tap',       'node', (e) => navigate(`/entities/${e.target.id()}`))
       cy.on('mouseover', 'node', () => { if (containerRef.current) containerRef.current.style.cursor = 'pointer' })
       cy.on('mouseout',  'node', () => { if (containerRef.current) containerRef.current.style.cursor = 'default' })
     }, 50)

@@ -6,20 +6,12 @@
  *
  * Takes a ``ViewResult`` (rows + columns + visualization spec) and
  * dispatches to the right chart / table / metric / map renderer with
- * drilldown handlers wired in. Used by:
- *
- *   - ExploreShell (saved views in the entity-explorer + apps surface)
- *   - The chat (chat turns render here too, so chart shape + drilldowns
- *     are uniform across the product — VG-237)
- *
- * Extracted out of ExploreShell so chat can reuse it without pulling in
- * the entire explorer's drill stack + edit-section + param-bar UI.
+ * drilldown handlers wired in. Used by every surface that renders a
+ * view — ViewsPage, EntitiesPage (via row links), AppPage, chat.
  *
  * ``onNavigate`` is the seam: callers decide what happens on a
- * drilldown click. ExploreShell pushes onto its in-page drill stack;
- * chat hands the frame off to react-router to navigate into the
- * explorer (so a chat-card click lands the user on the saved-view
- * surface, same as clicking a sidebar entry).
+ * drilldown click. Pages and chat both hand the resulting ``DrillFrame``
+ * off to react-router via ``frameToUrl``.
  */
 
 import { useState } from 'react'
@@ -32,9 +24,9 @@ import { Card } from '@/components/Layout'
 import { LineBarChart } from '@/components/charts/LineBarChart'
 import { CalendarHeatmapChart } from '@/components/charts/CalendarHeatmapChart'
 import { MapChart } from '@/components/charts/MapChart'
-import type { DrillFrame } from '@/hooks/useDrillStack'
 import { cn, formatValue as _formatValue } from '@/lib/utils'
 import {
+  type DrillFrame,
   type ViewDrilldownConfig,
   resolveMarkerAction,
   resolvePointDrilldown,
