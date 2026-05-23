@@ -39,19 +39,14 @@ def client(tmp_path, monkeypatch):
 
 
 def _ok_result() -> ChatTurnResult:
+    """A path-A success — the chat invoked a saved view by name."""
     return ChatTurnResult(
         success=True,
-        content="dependabot leads with 7,444 PRs",
-        query_yaml="name: _text2query\nroot: PullRequest\n",
-        view_yaml="name: _text2view\nchart:\n  type: bar\n",
-        sql="SELECT ...",
-        columns=["author", "n"],
-        rows=[["dependabot", 7444]],
-        row_count=1,
-        chart_type="bar",
-        x_field="author",
-        y_field="n",
         iterations=1,
+        saved_view={"name": "top_pr_authors", "params": {}},
+        query_yaml="name: top_pr_authors\nroot: PullRequest\n",
+        view_yaml="name: top_pr_authors\ntype: chart\n",
+        sql="SELECT ...",
     )
 
 
@@ -60,7 +55,7 @@ def _ok_result() -> ChatTurnResult:
 # ---------------------------------------------------------------------------
 
 
-def test_chat_returns_full_response_payload(client):
+def test_chat_returns_saved_view_response_payload(client):
     with patch("api.routers.explore_chat.service.chat_turn", return_value=_ok_result()) as mock:
         resp = client.post(
             "/api/v1/model/demo/explore/chat",
@@ -69,20 +64,41 @@ def test_chat_returns_full_response_payload(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["success"] is True
-    assert body["content"] == "dependabot leads with 7,444 PRs"
-    assert body["chart_type"] == "bar"
-    assert body["x_field"] == "author"
-    assert body["y_field"] == "n"
-    assert body["columns"] == ["author", "n"]
-    assert body["rows"] == [["dependabot", 7444]]
-    assert body["query_yaml"].startswith("name: _text2query")
-    assert body["view_yaml"].startswith("name: _text2view")
+    # New shape: saved_view ref, no rows/columns/chart_type in the response
+    assert body["saved_view"] == {"name": "top_pr_authors", "params": {}}
+    assert body["inline_view"] is None
+    # Diagnostics still present
+    assert body["query_yaml"].startswith("name: top_pr_authors")
+    assert body["view_yaml"].startswith("name: top_pr_authors")
+    assert body["sql"] == "SELECT ..."
 
     # Verify the service was called with the right arguments.
     assert mock.call_count == 1
     call_kwargs = mock.call_args.kwargs
     assert call_kwargs["message"] == "top PR authors"
     assert isinstance(call_kwargs["model_dir"], Path)
+
+
+def test_chat_returns_inline_view_for_path_c(client):
+    """Path C — query + view both authored inline. Both YAMLs in inline_view."""
+    inline_result = ChatTurnResult(
+        success=True, iterations=1,
+        inline_view={
+            "view_yaml": "name: text2view\ntype: chart\n",
+            "query_yaml": "name: text2query\nroot: Widget\n",
+            "params": {},
+        },
+        query_yaml="name: text2query\nroot: Widget\n",
+        view_yaml="name: text2view\ntype: chart\n",
+        sql="SELECT ...",
+    )
+    with patch("api.routers.explore_chat.service.chat_turn", return_value=inline_result):
+        resp = client.post("/api/v1/model/demo/explore/chat", json={"message": "x"})
+
+    body = resp.json()
+    assert body["saved_view"] is None
+    assert body["inline_view"]["view_yaml"].startswith("name: text2view")
+    assert body["inline_view"]["query_yaml"].startswith("name: text2query")
 
 
 def test_chat_passes_history_through_to_service(client):

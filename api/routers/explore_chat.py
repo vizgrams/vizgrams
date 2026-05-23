@@ -1,11 +1,15 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
-"""Explore-chat HTTP route (Epic 19 VG-205).
+"""Explore-chat HTTP route (Epic 19 VG-205, reshaped in VG-237).
 
 Single endpoint, single request shape, single response shape. The
 orchestrator does the work; this layer just translates between Pydantic
 and the dataclass and applies auth.
+
+Response shape: each successful turn produces a saved_view ref or an
+inline_view spec. The UI renders both via ``ViewContent`` (the same
+component the entity explorer uses), so charts + drilldowns are uniform.
 
 The route shares the ``/explore`` prefix with the existing entity
 explorer (``api/routers/explore.py``) but doesn't conflict — the chat
@@ -46,23 +50,46 @@ class TraceStep(BaseModel):
     payload: dict = Field(default_factory=dict)
 
 
+class SavedViewRef(BaseModel):
+    """Path A — render an existing saved view by name."""
+
+    name: str
+    params: dict[str, str] = Field(default_factory=dict)
+
+
+class InlineView(BaseModel):
+    """Paths B / C — render a transient view YAML.
+
+    ``query_yaml`` is ``None`` when the view references an already-saved
+    query (path B); set when the query was also authored this turn (path C).
+    """
+
+    view_yaml: str
+    query_yaml: str | None = None
+    params: dict[str, str] = Field(default_factory=dict)
+
+
 class ChatResponse(BaseModel):
+    """One assistant turn (Epic 20 VG-237 reshape).
+
+    On success, exactly one of ``saved_view`` / ``inline_view`` is set.
+    The UI fetches data via ``executeView`` (saved) or
+    ``executeViewInline`` (inline) and renders through the same
+    ``ViewContent`` component the explorer uses.
+
+    Diagnostics (``query_yaml`` / ``view_yaml`` / ``sql`` / ``trace``)
+    feed the "Show your work" tab; not user-facing chrome.
+    """
+
     success: bool
-    content: str = ""
     error: str | None = None
+    iterations: int = 0
+    trace: list[TraceStep] = Field(default_factory=list)
+    saved_view: SavedViewRef | None = None
+    inline_view: InlineView | None = None
     query_yaml: str | None = None
     view_yaml: str | None = None
     sql: str | None = None
-    columns: list[str] = Field(default_factory=list)
-    rows: list[list] = Field(default_factory=list)
-    row_count: int = 0
-    truncated: bool = False
-    chart_type: str | None = None
-    x_field: str | None = None
-    y_field: str | None = None
-    color_field: str | None = None
-    iterations: int = 0
-    trace: list[TraceStep] = Field(default_factory=list)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -71,7 +98,7 @@ def chat(
     model_dir: str = Depends(resolve_model_dir),
     _email: str = Depends(require_creator),
 ) -> ChatResponse:
-    """One assistant turn: user message in, chart + caption out.
+    """One assistant turn: user message in, view (saved or inline) out.
 
     Creator-gated. Stateless — the client sends the full conversation
     history in every request.
@@ -88,20 +115,13 @@ def chat(
 
     return ChatResponse(
         success=result.success,
-        content=result.content,
         error=result.error,
+        iterations=result.iterations,
+        saved_view=SavedViewRef(**result.saved_view) if result.saved_view else None,
+        inline_view=InlineView(**result.inline_view) if result.inline_view else None,
         query_yaml=result.query_yaml,
         view_yaml=result.view_yaml,
         sql=result.sql,
-        columns=result.columns,
-        rows=result.rows,
-        row_count=result.row_count,
-        truncated=result.truncated,
-        chart_type=result.chart_type,
-        x_field=result.x_field,
-        y_field=result.y_field,
-        color_field=result.color_field,
-        iterations=result.iterations,
         trace=[
             TraceStep(
                 name=t.name, arguments=t.arguments,

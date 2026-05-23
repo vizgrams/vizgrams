@@ -61,6 +61,38 @@ def execute_view(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/_execute-inline", response_model=ViewResult)
+def execute_inline_view(
+    body: dict[str, Any] = Body(...),
+    limit: int = Query(1000, ge=1, le=10000),
+    offset: int = Query(0, ge=0),
+    model_dir: str = Depends(resolve_model_dir),
+):
+    """Execute a transient view YAML (Epic 20 VG-237).
+
+    Body shape: ``{view_yaml: str, query_yaml?: str, params?: dict[str, str]}``.
+
+    Used by the chat to render a card from a freshly-authored view +
+    optional freshly-authored query, without saving either to api.db.
+    The view's ``query:`` field names the query (saved or transient).
+    """
+    view_yaml = body.get("view_yaml")
+    if not view_yaml:
+        raise HTTPException(status_code=400, detail="missing 'view_yaml' in body")
+    query_yaml = body.get("query_yaml")
+    params = body.get("params")
+    try:
+        return view_service.execute_inline_view(
+            model_dir, view_yaml, query_yaml=query_yaml, params=params,
+            limit=limit, offset=offset,
+        )
+    except BackendUnavailableError:
+        raise
+    except Exception as exc:
+        _log.exception("execute_inline_view failed")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/{view}/validate", response_model=ValidationResult)
 def validate_view(view: str, model_dir: str = Depends(resolve_model_dir)):
     try:

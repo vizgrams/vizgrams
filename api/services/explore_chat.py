@@ -142,34 +142,37 @@ class SemanticLayerExecutor:
 class ChatTurnResult:
     """Combined output of a single chat turn.
 
-    ``content`` is the user-facing caption from text2view; ``error`` is
-    populated when the turn failed at any step.
+    VG-237 reshape: every successful turn produces one of two things —
+    a reference to a saved view, or a transient inline view + (optional)
+    transient inline query. The UI renders both through the same
+    ``ViewContent`` component the explorer uses, so charts and
+    drilldowns are uniform across the product.
+
+    Old fields (rows, columns, chart_type, caption, …) are gone; that
+    data is encapsulated in the view + the UI fetches it via
+    ``executeView`` / ``executeViewInline``.
+
+    Diagnostics-only fields (trace, query_yaml, view_yaml, sql) are
+    kept for the "Show your work" tab.
     """
 
     success: bool
-    content: str = ""
     error: str | None = None
+    iterations: int = 0
+    # VG-239: tool-use trace.
+    trace: list[ToolCallTrace] = None  # type: ignore[assignment]
+
+    # Exactly one populated on success: saved_view (path A) OR
+    # inline_view (paths B / C).
+    saved_view: dict | None = None      # {name: str, params: dict}
+    inline_view: dict | None = None     # {view_yaml, query_yaml?, params}
+
+    # Diagnostics — populated when available, shown in the "Show your work" tab.
     query_yaml: str | None = None
     view_yaml: str | None = None
     sql: str | None = None
-    columns: list[str] = None  # type: ignore[assignment]
-    rows: list[list] = None  # type: ignore[assignment]
-    row_count: int = 0
-    truncated: bool = False
-    chart_type: str | None = None
-    x_field: str | None = None
-    y_field: str | None = None
-    color_field: str | None = None
-    iterations: int = 0
-    # VG-239: tool-use trace across text2query + text2view for the
-    # "Show your work" UI tab. Ordered; first entry = first tool call.
-    trace: list[ToolCallTrace] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
-        if self.columns is None:
-            self.columns = []
-        if self.rows is None:
-            self.rows = []
         if self.trace is None:
             self.trace = []
 
@@ -284,43 +287,71 @@ def chat_turn(
             trace=list(q_result.trace),
         )
 
+    # VG-237 path A: the LLM invoked a saved view. Return a saved_view ref
+    # — the UI renders it through the same component the explorer uses.
+    # No text2view call needed; the saved view carries its own chart spec.
+    if q_result.saved_view_name:
+        return ChatTurnResult(
+            success=True,
+            iterations=q_result.iterations,
+            trace=list(q_result.trace),
+            saved_view={"name": q_result.saved_view_name, "params": {}},
+            query_yaml=q_result.yaml,
+            view_yaml=q_result.view_yaml,
+            sql=q_result.sql,
+        )
+
+    # Paths B (run_saved_query) and C (build_and_run_query) both need
+    # text2view to PICK a chart shape that wraps the data. The wrapper
+    # view becomes the inline-view we return.
     v_result: Text2ViewResult = text2view_yaml(
         columns=q_result.columns,
         rows=q_result.rows,
         registry=reg,
         user_intent=message,
         llm_client=client,
-        query_name=QUERY_ARTIFACT_NAME,
+        # text2view's generated view YAML references this query name.
+        # For path C the inline query carries the same name; for path B
+        # we need it to be the saved query's actual name so the inline-view
+        # endpoint can look it up.
+        query_name=(q_result.querydef.name if q_result.querydef else QUERY_ARTIFACT_NAME),
         view_name=VIEW_ARTIFACT_NAME,
         **(text2view_kwargs or {}),
     )
 
     if not v_result.success:
-        # Query worked but chart picker failed — still return the data
-        # with a table fallback so the user sees something useful.
+        # Chart picker failed. Wrap the data in a minimal table view so the
+        # UI still has something to render through the standard path.
+        fallback_view = _fallback_table_view_yaml(
+            view_name=VIEW_ARTIFACT_NAME,
+            query_name=q_result.querydef.name if q_result.querydef else QUERY_ARTIFACT_NAME,
+            columns=q_result.columns,
+        )
         return ChatTurnResult(
             success=True,
-            content=f"Here are the results. (Chart selection failed: {v_result.error})",
-            query_yaml=q_result.yaml,
-            sql=q_result.sql,
-            columns=q_result.columns,
-            rows=q_result.rows,
-            row_count=q_result.row_count,
-            truncated=q_result.truncated,
-            chart_type="table",
             iterations=q_result.iterations,
             trace=list(q_result.trace) + list(v_result.trace),
+            inline_view=_inline_view_payload(
+                view_yaml=fallback_view,
+                query_yaml=q_result.yaml,
+                # Path B passes query_yaml=None because the query is saved.
+                # Detect: q_result.querydef is None when run_saved_query was the success path.
+                is_query_inline=q_result.querydef is not None,
+            ),
+            query_yaml=q_result.yaml,
+            view_yaml=fallback_view,
+            sql=q_result.sql,
         )
 
-    # Run the generated view YAML through the same validator the
-    # POST /view route uses. We pass `known_query_columns` so axes-vs-
-    # columns checks work even though the underlying query isn't saved.
-    view_yaml_to_return: str | None = v_result.yaml
+    # Validate the wrapper view YAML against the same schema the existing
+    # POST /view routes use.
     if v_result.yaml:
         try:
             view_validation = view_service.validate_inline_view(
                 model_dir, VIEW_ARTIFACT_NAME, v_result.yaml,
-                known_query_columns={QUERY_ARTIFACT_NAME: q_result.columns},
+                known_query_columns={
+                    (q_result.querydef.name if q_result.querydef else QUERY_ARTIFACT_NAME): q_result.columns
+                },
             )
             if not view_validation.get("valid", False):
                 errs = view_validation.get("errors") or []
@@ -329,44 +360,52 @@ def chat_turn(
                     for e in errs
                 ) or "view validation failed"
                 logger.info("View YAML rejected by validator: %s", msg)
-                view_yaml_to_return = None  # drop invalid YAML; chart spec still usable
         except Exception as exc:  # noqa: BLE001
             logger.warning("validate_inline_view raised: %s", exc)
-            view_yaml_to_return = None
-
-    # VG-234: when the query came from run_saved_view, prefer the saved
-    # view's chart spec over text2view's freshly-picked one. The caption
-    # still comes from text2view — same data-aware summary as any other
-    # turn — but the chart shape (and any drilldown config in future)
-    # comes from the human-authored view.
-    if q_result.view_spec is not None:
-        spec = q_result.view_spec
-        chart_type = spec.get("chart_type") or v_result.chart_type
-        x_field = spec.get("x_field")
-        y_field = spec.get("y_field")
-        color_field = spec.get("color_field")
-        # The saved view's YAML wins over the freshly-generated one.
-        view_yaml_to_return = q_result.view_yaml or view_yaml_to_return
-    else:
-        chart_type = v_result.chart_type
-        x_field = v_result.x_field
-        y_field = v_result.y_field
-        color_field = v_result.color_field
 
     return ChatTurnResult(
         success=True,
-        content=v_result.caption,
-        query_yaml=q_result.yaml,
-        view_yaml=view_yaml_to_return,
-        sql=q_result.sql,
-        columns=q_result.columns,
-        rows=q_result.rows,
-        row_count=q_result.row_count,
-        truncated=q_result.truncated,
-        chart_type=chart_type,
-        x_field=x_field,
-        y_field=y_field,
-        color_field=color_field,
         iterations=q_result.iterations,
         trace=list(q_result.trace) + list(v_result.trace),
+        inline_view=_inline_view_payload(
+            view_yaml=v_result.yaml or "",
+            query_yaml=q_result.yaml,
+            is_query_inline=q_result.querydef is not None,
+        ),
+        query_yaml=q_result.yaml,
+        view_yaml=v_result.yaml,
+        sql=q_result.sql,
     )
+
+
+def _inline_view_payload(
+    *, view_yaml: str, query_yaml: str | None, is_query_inline: bool,
+) -> dict:
+    """Build the ``inline_view`` payload for the chat response.
+
+    ``is_query_inline``: True for path C (we just authored the query
+    ourselves; the inline-view endpoint must execute it transient). False
+    for path B (query is already saved in api.db; the inline view's
+    ``query:`` reference resolves to that saved query and we send
+    ``query_yaml=None``).
+    """
+    return {
+        "view_yaml": view_yaml,
+        "query_yaml": query_yaml if is_query_inline else None,
+        "params": {},
+    }
+
+
+def _fallback_table_view_yaml(*, view_name: str, query_name: str, columns: list[str]) -> str:
+    """Minimal table-view YAML for when text2view fails.
+
+    Lets the UI still render the data through ``ViewContent`` instead of
+    failing the whole turn. Lists every result column so nothing's hidden.
+    """
+    import yaml as _yaml
+    return _yaml.safe_dump({
+        "name": view_name,
+        "type": "table",
+        "query": query_name,
+        "visualization": {"columns": list(columns)},
+    }, sort_keys=False)

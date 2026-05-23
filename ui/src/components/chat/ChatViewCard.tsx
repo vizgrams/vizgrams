@@ -2,21 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * ChatTurnCard — renders one assistant turn (caption + chart + meta).
+ * ChatViewCard — renders one chat-turn response as a View (Epic 20 VG-237).
  *
- * Chart selection follows the backend's chart_type:
- *   bar / line → LineBarChart (existing component, recharts-based)
- *   table      → plain HTML table
- *   kpi        → single big number
- *   scatter    → table fallback for v1 (recharts scatter wiring is a follow-up)
+ * Every chat response is either:
+ *   - ``saved_view``: a reference to an existing saved view → execute by name
+ *   - ``inline_view``: a transient view YAML (+ optional transient query YAML)
+ *                      → execute via the inline-view endpoint
+ *
+ * Either way the actual chart / table / metric / map rendering goes through
+ * the same ``ViewContent`` component the explorer uses. Charts, drilldowns,
+ * formatters, sorts — uniform across the product without chat-specific code.
+ *
+ * Drilldown clicks navigate the user into ``/explore`` so they land on the
+ * saved-view surface where drill stacks work. The chat itself doesn't carry
+ * a drill stack.
  */
 
-import { useState, type ReactNode } from 'react'
-import { AlertCircle, ChevronDown, ChevronUp, Code, FileCode, Wand2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { AlertCircle, ChevronDown, ChevronUp, Code, FileCode, Loader2, Wand2 } from 'lucide-react'
 
-import type { ChatResponse, ChatTraceStep } from '@/api/client'
+import type { ChatResponse, ChatTraceStep, ViewResult } from '@/api/client'
 import { Card } from '@/components/Layout'
-import { LineBarChart } from '@/components/charts/LineBarChart'
+import { ViewContent } from '@/components/view/ViewContent'
+import { useModel } from '@/context/ModelContext'
+import type { DrillFrame } from '@/hooks/useDrillStack'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -25,7 +35,7 @@ interface Props {
 
 type SourceTab = 'query_yaml' | 'view_yaml' | 'sql' | 'trace'
 
-export function ChatTurnCard({ response }: Props) {
+export function ChatViewCard({ response }: Props) {
   const [openTab, setOpenTab] = useState<SourceTab | null>(null)
 
   if (!response.success) {
@@ -35,7 +45,9 @@ export function ChatTurnCard({ response }: Props) {
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
           <div>
             <div className="font-medium">Couldn't answer that</div>
-            <div className="text-xs text-muted-foreground mt-1">{response.error || 'Unknown failure.'}</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              {response.error || 'Unknown failure.'}
+            </div>
           </div>
         </div>
         {response.trace.length > 0 && (
@@ -48,29 +60,114 @@ export function ChatTurnCard({ response }: Props) {
   }
 
   return (
-    <Card className="space-y-3">
-      {response.content && (
-        <p className="text-sm leading-relaxed">{response.content}</p>
-      )}
-
-      <ChartDisplay response={response} />
-
-      {response.truncated && (
-        <p className="text-xs text-muted-foreground">
-          Showing first {response.rows.length} of {response.row_count.toLocaleString()} rows.
-        </p>
-      )}
-
+    <div className="space-y-2">
+      <ChatViewBody response={response} />
       <SourceToggle response={response} openTab={openTab} setOpenTab={setOpenTab} />
-    </Card>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Body: execute the view (saved or inline) and render via ViewContent.
+// ---------------------------------------------------------------------------
+
+function ChatViewBody({ response }: { response: ChatResponse }) {
+  const { api } = useModel()
+  const navigate = useNavigate()
+  const [result, setResult] = useState<ViewResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setLoading(true); setError(null); setResult(null)
+      try {
+        const r = response.saved_view
+          ? await api.executeView(
+              response.saved_view.name, 1000, 0, response.saved_view.params,
+            )
+          : response.inline_view
+          ? await api.executeViewInline(
+              response.inline_view.view_yaml,
+              response.inline_view.query_yaml,
+              response.inline_view.params,
+            )
+          : null
+        if (cancelled) return
+        if (!r) {
+          setError('No view in response')
+          return
+        }
+        setResult(r)
+      } catch (e) {
+        if (!cancelled) setError(String(e))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [api, response.saved_view, response.inline_view])
+
+  // Clicking a drilldown target navigates into the explorer where the
+  // saved-view + drill-stack machinery already exists.
+  const handleNavigate = (frame: DrillFrame) => {
+    if (frame.kind === 'entity-detail') {
+      navigate(`/explore/${encodeURIComponent(frame.entity)}/${encodeURIComponent(frame.id)}`)
+    } else if (frame.kind === 'view') {
+      const qs = new URLSearchParams()
+      Object.entries(frame.params ?? {}).forEach(([k, v]) => qs.set(k, v))
+      navigate(`/explore?view=${encodeURIComponent(frame.name)}&${qs}`)
+    } else if (frame.kind === 'app') {
+      const qs = new URLSearchParams({ app: frame.name })
+      Object.entries(frame.params ?? {}).forEach(([k, v]) => qs.set(k, v))
+      navigate(`/explore?${qs}`)
+    }
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading view…
+        </div>
+      </Card>
+    )
+  }
+  if (error) {
+    return (
+      <Card>
+        <div className="flex items-start gap-2 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            <div className="font-medium">View execution failed</div>
+            <div className="text-xs text-muted-foreground mt-1">{error}</div>
+          </div>
+        </div>
+      </Card>
+    )
+  }
+  if (!result) return null
+
+  const viz = (result.visualization as Record<string, unknown>) || {}
+  const rowDrilldown = (viz.row_drilldown ?? viz.app_drilldown) as Parameters<typeof ViewContent>[0]['rowDrilldown']
+  const params = (response.saved_view?.params || response.inline_view?.params) ?? {}
+
+  return (
+    <ViewContent
+      result={result}
+      rowDrilldown={rowDrilldown}
+      paramValues={params}
+      onNavigate={handleNavigate}
+    />
   )
 }
 
 // ---------------------------------------------------------------------------
 // Source viewer — Query YAML / View YAML / SQL / Tool calls (VG-239).
-// The YAMLs are the canonical artifacts (validated against the same schemas
-// the existing query / view endpoints use). SQL is shown for debugging.
-// Tool calls is the "show your work" trace.
+// Same UX as before, just relocated to live alongside the new card.
 // ---------------------------------------------------------------------------
 
 interface SourceToggleProps {
@@ -83,7 +180,7 @@ interface TabSpec {
   key: SourceTab
   label: string
   available: boolean
-  icon: ReactNode
+  icon: React.ReactNode
 }
 
 function SourceToggle({ response, openTab, setOpenTab }: SourceToggleProps) {
@@ -108,7 +205,7 @@ function SourceToggle({ response, openTab, setOpenTab }: SourceToggleProps) {
   const current = available.find((t) => t.key === openTab)
 
   return (
-    <div className="border-t pt-2">
+    <div className="pt-1">
       <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
         {available.map((t) => (
           <button
@@ -145,12 +242,6 @@ function SourceToggle({ response, openTab, setOpenTab }: SourceToggleProps) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// TraceView — collapsed-by-default tool-call list (VG-239).
-// Each step shows: status icon + tool name + one-line summary.
-// Expanding reveals the raw arguments and result payload.
-// ---------------------------------------------------------------------------
-
 function TraceView({ trace }: { trace: ChatTraceStep[] }) {
   const [expanded, setExpanded] = useState<number | null>(null)
   return (
@@ -173,9 +264,7 @@ function TraceView({ trace }: { trace: ChatTraceStep[] }) {
                 {step.success ? '✓' : '✗'}
               </span>
               <code className="font-mono font-medium shrink-0">{step.name}</code>
-              <span className="text-muted-foreground flex-1 truncate">
-                {step.summary}
-              </span>
+              <span className="text-muted-foreground flex-1 truncate">{step.summary}</span>
               {isOpen
                 ? <ChevronUp className="h-3 w-3 shrink-0" />
                 : <ChevronDown className="h-3 w-3 shrink-0" />}
@@ -205,109 +294,6 @@ function TraceView({ trace }: { trace: ChatTraceStep[] }) {
           </div>
         )
       })}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Chart switch
-// ---------------------------------------------------------------------------
-
-function ChartDisplay({ response }: { response: ChatResponse }) {
-  const { chart_type, columns, rows, x_field, y_field } = response
-
-  if (!rows.length) {
-    return (
-      <div className="text-sm text-muted-foreground italic">No rows returned.</div>
-    )
-  }
-
-  if (chart_type === 'kpi') {
-    return <KpiTile response={response} />
-  }
-
-  if (chart_type === 'bar' || chart_type === 'line') {
-    // Fall back to first non-x column if the LLM didn't pick y_field.
-    const yKey = y_field || columns.find((c) => c !== x_field) || columns[0]
-    const xKey = x_field || columns[0]
-    if (!xKey || !yKey) {
-      return <DataTable response={response} />
-    }
-    return (
-      <LineBarChart
-        chartType={chart_type}
-        xKey={xKey}
-        yKeys={[yKey]}
-        rows={rows}
-        columns={columns}
-        height={280}
-      />
-    )
-  }
-
-  // table / scatter / null → fall back to a plain data table.
-  return <DataTable response={response} />
-}
-
-// ---------------------------------------------------------------------------
-// KPI: pick the first numeric column from the first row.
-// ---------------------------------------------------------------------------
-
-function KpiTile({ response }: { response: ChatResponse }) {
-  const { columns, rows, y_field } = response
-  const idx = y_field
-    ? columns.indexOf(y_field)
-    : columns.findIndex((_, i) => typeof rows[0][i] === 'number')
-  const value = idx >= 0 ? rows[0][idx] : rows[0][0]
-  const label = idx >= 0 ? columns[idx] : columns[0]
-  return (
-    <div className="py-4 text-center">
-      <div className="text-4xl font-semibold tabular-nums">{formatValue(value)}</div>
-      <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wide">{label}</div>
-    </div>
-  )
-}
-
-function formatValue(v: unknown): string {
-  if (v == null) return '—'
-  if (typeof v === 'number') return v.toLocaleString()
-  return String(v)
-}
-
-// ---------------------------------------------------------------------------
-// DataTable: simple HTML table for table chart or fallback.
-// ---------------------------------------------------------------------------
-
-function DataTable({ response }: { response: ChatResponse }) {
-  const { columns, rows } = response
-  const visibleRows = rows.slice(0, 20)
-  return (
-    <div className="overflow-x-auto border rounded">
-      <table className="w-full text-xs">
-        <thead className="bg-muted">
-          <tr>
-            {columns.map((c) => (
-              <th key={c} className="text-left px-3 py-1.5 font-medium">{c}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {visibleRows.map((row, i) => (
-            <tr key={i} className={cn(i % 2 === 1 && 'bg-muted/30')}>
-              {row.map((cell, j) => (
-                <td key={j} className="px-3 py-1.5 tabular-nums">
-                  {formatValue(cell)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length > visibleRows.length && (
-        <div className="text-xs text-muted-foreground px-3 py-1.5 border-t">
-          + {rows.length - visibleRows.length} more rows
-        </div>
-      )}
     </div>
   )
 }

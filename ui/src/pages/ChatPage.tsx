@@ -17,7 +17,7 @@ import { Loader2, Send } from 'lucide-react'
 
 import type { ChatHistoryTurn, ChatResponse, EntitySummary, ViewSummary } from '@/api/client'
 import { Card } from '@/components/Layout'
-import { ChatTurnCard } from '@/components/chat/ChatTurnCard'
+import { ChatViewCard } from '@/components/chat/ChatViewCard'
 import { useModel } from '@/context/ModelContext'
 
 interface AssistantTurn {
@@ -82,11 +82,20 @@ export default function ChatPage() {
   }, [turns, busy])
 
   function buildHistoryForApi(): ChatHistoryTurn[] {
-    return turns.map((t) =>
-      t.role === 'user'
-        ? { role: 'user', content: t.content }
-        : { role: 'assistant', content: t.response.content || '' },
-    )
+    return turns.map((t) => {
+      if (t.role === 'user') {
+        return { role: 'user' as const, content: t.content }
+      }
+      // No caption in the response (VG-237). Synthesise a short
+      // assistant memory so follow-ups ("now break that by team") have
+      // an anchor.
+      const memory = t.response.saved_view
+        ? `(showed saved view: ${t.response.saved_view.name})`
+        : t.response.inline_view
+        ? `(generated a view from your last question)`
+        : `(no view returned)`
+      return { role: 'assistant' as const, content: memory }
+    })
   }
 
   async function handleSend(messageOverride?: string) {
@@ -157,7 +166,7 @@ export default function ChatPage() {
           t.role === 'user' ? (
             <UserBubble key={i} content={t.content} />
           ) : (
-            <ChatTurnCard key={i} response={t.response} />
+            <ChatViewCard key={i} response={t.response} />
           ),
         )}
 
