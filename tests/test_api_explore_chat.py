@@ -23,7 +23,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("VZ_CREATORS", "creator@example.com")
     monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
 
-    model_dir = tmp_path / "iagai"
+    model_dir = tmp_path / "demo"
     model_dir.mkdir()
 
     def _base_dir():
@@ -63,7 +63,7 @@ def _ok_result() -> ChatTurnResult:
 def test_chat_returns_full_response_payload(client):
     with patch("api.routers.explore_chat.service.chat_turn", return_value=_ok_result()) as mock:
         resp = client.post(
-            "/api/v1/model/iagai/explore/chat",
+            "/api/v1/model/demo/explore/chat",
             json={"message": "top PR authors"},
         )
     assert resp.status_code == 200
@@ -88,7 +88,7 @@ def test_chat_returns_full_response_payload(client):
 def test_chat_passes_history_through_to_service(client):
     with patch("api.routers.explore_chat.service.chat_turn", return_value=_ok_result()) as mock:
         client.post(
-            "/api/v1/model/iagai/explore/chat",
+            "/api/v1/model/demo/explore/chat",
             json={
                 "message": "now by team",
                 "history": [
@@ -115,7 +115,7 @@ def test_chat_returns_failure_when_orchestrator_returns_failure(client):
     )
     with patch("api.routers.explore_chat.service.chat_turn", return_value=failed):
         resp = client.post(
-            "/api/v1/model/iagai/explore/chat",
+            "/api/v1/model/demo/explore/chat",
             json={"message": "bad question"},
         )
     assert resp.status_code == 200  # endpoint succeeds; result indicates failure
@@ -130,7 +130,7 @@ def test_chat_returns_503_when_llm_unavailable(client):
         side_effect=RuntimeError("OPENAI_API_KEY is not set"),
     ):
         resp = client.post(
-            "/api/v1/model/iagai/explore/chat",
+            "/api/v1/model/demo/explore/chat",
             json={"message": "x"},
         )
     assert resp.status_code == 503
@@ -139,7 +139,7 @@ def test_chat_returns_503_when_llm_unavailable(client):
 
 def test_chat_rejects_empty_message(client):
     resp = client.post(
-        "/api/v1/model/iagai/explore/chat",
+        "/api/v1/model/demo/explore/chat",
         json={"message": ""},
     )
     assert resp.status_code == 422  # Pydantic validation
@@ -147,7 +147,7 @@ def test_chat_rejects_empty_message(client):
 
 def test_chat_rejects_overlong_message(client):
     resp = client.post(
-        "/api/v1/model/iagai/explore/chat",
+        "/api/v1/model/demo/explore/chat",
         json={"message": "x" * 5000},
     )
     assert resp.status_code == 422
@@ -166,7 +166,7 @@ def test_chat_rejects_non_creators(tmp_path, monkeypatch):
     monkeypatch.setenv("VZ_SYSTEM_ADMINS", "")
     monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
 
-    model_dir = tmp_path / "iagai"
+    model_dir = tmp_path / "demo"
     model_dir.mkdir()
     app.dependency_overrides[get_base_dir] = lambda: tmp_path
     app.dependency_overrides[resolve_model_dir] = lambda model: str(model_dir)  # noqa: ARG005
@@ -175,7 +175,7 @@ def test_chat_rejects_non_creators(tmp_path, monkeypatch):
         try:
             with TestClient(app) as client:
                 resp = client.post(
-                    "/api/v1/model/iagai/explore/chat",
+                    "/api/v1/model/demo/explore/chat",
                     json={"message": "anything"},
                     headers={"X-Auth-Request-Email": "viewer@example.com"},
                 )
