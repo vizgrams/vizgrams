@@ -155,7 +155,7 @@ def execute_inline_view(
         missing = [c for c in declared_cols if c not in result_col_set]
         if missing:
             raise ValueError(
-                f"Inline view references columns not produced by query: "
+                "Inline view references columns not produced by query: "
                 + ", ".join(repr(c) for c in missing)
             )
 
