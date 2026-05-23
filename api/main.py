@@ -133,6 +133,36 @@ async def lifespan(app: FastAPI):
                     "Embeddings indexer wired — provider=%s store=%s.%s",
                     provider.model, store.DATABASE, store.TABLE,
                 )
+
+                # Self-heal stale rows in a background thread so we don't
+                # block startup on OpenAI / CH availability. Runs once per
+                # boot; cheap when nothing is stale (one CH query per model).
+                import threading
+
+                from semantic.llm.embeddings.reconcile import reconcile_all_models
+
+                def _do_reconcile():
+                    try:
+                        report = reconcile_all_models(
+                            models_dir, provider=provider, store=store,
+                        )
+                        if report["total_stale"]:
+                            _startup_logger.info(
+                                "Embeddings reconcile: %d stale rows across %d model(s); "
+                                "%d re-indexed, %d failed.",
+                                report["total_stale"],
+                                sum(1 for m in report["models"].values() if m["stale"]),
+                                report["total_reindexed"],
+                                report["total_failed"],
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        _startup_logger.warning(
+                            "Embeddings reconcile failed (non-fatal): %s", exc,
+                        )
+
+                threading.Thread(
+                    target=_do_reconcile, name="embed-reconcile", daemon=True,
+                ).start()
     except Exception as exc:
         _startup_logger.warning("Embeddings setup failed (non-fatal): %s", exc)
 
