@@ -47,6 +47,16 @@ def register(
     )
 
 
+def is_registered(name: str) -> bool:
+    """Whether ``name`` has at least one dialect implementation registered.
+
+    Used by the query validator (semantic/query.py) to accept any function the
+    engine can actually compile — the validator used to maintain its own
+    allow-list which drifted out of sync (VG-044).
+    """
+    return name.lower() in _REGISTRY
+
+
 def render_function(
     name: str,
     args: list[str],
