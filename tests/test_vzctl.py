@@ -225,8 +225,8 @@ def test_sync_result_categorises_actions(tmp_path):
 
 
 def test_api_client_constructs_urls():
-    client = ApiClient("https://vizgrams.com/", "vzsa_secret", "iagai")
-    assert client._url("/entity/Widget") == "https://vizgrams.com/api/v1/model/iagai/entity/Widget"
+    client = ApiClient("https://vizgrams.com/", "vzsa_secret", "demo")
+    assert client._url("/entity/Widget") == "https://vizgrams.com/api/v1/model/demo/entity/Widget"
     assert client.session.headers["X-API-Key"] == "vzsa_secret"
 
 

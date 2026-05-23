@@ -465,6 +465,6 @@ def test_audit_entry_detail_accepts_string():
 
 def test_audit_entry_detail_accepts_dict():
     from api.schemas.model import AuditEntry
-    d = {"consistent_at": "2026-01-01T00:00:00Z", "clickhouse_databases": ["iagai"]}
+    d = {"consistent_at": "2026-01-01T00:00:00Z", "clickhouse_databases": ["demo"]}
     e = AuditEntry(timestamp="2026-01-01T00:00:00Z", event="backup", actor="system", detail=d)
     assert e.detail == d
