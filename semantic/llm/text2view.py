@@ -8,9 +8,11 @@ type and column-to-axis mapping, plus a one-sentence caption. Single LLM
 call, no retry — the worst case is a bad chart, which is recoverable by
 the user clicking "edit view" rather than the LLM looping.
 
-The tool ``present_view`` is **forced** (``tool_choice`` pinned to it) so
-the LLM emits structured output every time. Cheap and reliable — pattern
-borrowed from the OpenAI function-calling cookbook.
+The ``present_view`` tool is **forced** (``tool_choice`` pinned to it) so
+the LLM emits structured output every time. The tool itself lives in
+``semantic/llm/tools/present_view.py`` and is pulled from the
+``ToolRegistry`` at call time — same registration powers any external
+MCP server (Epic 24 / later).
 
 Reusable on its own: a "suggest a view for this saved query" affordance
 (post-launch) calls this with the saved query's result without going
@@ -26,6 +28,7 @@ from typing import Literal
 import yaml
 
 from semantic.llm.provider import LLMClient
+from semantic.llm.tools.registry import ToolContext, ToolRegistry  # noqa: F401 — ToolRegistry used in signature
 
 ChartType = Literal["bar", "line", "table", "scatter", "kpi"]
 
@@ -41,59 +44,6 @@ class Text2ViewResult:
     caption: str = ""
     error: str | None = None
     raw_args: dict = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Forced tool — single structured output
-# ---------------------------------------------------------------------------
-
-
-PRESENT_VIEW_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "present_view",
-        "description": (
-            "Specify the chart spec and caption for the given query result. "
-            "Call exactly once."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "chart_type": {
-                    "type": "string",
-                    "enum": ["bar", "line", "table", "scatter", "kpi"],
-                    "description": (
-                        "bar: categorical x + single numeric y (top-N, group counts). "
-                        "line: ordered x (time, sequence) + numeric y. "
-                        "scatter: two numeric measures, one row per point. "
-                        "kpi: single scalar result (one row, one number). "
-                        "table: heterogeneous columns or many columns where a chart wouldn't read well."
-                    ),
-                },
-                "x_field": {
-                    "type": "string",
-                    "description": "Column name from the result for the x-axis (or category). Omit for kpi.",
-                },
-                "y_field": {
-                    "type": "string",
-                    "description": "Column name from the result for the y-axis (or value).",
-                },
-                "color_field": {
-                    "type": "string",
-                    "description": "Optional column for series / colour split.",
-                },
-                "caption": {
-                    "type": "string",
-                    "description": (
-                        "1-2 sentence insight. Cite specific numbers from the rows. "
-                        "Do not start with 'This chart' or 'The data shows'."
-                    ),
-                },
-            },
-            "required": ["chart_type", "caption"],
-        },
-    },
-}
 
 
 # ---------------------------------------------------------------------------
@@ -187,19 +137,29 @@ def text2view_yaml(
     *,
     columns: list[str],
     rows: list[list],
-    user_intent: str | None = None,
+    registry: ToolRegistry,
     llm_client: LLMClient,
+    user_intent: str | None = None,
     llm_model: str | None = None,
     view_name: str = "text2view",
     query_name: str = "text2query",
     rows_to_llm: int = 20,
+    tool_name: str = "present_view",
 ) -> Text2ViewResult:
     """Pick a chart spec + caption for a query result.
 
-    Always a single LLM call. The tool is forced — the LLM cannot return
-    plain text. If the call somehow fails to produce a valid tool call,
-    we surface that as ``success=False`` rather than raising.
+    Always a single LLM call. The ``present_view`` tool is forced via
+    ``tool_choice`` so the LLM cannot return plain text. Pulls the tool
+    from ``registry`` — the same registration the chat orchestrator
+    uses; same registration any future MCP server would expose.
     """
+    tool = registry.get(tool_name)
+    if tool is None:
+        return Text2ViewResult(
+            success=False,
+            error=f"Tool {tool_name!r} not registered",
+        )
+
     sample_rows = [list(r) for r in rows[:rows_to_llm]]
     user_msg = {
         "intent": user_intent,
@@ -213,10 +173,11 @@ def text2view_yaml(
         {"role": "user", "content": json.dumps(user_msg, default=str)},
     ]
 
+    # Render only the present_view tool; the LLM has nothing else to call.
+    openai_tools = registry.to_openai_tools(names=[tool_name])
+
     resp = llm_client.complete(
-        messages=messages,
-        tools=[PRESENT_VIEW_TOOL],
-        model=llm_model,
+        messages=messages, tools=openai_tools, model=llm_model,
     )
 
     if not resp.tool_calls:
@@ -226,38 +187,42 @@ def text2view_yaml(
         )
 
     tc = resp.tool_calls[0]
-    if tc.name != "present_view":
+    if tc.name != tool_name:
         return Text2ViewResult(
             success=False,
             error=f"LLM called unexpected tool {tc.name!r}",
         )
 
-    args = tc.arguments
-    chart_type = args.get("chart_type")
-    caption = args.get("caption", "")
-    if not chart_type or not caption:
+    # Dispatch via the registry — same as text2query — so the handler's
+    # validation runs (missing chart_type / caption surface as success=False).
+    # present_view doesn't read from ctx, so the default is fine.
+    result = registry.dispatch(tc.name, tc.arguments, ToolContext())
+
+    if not result.success:
         return Text2ViewResult(
             success=False,
-            error="present_view missing required chart_type or caption",
-            raw_args=args,
+            error=result.payload.get("error") or "present_view returned failure",
+            raw_args=tc.arguments,
         )
 
+    chart_type = result.payload["chart_type"]
+    caption = result.payload["caption"]
     return Text2ViewResult(
         success=True,
         chart_type=chart_type,
-        x_field=args.get("x_field"),
-        y_field=args.get("y_field"),
-        color_field=args.get("color_field"),
+        x_field=result.payload.get("x_field"),
+        y_field=result.payload.get("y_field"),
+        color_field=result.payload.get("color_field"),
         caption=caption,
         yaml=view_yaml(
             name=view_name,
             query_name=query_name,
             chart_type=chart_type,
-            x_field=args.get("x_field"),
-            y_field=args.get("y_field"),
-            color_field=args.get("color_field"),
+            x_field=result.payload.get("x_field"),
+            y_field=result.payload.get("y_field"),
+            color_field=result.payload.get("color_field"),
             caption=caption,
             columns=columns,
         ),
-        raw_args=args,
+        raw_args=tc.arguments,
     )

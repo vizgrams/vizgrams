@@ -12,7 +12,7 @@ from semantic.llm.text2view import text2view_yaml, view_yaml
 from tests.llm.conftest import response_text, response_with_tool
 
 
-def test_returns_chart_spec_from_present_view_call(fake_llm):
+def test_returns_chart_spec_from_present_view_call(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
         "chart_type": "bar",
         "x_field": "author",
@@ -24,7 +24,7 @@ def test_returns_chart_spec_from_present_view_call(fake_llm):
         columns=["author", "pr_count"],
         rows=[["dependabot", 7444], ["mdwiag", 829]],
         user_intent="top PR authors",
-        llm_client=fake_llm,
+        llm_client=fake_llm, registry=default_registry,
     )
 
     assert result.success
@@ -35,7 +35,7 @@ def test_returns_chart_spec_from_present_view_call(fake_llm):
     assert result.yaml is not None
 
 
-def test_kpi_chart_emits_type_metric(fake_llm):
+def test_kpi_chart_emits_type_metric(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
         "chart_type": "kpi",
         "y_field": "n",
@@ -44,7 +44,7 @@ def test_kpi_chart_emits_type_metric(fake_llm):
 
     result = text2view_yaml(
         columns=["n"], rows=[[19999]],
-        llm_client=fake_llm,
+        llm_client=fake_llm, registry=default_registry,
     )
 
     assert result.success
@@ -55,7 +55,7 @@ def test_kpi_chart_emits_type_metric(fake_llm):
     assert body["visualization"] == {}
 
 
-def test_user_intent_and_rows_reach_the_llm(fake_llm):
+def test_user_intent_and_rows_reach_the_llm(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
         "chart_type": "line",
         "x_field": "month",
@@ -67,7 +67,7 @@ def test_user_intent_and_rows_reach_the_llm(fake_llm):
         columns=["month", "n"],
         rows=[["2025-01", 100], ["2025-02", 200]],
         user_intent="monthly throughput",
-        llm_client=fake_llm,
+        llm_client=fake_llm, registry=default_registry,
     )
 
     user_payload = fake_llm.received[0]["messages"][-1]["content"]
@@ -76,7 +76,7 @@ def test_user_intent_and_rows_reach_the_llm(fake_llm):
     assert "month" in user_payload
 
 
-def test_truncates_rows_sent_to_llm(fake_llm):
+def test_truncates_rows_sent_to_llm(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
         "chart_type": "table",
         "caption": "...",
@@ -85,7 +85,7 @@ def test_truncates_rows_sent_to_llm(fake_llm):
     rows = [[i, f"row_{i}"] for i in range(50)]
     text2view_yaml(
         columns=["i", "label"], rows=rows,
-        llm_client=fake_llm, rows_to_llm=10,
+        llm_client=fake_llm, registry=default_registry, rows_to_llm=10,
     )
 
     payload = fake_llm.received[0]["messages"][-1]["content"]
@@ -94,12 +94,12 @@ def test_truncates_rows_sent_to_llm(fake_llm):
     assert "row_count_total" in payload
 
 
-def test_returns_failure_when_llm_does_not_call_tool(fake_llm):
+def test_returns_failure_when_llm_does_not_call_tool(fake_llm, default_registry):
     fake_llm.responses.append(response_text("I cannot generate a chart for this"))
 
     result = text2view_yaml(
         columns=["n"], rows=[[1]],
-        llm_client=fake_llm,
+        llm_client=fake_llm, registry=default_registry,
     )
 
     assert not result.success
@@ -107,14 +107,14 @@ def test_returns_failure_when_llm_does_not_call_tool(fake_llm):
     assert "present_view" in result.error
 
 
-def test_returns_failure_when_chart_type_missing(fake_llm):
+def test_returns_failure_when_chart_type_missing(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
         "caption": "no chart type provided",
     }))
 
     result = text2view_yaml(
         columns=["n"], rows=[[1]],
-        llm_client=fake_llm,
+        llm_client=fake_llm, registry=default_registry,
     )
 
     assert not result.success
@@ -122,7 +122,7 @@ def test_returns_failure_when_chart_type_missing(fake_llm):
     assert result.raw_args == {"caption": "no chart type provided"}
 
 
-def test_returns_failure_when_wrong_tool_called(fake_llm):
+def test_returns_failure_when_wrong_tool_called(fake_llm, default_registry):
     fake_llm.responses.append(LLMResponse(
         content=None,
         tool_calls=[
@@ -134,7 +134,7 @@ def test_returns_failure_when_wrong_tool_called(fake_llm):
 
     result = text2view_yaml(
         columns=["n"], rows=[[1]],
-        llm_client=fake_llm,
+        llm_client=fake_llm, registry=default_registry,
     )
 
     assert not result.success
