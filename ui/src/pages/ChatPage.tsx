@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Send } from 'lucide-react'
 
-import type { ChatHistoryTurn, ChatResponse } from '@/api/client'
+import type { ChatHistoryTurn, ChatResponse, EntitySummary, ViewSummary } from '@/api/client'
 import { Card } from '@/components/Layout'
 import { ChatTurnCard } from '@/components/chat/ChatTurnCard'
 import { useModel } from '@/context/ModelContext'
@@ -38,6 +38,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [globalError, setGlobalError] = useState<string | null>(null)
+  const [suggestions, setSuggestions] = useState<string[]>([])
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
   // Reset the conversation when the model changes — a chat about one
@@ -47,6 +48,32 @@ export default function ChatPage() {
     setInput('')
     setGlobalError(null)
   }, [model])
+
+  // Build empty-state suggestion prompts from the model's saved views.
+  // Falls back to entity-based prompts when the model has no views yet.
+  // Per-model so the chips read naturally on openflights / crypto / etc.
+  // instead of hard-coded PR-throughput examples.
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const views = await api.listViews()
+        if (cancelled) return
+        if (views.length > 0) {
+          setSuggestions(viewsToPrompts(views))
+          return
+        }
+        const entities = await api.listEntities()
+        if (cancelled) return
+        setSuggestions(entitiesToPrompts(entities))
+      } catch {
+        // Suggestions are a nice-to-have; failures shouldn't break the page.
+        if (!cancelled) setSuggestions([])
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [model, api])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -62,8 +89,8 @@ export default function ChatPage() {
     )
   }
 
-  async function handleSend() {
-    const message = input.trim()
+  async function handleSend(messageOverride?: string) {
+    const message = (messageOverride ?? input).trim()
     if (!message || busy) return
     setGlobalError(null)
     setBusy(true)
@@ -119,7 +146,11 @@ export default function ChatPage() {
       {/* Message stream */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
         {turns.length === 0 && !busy && (
-          <EmptyState model={model} />
+          <EmptyState
+            model={model}
+            suggestions={suggestions}
+            onSelect={(prompt) => handleSend(prompt)}
+          />
         )}
 
         {turns.map((t, i) =>
@@ -164,7 +195,7 @@ export default function ChatPage() {
           />
           <button
             type="button"
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={busy || !input.trim()}
             className="rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium disabled:opacity-50 hover:bg-primary/90"
             aria-label="Send"
@@ -191,16 +222,89 @@ function UserBubble({ content }: { content: string }) {
   )
 }
 
-function EmptyState({ model }: { model: string }) {
+interface EmptyStateProps {
+  model: string
+  suggestions: string[]
+  onSelect: (prompt: string) => void
+}
+
+function EmptyState({ model, suggestions, onSelect }: EmptyStateProps) {
   return (
-    <div className="max-w-2xl mx-auto py-12 text-center space-y-3">
-      <p className="text-base font-medium">Ask anything about the <code className="text-primary">{model}</code> data.</p>
-      <p className="text-sm text-muted-foreground">Try:</p>
-      <ul className="text-sm text-muted-foreground space-y-1.5">
-        <li>"How many pull requests are in the system?"</li>
-        <li>"Show me the top 10 PR authors by count"</li>
-        <li>"Throughput per month over the last year"</li>
-      </ul>
+    <div className="max-w-2xl mx-auto py-12 text-center space-y-4">
+      <p className="text-base font-medium">
+        Ask anything about the <code className="text-primary">{model}</code> data.
+      </p>
+      {suggestions.length > 0 && (
+        <>
+          <p className="text-sm text-muted-foreground">Try:</p>
+          <div className="flex flex-wrap gap-2 justify-center">
+            {suggestions.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => onSelect(prompt)}
+                className="text-sm px-3 py-1.5 rounded-full border bg-card hover:bg-muted/50 hover:border-primary/40 transition-colors"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
+}
+
+// ---------------------------------------------------------------------------
+// Suggestion derivation — turn the model's catalog into natural prompts
+//
+// Views are preferred (they're user-facing and well-named). Falls back to
+// entities when the model has none yet. The prompts read as if a user
+// typed them, so clicking a chip behaves indistinguishably from typing.
+// ---------------------------------------------------------------------------
+
+const SUGGESTION_CAP = 5
+
+function viewsToPrompts(views: ViewSummary[]): string[] {
+  return views
+    .slice(0, SUGGESTION_CAP)
+    .map((v) => `Show me ${snakeToWords(v.name)}`)
+}
+
+function entitiesToPrompts(entities: EntitySummary[]): string[] {
+  const out: string[] = []
+  if (entities[0]) {
+    out.push(`How many ${pluraliseLastWord(pascalToWords(entities[0].name))} are there?`)
+  }
+  if (entities[1]) {
+    out.push(`Show me top ${pluraliseLastWord(pascalToWords(entities[1].name))} by count`)
+  }
+  if (entities[2]) {
+    out.push(`Tell me about ${pascalToWords(entities[2].name)}`)
+  }
+  return out
+}
+
+function snakeToWords(s: string): string {
+  return s.replace(/_/g, ' ').toLowerCase()
+}
+
+function pascalToWords(s: string): string {
+  // PullRequest → "pull request"; DORAMetric → "dora metric"; URL → "url"
+  return s
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase()
+}
+
+function pluraliseLastWord(phrase: string): string {
+  const words = phrase.split(/\s+/)
+  if (words.length === 0) return phrase
+  const last = words[words.length - 1]
+  if (last.endsWith('y') && !/[aeiou]y$/.test(last)) {
+    words[words.length - 1] = last.slice(0, -1) + 'ies'
+  } else if (!last.endsWith('s')) {
+    words[words.length - 1] = last + 's'
+  }
+  return words.join(' ')
 }
