@@ -13,6 +13,8 @@ from semantic.yaml_adapter import YAMLAdapter
 
 def list_features(model_dir: Path, entity_name: str) -> list[dict]:
     features_dir = model_dir / "features"
+    from api.services.certification_service import list_cert_payloads
+    certs = list_cert_payloads(model_dir, "feature")
     result = []
     for fd in YAMLAdapter.load_features(features_dir):
         if fd.entity_type != entity_name:
@@ -22,6 +24,7 @@ def list_features(model_dir: Path, entity_name: str) -> list[dict]:
             "name": feat_name,
             "entity": entity_name,
             "feature_type": getattr(fd, "feature_type", "raw_sql"),
+            **certs.get(fd.feature_id, _cert_default()),
         }
         if hasattr(fd, "description") and fd.description:
             item["description"] = fd.description
@@ -31,6 +34,7 @@ def list_features(model_dir: Path, entity_name: str) -> list[dict]:
 
 def get_feature(model_dir: Path, entity_name: str, feature_name: str) -> dict:
     features_dir = model_dir / "features"
+    from api.services.certification_service import get_cert_payload
 
     for fd in YAMLAdapter.load_features(features_dir):
         if fd.entity_type != entity_name:
@@ -43,6 +47,7 @@ def get_feature(model_dir: Path, entity_name: str, feature_name: str) -> dict:
             "name": feature_name,
             "entity": entity_name,
             "feature_type": feature_type,
+            **get_cert_payload(model_dir, "feature", fd.feature_id),
         }
 
         if hasattr(fd, "description") and fd.description:
@@ -59,8 +64,19 @@ def get_feature(model_dir: Path, entity_name: str, feature_name: str) -> dict:
     raise KeyError(f"Feature '{feature_name}' not found for entity '{entity_name}'.")
 
 
+def _cert_default() -> dict:
+    return {
+        "is_certified": False,
+        "certified_by": None,
+        "certified_by_display": None,
+        "certified_at": None,
+    }
+
+
 def list_all_features(model_dir: Path) -> list[dict]:
     """List all features across every entity."""
+    from api.services.certification_service import list_cert_payloads
+    certs = list_cert_payloads(model_dir, "feature")
     result = []
     for name in metadata_db.list_artifact_names(model_dir, "feature"):
         content = metadata_db.get_current_content(model_dir, "feature", name)
@@ -76,6 +92,7 @@ def list_all_features(model_dir: Path) -> list[dict]:
             "feature_type": raw.get("feature_type", "raw_sql"),
             "expr": raw.get("expr", raw.get("raw_sql", "")),
             "raw_yaml": content,
+            **certs.get(raw["feature_id"], _cert_default()),
         }
         if raw.get("description"):
             item["description"] = raw["description"]
