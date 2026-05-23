@@ -10,7 +10,13 @@ import {
 import type { QueryDetail, QueryResult, QuerySummary, ValidationResult, EntityDetail, EntitySummary, ExprMode } from '@/api/client'
 import { useApi } from '@/hooks/useApi'
 import { useModel } from '@/context/ModelContext'
+import { useRole } from '@/context/RoleContext'
 import { Card, Spinner, ErrorMessage } from '@/components/Layout'
+import {
+  LibraryFilter,
+  filterByLibrary,
+  type LibraryFilterValue,
+} from '@/components/library/LibraryFilter'
 import { YamlEditor } from '@/components/YamlEditor'
 import type { YamlEditorProps } from '@/components/YamlEditor'
 import type { EditMode } from '@/pages/explore/EditShell'
@@ -739,6 +745,7 @@ function QueryForm({
 
 export function QueriesPage() {
   const { api, model } = useModel()
+  const { userId } = useRole()
 
   const [selected, setSelected] = useState<string | null>(null)
   const [isNewMode, setIsNewMode] = useState(false)
@@ -757,6 +764,7 @@ export function QueriesPage() {
   const [entityDetails, setEntityDetails] = useState<Record<string, EntityDetail>>({})
   const [search, setSearch] = useState('')
   const [queryRefresh, setQueryRefresh] = useState(0)
+  const [libFilter, setLibFilter] = useState<LibraryFilterValue>('certified')
 
   const queriesState = useApi(() => api.listQueries(), [model, queryRefresh])
   const entitiesState = useApi(() => api.listEntities(), [model])
@@ -901,8 +909,10 @@ export function QueriesPage() {
     setDraft(next)
   }
 
-  const queries = (queriesState.status === 'ok' ? (queriesState.data as QuerySummary[]) : [])
+  const allQueries = queriesState.status === 'ok' ? (queriesState.data as QuerySummary[]) : []
+  const searchFiltered = allQueries
     .filter(q => !search || q.name.toLowerCase().includes(search.toLowerCase()))
+  const queries = filterByLibrary(searchFiltered, libFilter, userId)
   const entityNames = entitiesState.status === 'ok' ? (entitiesState.data as EntitySummary[]).map(e => e.name) : []
 
   return (
@@ -915,9 +925,16 @@ export function QueriesPage() {
             <Plus className="h-3.5 w-3.5" /> New
           </button>
         </div>
-        <div className="px-3 py-2 border-b shrink-0">
+        <div className="px-3 py-2 border-b shrink-0 space-y-2">
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
             className="w-full rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+          <LibraryFilter
+            value={libFilter}
+            onChange={setLibFilter}
+            currentUserId={userId}
+            matchCount={queries.length}
+            totalCount={allQueries.length}
+          />
         </div>
         <div className="flex-1 overflow-y-auto py-1">
           {queriesState.status === 'loading' && <div className="px-3 py-4"><Spinner /></div>}

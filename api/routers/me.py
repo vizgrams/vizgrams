@@ -3,15 +3,16 @@
 
 import os
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from api.dependencies import optional_user
 from core.rbac import is_creator, is_system_admin
 
 router = APIRouter(prefix="/me", tags=["auth"])
 
 
 @router.get("")
-def get_me(request: Request):
+def get_me(request: Request, user_id: str | None = Depends(optional_user)):
     """Return the identity and system role of the current user.
 
     In auth mode the ForwardAuth middleware sets X-Auth-Request-Email and
@@ -39,6 +40,11 @@ def get_me(request: Request):
     # of all devices". Empty in local dev — cookie-only sign-out is used instead.
     hard_logout_url = os.environ.get("VZ_HARD_LOGOUT_URL", "")
     return {
+        # VG-260: surface the user's internal UUID so the UI can filter the
+        # library to "things I own" (matching against artifact.created_by).
+        # Null when unauthenticated; the filter degrades to "no matches" rather
+        # than showing other people's work.
+        "user_id": user_id,
         "email": email,
         "display_name": display_name,
         "provider": provider,

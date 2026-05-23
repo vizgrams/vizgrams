@@ -172,7 +172,20 @@ export interface MapperSummary {
   raw_yaml: string | null
 }
 
-export interface FeatureSummary {
+export interface LibraryFields {
+  // VG-258: certification surface
+  is_certified?: boolean
+  certified_by?: string | null            // user UUID
+  certified_by_display?: string | null
+  certified_at?: string | null
+  // VG-252: ownership surface
+  created_by?: string | null              // user UUID
+  created_by_display?: string | null
+  created_via?: 'editor' | 'chat' | 'sync' | 'system' | null
+  created_at?: string | null
+}
+
+export interface FeatureSummary extends LibraryFields {
   feature_id: string | null
   name: string
   entity: string
@@ -444,7 +457,7 @@ export function makeApi(model: string) {
   }
 }
 
-export interface ViewSummary {
+export interface ViewSummary extends LibraryFields {
   name: string
   type: string
   query: string
@@ -539,7 +552,7 @@ export interface ChatResponse {
   sql: string | null
 }
 
-export interface QuerySummary {
+export interface QuerySummary extends LibraryFields {
   name: string
   root: string | null
   measure_count: number
@@ -644,6 +657,7 @@ export const updateModelConfig = (name: string, data: { tools: Record<string, Re
   put<ModelConfig>(`/api/v1/model/${name}/config`, data)
 export type PlatformRole = 'admin' | 'creator' | 'viewer'
 export type MeResponse = {
+  user_id: string | null                 // VG-260: UUID for "things I own" filter
   email: string | null
   display_name: string | null
   provider: string

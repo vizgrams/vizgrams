@@ -4,6 +4,12 @@
 import { useState } from 'react'
 import { useApi } from '@/hooks/useApi'
 import { useModel } from '@/context/ModelContext'
+import { useRole } from '@/context/RoleContext'
+import {
+  LibraryFilter,
+  filterByLibrary,
+  type LibraryFilterValue,
+} from '@/components/library/LibraryFilter'
 
 import { ExpressionEditor } from '@/components/ExpressionEditor'
 import { YamlEditor } from '@/components/YamlEditor'
@@ -135,10 +141,12 @@ function DetailPanel({ draft, isNew, onChange }: {
 
 export function FeaturesPage() {
   const { api, model } = useModel()
+  const { userId } = useRole()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<FeatureDraft | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [filterEntity, setFilterEntity] = useState<string>('all')
+  const [libFilter, setLibFilter] = useState<LibraryFilterValue>('certified')
   const [refreshKey, setRefreshKey] = useState(0)
   const [yamlContent, setYamlContent] = useState('')
   const [savedYaml, setSavedYaml] = useState('')
@@ -162,7 +170,8 @@ export function FeaturesPage() {
   )
   const entitiesState = useApi(() => api.listEntities(), [model])
 
-  const features: FeatureSummary[] = allFeaturesState.status === 'ok' ? allFeaturesState.data : []
+  const allFeatures: FeatureSummary[] = allFeaturesState.status === 'ok' ? allFeaturesState.data : []
+  const features = filterByLibrary(allFeatures, libFilter, userId)
   const entities = entitiesState.status === 'ok' ? entitiesState.data : []
 
   const grouped = features.reduce<Record<string, FeatureSummary[]>>((acc, f) => {
@@ -288,7 +297,7 @@ export function FeaturesPage() {
           </button>
         </div>
 
-        <div className="px-3 py-2 border-b">
+        <div className="px-3 py-2 border-b space-y-2">
           <select
             className="w-full text-xs border border-border rounded px-2 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
             value={filterEntity}
@@ -297,6 +306,13 @@ export function FeaturesPage() {
             <option value="all">All entities</option>
             {entities.map((e) => <option key={e.name} value={e.name}>{e.name}</option>)}
           </select>
+          <LibraryFilter
+            value={libFilter}
+            onChange={setLibFilter}
+            currentUserId={userId}
+            matchCount={features.length}
+            totalCount={allFeatures.length}
+          />
         </div>
 
         <div className="flex-1 overflow-y-auto py-1">
