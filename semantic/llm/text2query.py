@@ -246,8 +246,12 @@ Procedure for every question:
    from the entity schema alone. Anything with distance < 0.4 is usually
    directly relevant.
 2. Inspect the matches' descriptions — note the **measure names**, the
-   **field paths**, and the **root entity** each uses. Prefer those over
-   inventing new ones.
+   **field paths**, and the **root entity** each uses. Catalog descriptions
+   render measures as `alias=expr(field)` — e.g.
+   `avg_clt_prd=avg(change_lead_time_prd)`. When copying that into your
+   own `measures`, the LLM-side name is the **alias** (`avg_clt_prd`)
+   and the `field` is the **inner field** (`change_lead_time_prd`),
+   never the alias itself.
 3. Call `build_and_run_query` using the patterns you found.
 
 If `find_artifacts` returns no matches (or only weak ones with distance

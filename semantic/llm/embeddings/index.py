@@ -79,6 +79,36 @@ def _measure_names(body: dict) -> list[str]:
     return names
 
 
+def _measure_descriptors(body: dict) -> list[str]:
+    """Extract ``alias=expr`` descriptors for each measure in a query YAML body.
+
+    The bare alias isn't enough for an LLM consumer: when copying a
+    measure from a catalog match, it needs to know the underlying field
+    (which is in the ``expr``, not the alias). Renders as
+    ``avg_clt_prd=avg(change_lead_time_prd)`` so the LLM can lift both
+    the alias and the field cleanly.
+    """
+    raw = body.get("measures")
+    out: list[str] = []
+
+    def _render(alias: str, definition) -> str:
+        if isinstance(definition, dict):
+            expr = definition.get("expr")
+            if expr:
+                return f"{alias}={expr}"
+        return str(alias)
+
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                for alias, definition in item.items():
+                    out.append(_render(str(alias), definition))
+    elif isinstance(raw, dict):
+        for alias, definition in raw.items():
+            out.append(_render(str(alias), definition))
+    return out
+
+
 def _entity_attr_names(body: dict) -> list[str]:
     """Pull key attribute names from an entity YAML body."""
     out: list[str] = []
@@ -95,7 +125,7 @@ def _query_text(name: str, body: dict) -> str:
         parts.append(str(d))
     if root := (body.get("root") or body.get("entity")):
         parts.append(f"root entity {root}")
-    if measures := _measure_names(body):
+    if measures := _measure_descriptors(body):
         parts.append(f"measures: {', '.join(measures)}")
     where = body.get("where")
     if isinstance(where, list) and where:
