@@ -67,7 +67,7 @@ def test_build_querydef_time_bucket_via_format():
 
 
 def test_returns_success_after_one_successful_tool_call(
-    fake_llm, fake_executor, schema_demo_tiny,
+    fake_llm, default_registry, query_ctx, fake_executor, schema_demo_tiny,
 ):
     fake_llm.responses.append(response_with_tool("build_and_run_query", {
         "root_entity": "PullRequest",
@@ -85,7 +85,7 @@ def test_returns_success_after_one_successful_tool_call(
         prompt="How many PRs are there?",
         model_name="demo",
         schema_context=schema_demo_tiny,
-        executor=fake_executor,
+        registry=default_registry, ctx=query_ctx,
         llm_client=fake_llm,
     )
 
@@ -100,7 +100,7 @@ def test_returns_success_after_one_successful_tool_call(
     assert len(result.tool_calls) == 1
 
 
-def test_yaml_round_trips_back_through_parser(fake_llm, fake_executor, schema_demo_tiny):
+def test_yaml_round_trips_back_through_parser(fake_llm, default_registry, query_ctx, fake_executor, schema_demo_tiny):
     fake_llm.responses.append(response_with_tool("build_and_run_query", {
         "root_entity": "PullRequest",
         "group_by": [{"field": "author"}],
@@ -115,7 +115,7 @@ def test_yaml_round_trips_back_through_parser(fake_llm, fake_executor, schema_de
     result = text2query_yaml(
         prompt="top authors", model_name="demo",
         schema_context=schema_demo_tiny,
-        executor=fake_executor, llm_client=fake_llm,
+        registry=default_registry, ctx=query_ctx, llm_client=fake_llm,
     )
 
     # YAML must be parseable by the existing parse_query_dict pipeline
@@ -133,7 +133,7 @@ def test_yaml_round_trips_back_through_parser(fake_llm, fake_executor, schema_de
 
 
 def test_retries_after_executor_returns_error(
-    fake_llm, fake_executor, schema_demo_tiny,
+    fake_llm, default_registry, query_ctx, fake_executor, schema_demo_tiny,
 ):
     # First attempt — wrong relation name; executor reports failure.
     fake_llm.responses.append(response_with_tool("build_and_run_query", {
@@ -159,7 +159,7 @@ def test_retries_after_executor_returns_error(
     result = text2query_yaml(
         prompt="PRs by team", model_name="demo",
         schema_context=schema_demo_tiny,
-        executor=fake_executor, llm_client=fake_llm,
+        registry=default_registry, ctx=query_ctx, llm_client=fake_llm,
     )
 
     assert result.success
@@ -178,7 +178,7 @@ def test_retries_after_executor_returns_error(
 
 
 def test_returns_failure_when_max_iter_exhausted(
-    fake_llm, fake_executor, schema_demo_tiny,
+    fake_llm, default_registry, query_ctx, fake_executor, schema_demo_tiny,
 ):
     for i in range(3):
         fake_llm.responses.append(response_with_tool("build_and_run_query", {
@@ -191,7 +191,7 @@ def test_returns_failure_when_max_iter_exhausted(
     result = text2query_yaml(
         prompt="something", model_name="demo",
         schema_context=schema_demo_tiny,
-        executor=fake_executor, llm_client=fake_llm,
+        registry=default_registry, ctx=query_ctx, llm_client=fake_llm,
         max_iter=3,
     )
 
@@ -202,14 +202,14 @@ def test_returns_failure_when_max_iter_exhausted(
 
 
 def test_returns_failure_when_llm_stops_without_tool_call(
-    fake_llm, fake_executor, schema_demo_tiny,
+    fake_llm, default_registry, query_ctx, fake_executor, schema_demo_tiny,
 ):
     fake_llm.responses.append(response_text("I'm not sure how to answer that."))
 
     result = text2query_yaml(
         prompt="huh", model_name="demo",
         schema_context=schema_demo_tiny,
-        executor=fake_executor, llm_client=fake_llm,
+        registry=default_registry, ctx=query_ctx, llm_client=fake_llm,
     )
 
     assert not result.success
@@ -222,7 +222,7 @@ def test_returns_failure_when_llm_stops_without_tool_call(
 # ---------------------------------------------------------------------------
 
 
-def test_history_is_passed_to_llm(fake_llm, fake_executor, schema_demo_tiny):
+def test_history_is_passed_to_llm(fake_llm, default_registry, query_ctx, fake_executor, schema_demo_tiny):
     history = [
         {"role": "user", "content": "Top 10 PR authors"},
         {"role": "assistant", "content": "I returned the top 10 authors."},
@@ -239,7 +239,7 @@ def test_history_is_passed_to_llm(fake_llm, fake_executor, schema_demo_tiny):
     text2query_yaml(
         prompt="now by team", model_name="demo",
         schema_context=schema_demo_tiny,
-        executor=fake_executor, llm_client=fake_llm,
+        registry=default_registry, ctx=query_ctx, llm_client=fake_llm,
         history=history,
     )
 
@@ -252,7 +252,7 @@ def test_history_is_passed_to_llm(fake_llm, fake_executor, schema_demo_tiny):
     assert sent[3]["content"] == "now by team"
 
 
-def test_unknown_tool_name_is_recoverable(fake_llm, fake_executor, schema_demo_tiny):
+def test_unknown_tool_name_is_recoverable(fake_llm, default_registry, query_ctx, fake_executor, schema_demo_tiny):
     # First the LLM calls a tool we don't expose; we feed an error back.
     fake_llm.responses.append(LLMResponse(
         content=None,
@@ -274,7 +274,7 @@ def test_unknown_tool_name_is_recoverable(fake_llm, fake_executor, schema_demo_t
     result = text2query_yaml(
         prompt="count", model_name="demo",
         schema_context=schema_demo_tiny,
-        executor=fake_executor, llm_client=fake_llm,
+        registry=default_registry, ctx=query_ctx, llm_client=fake_llm,
     )
 
     assert result.success
@@ -287,7 +287,7 @@ def test_unknown_tool_name_is_recoverable(fake_llm, fake_executor, schema_demo_t
     assert bad_response
 
 
-def test_executor_receives_built_querydef(fake_llm, fake_executor, schema_demo_tiny):
+def test_executor_receives_built_querydef(fake_llm, default_registry, query_ctx, fake_executor, schema_demo_tiny):
     fake_llm.responses.append(response_with_tool("build_and_run_query", {
         "root_entity": "PullRequest",
         "filters": ["state == 'merged'"],
@@ -300,7 +300,7 @@ def test_executor_receives_built_querydef(fake_llm, fake_executor, schema_demo_t
     text2query_yaml(
         prompt="merged PRs", model_name="demo",
         schema_context=schema_demo_tiny,
-        executor=fake_executor, llm_client=fake_llm,
+        registry=default_registry, ctx=query_ctx, llm_client=fake_llm,
     )
 
     assert len(fake_executor.received) == 1
@@ -310,7 +310,7 @@ def test_executor_receives_built_querydef(fake_llm, fake_executor, schema_demo_t
 
 
 def test_result_serialised_to_llm_includes_rows_and_columns(
-    fake_llm, fake_executor, schema_demo_tiny,
+    fake_llm, default_registry, query_ctx, fake_executor, schema_demo_tiny,
 ):
     fake_llm.responses.append(response_with_tool("build_and_run_query", {
         "root_entity": "PullRequest",
@@ -331,7 +331,7 @@ def test_result_serialised_to_llm_includes_rows_and_columns(
     text2query_yaml(
         prompt="x", model_name="demo",
         schema_context=schema_demo_tiny,
-        executor=fake_executor, llm_client=fake_llm,
+        registry=default_registry, ctx=query_ctx, llm_client=fake_llm,
     )
 
     # Inspect the tool-result message sent after the FIRST failed call —

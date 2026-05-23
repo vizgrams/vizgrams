@@ -98,6 +98,20 @@ def fake_executor():
 
 
 @pytest.fixture
+def default_registry():
+    """Default ToolRegistry — includes build_and_run_query and present_view."""
+    from semantic.llm.tools import build_default_registry
+    return build_default_registry()
+
+
+@pytest.fixture
+def query_ctx(fake_executor):
+    """ToolContext wired with the fake executor — for text2query tests."""
+    from semantic.llm.tools import ToolContext
+    return ToolContext(executor=fake_executor)
+
+
+@pytest.fixture
 def schema_demo_tiny():
     """Minimal schema string for tests that don't depend on a real model."""
     return (

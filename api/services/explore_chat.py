@@ -33,6 +33,7 @@ from semantic.llm.text2query import (
     text2query_yaml,
 )
 from semantic.llm.text2view import Text2ViewResult, text2view_yaml
+from semantic.llm.tools import ToolContext, ToolRegistry, build_default_registry
 from semantic.query import QueryDef
 from semantic.yaml_adapter import YAMLAdapter
 
@@ -202,6 +203,7 @@ def chat_turn(
     history: list[dict] | None = None,
     llm_client: LLMClient | None = None,
     executor: SemanticLayerExecutor | None = None,
+    registry: ToolRegistry | None = None,
     text2query_kwargs: dict[str, Any] | None = None,
     text2view_kwargs: dict[str, Any] | None = None,
 ) -> ChatTurnResult:
@@ -215,6 +217,8 @@ def chat_turn(
     model_name = model_dir.name
     client = llm_client or get_default_client()
     exec_ = executor or SemanticLayerExecutor(model_dir=model_dir)
+    reg = registry or build_default_registry()
+    ctx = ToolContext(model_id=model_name, model_dir=model_dir, executor=exec_)
 
     entities = YAMLAdapter.load_entities(model_dir / "ontology")
     features_by_entity: dict[str, list[FeatureDef]] = {}
@@ -226,7 +230,8 @@ def chat_turn(
         prompt=message,
         model_name=model_name,
         schema_context=schema,
-        executor=exec_,
+        registry=reg,
+        ctx=ctx,
         llm_client=client,
         history=_history_to_openai(history),
         **(text2query_kwargs or {}),
@@ -242,6 +247,7 @@ def chat_turn(
     v_result: Text2ViewResult = text2view_yaml(
         columns=q_result.columns,
         rows=q_result.rows,
+        registry=reg,
         user_intent=message,
         llm_client=client,
         query_name=QUERY_ARTIFACT_NAME,

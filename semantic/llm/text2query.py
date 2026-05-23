@@ -29,6 +29,7 @@ from typing import Protocol, runtime_checkable
 import yaml
 
 from semantic.llm.provider import LLMClient, LLMResponse, ToolCall
+from semantic.llm.tools.registry import ToolContext, ToolRegistry
 from semantic.query import (
     PaginationDef,
     QueryAttribute,
@@ -97,117 +98,11 @@ class Text2QueryResult:
 
 
 # ---------------------------------------------------------------------------
-# Tool schema — what the LLM may call
+# Tool schema — moved into ``semantic/llm/tools/build_and_run_query.py``.
+# ``text2query_yaml`` consumes the tool from a ``ToolRegistry`` now; the
+# rest of this module is the QueryDef + YAML helpers that the tool's
+# handler imports.
 # ---------------------------------------------------------------------------
-
-
-BUILD_AND_RUN_QUERY_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "build_and_run_query",
-        "description": (
-            "Construct a query against the semantic layer and execute it. "
-            "Returns rows + column names, or an error if validation or "
-            "execution fails."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "root_entity": {
-                    "type": "string",
-                    "description": "Entity name (case-sensitive) — must match the schema",
-                },
-                "group_by": {
-                    "type": "array",
-                    "description": (
-                        "Group-by fields for aggregations. Each entry has a "
-                        "dotted field path and optional time-bucket format."
-                    ),
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "field": {"type": "string"},
-                            "format": {
-                                "type": "string",
-                                "description": "Optional time bucket: YYYY-MM-DD / YYYY-WW / YYYY-MM / YYYY",
-                            },
-                            "alias": {"type": "string"},
-                        },
-                        "required": ["field"],
-                    },
-                },
-                "measures": {
-                    "type": "array",
-                    "description": "Aggregation expressions. Leave empty for detail (non-aggregate) queries.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Output column name (alias)",
-                            },
-                            "field": {
-                                "type": "string",
-                                "description": (
-                                    "Field being aggregated. For count, use the "
-                                    "entity's primary key column — '*' is not supported."
-                                ),
-                            },
-                            "rollup": {
-                                "type": "string",
-                                "enum": [
-                                    "count",
-                                    "sum",
-                                    "avg",
-                                    "min",
-                                    "max",
-                                    "count_distinct",
-                                ],
-                            },
-                        },
-                        "required": ["name", "field", "rollup"],
-                    },
-                },
-                "attributes": {
-                    "type": "array",
-                    "description": "Output columns for detail queries (when measures is empty).",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "field": {"type": "string"},
-                            "alias": {"type": "string"},
-                        },
-                        "required": ["field"],
-                    },
-                },
-                "filters": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Expression strings, e.g. \"state == 'merged' && created_at >= '2026-04-01'\".",
-                },
-                "order_by": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "column": {
-                                "type": "string",
-                                "description": "Output column name (must match an alias above)",
-                            },
-                            "direction": {
-                                "type": "string",
-                                "enum": ["ASC", "DESC"],
-                            },
-                        },
-                        "required": ["column", "direction"],
-                    },
-                },
-                "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
-            },
-            "required": ["root_entity"],
-        },
-    },
-}
 
 
 # ---------------------------------------------------------------------------
@@ -380,25 +275,6 @@ def _assistant_msg(resp: LLMResponse) -> dict:
     return msg
 
 
-def _serialise_exec_result(r: QueryExecutionResult, *, max_rows: int) -> dict:
-    """Render a QueryExecutionResult as the tool-result payload fed to the LLM.
-
-    Truncates rows so wide / long results don't blow the context window.
-    """
-    if not r.success:
-        return {"error": r.error or "execution failed"}
-    rows = r.rows[:max_rows]
-    payload: dict = {
-        "columns": list(r.columns),
-        "rows": [list(row) for row in rows],
-        "row_count": r.row_count,
-    }
-    if r.truncated or r.row_count > max_rows:
-        payload["truncated"] = True
-        payload["rows_shown"] = len(rows)
-    return payload
-
-
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -409,26 +285,30 @@ def text2query_yaml(
     prompt: str,
     model_name: str,
     schema_context: str,
-    executor: QueryExecutor,
+    registry: ToolRegistry,
+    ctx: ToolContext,
     llm_client: LLMClient,
     history: list[dict] | None = None,
+    tool_tags: tuple[str, ...] = ("query_authoring",),
+    success_tool: str = "build_and_run_query",
     max_iter: int = 5,
     rows_to_llm: int = 40,
     llm_model: str | None = None,
-    query_name: str = "text2query",
 ) -> Text2QueryResult:
     """Convert ``prompt`` into a validated, executed ``QueryDef``.
 
-    Returns as soon as one ``build_and_run_query`` tool call succeeds —
-    refinement loops are out of scope for v1. The LLM may retry up to
-    ``max_iter`` times to recover from validation / execution errors.
+    Returns as soon as one ``success_tool`` call succeeds — refinement
+    loops are out of scope for v1. The LLM may retry up to ``max_iter``
+    times to recover from validation / execution errors.
 
-    ``history`` is a list of OpenAI-shape prior messages (e.g. from a
-    previous turn in a multi-turn chat). The orchestrator owns the
-    conversation memory; this function is single-turn at heart.
+    Tools are pulled from the ``registry`` filtered by ``tool_tags``
+    (default: just the query-authoring set). The same registry can host
+    other tools the LLM might compose with — e.g. ``find_artifacts``
+    in VG-232 — without changing this function's signature.
 
-    ``executor`` is the seam that lets tests swap in a fake; production
-    wires the real semantic-layer engine.
+    ``ctx`` carries the per-call dependencies tools need (executor,
+    semantic search, etc.); see ``ToolContext``. Tests pass a fake
+    executor here exactly the same way production passes the real one.
     """
     system = build_system_prompt(model_name, schema_context)
     messages: list[dict] = [
@@ -437,80 +317,67 @@ def text2query_yaml(
         {"role": "user", "content": prompt},
     ]
 
+    openai_tools = registry.to_openai_tools(tags=tool_tags)
+
     tool_calls_seen: list[ToolCall] = []
     last_error: str | None = None
-    last_querydef: QueryDef | None = None
-    last_exec: QueryExecutionResult | None = None
 
     for iteration in range(max_iter):
         resp = llm_client.complete(
-            messages=messages,
-            tools=[BUILD_AND_RUN_QUERY_TOOL],
-            model=llm_model,
+            messages=messages, tools=openai_tools, model=llm_model,
         )
         messages.append(_assistant_msg(resp))
 
         if not resp.tool_calls:
-            # LLM responded without calling the tool — either it's done or it
-            # gave up. Either way we have nothing better to return.
+            # LLM responded without calling any tool — either done or gave up.
             break
 
-        any_success = False
         for tc in resp.tool_calls:
             tool_calls_seen.append(tc)
-            if tc.name != "build_and_run_query":
+            try:
+                result = registry.dispatch(tc.name, tc.arguments, ctx)
+            except KeyError:
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
+                    "role": "tool", "tool_call_id": tc.id,
                     "content": json.dumps({"error": f"unknown tool {tc.name!r}"}),
                 })
                 continue
 
-            try:
-                qd = build_querydef(tc.arguments, name=query_name)
-            except Exception as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps({"error": last_error}),
-                })
-                continue
-
-            exec_result = executor.execute(qd)
             messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": json.dumps(
-                    _serialise_exec_result(exec_result, max_rows=rows_to_llm),
-                    default=str,
-                ),
+                "role": "tool", "tool_call_id": tc.id,
+                "content": result.to_tool_message_content(max_rows=rows_to_llm),
             })
 
-            if exec_result.success:
+            if result.success and tc.name == success_tool:
+                # Pull the orchestrator-only pieces out of extras.
+                qd = result.extras.get("querydef")
+                qd_yaml = result.extras.get("querydef_yaml")
+                sql = result.extras.get("sql")
+                rows = result.payload.get("rows", [])
+                columns = result.payload.get("columns", [])
+                row_count = result.payload.get("row_count", len(rows))
                 return Text2QueryResult(
                     success=True,
-                    yaml=querydef_to_yaml(qd),
+                    yaml=qd_yaml,
                     querydef=qd,
-                    rows=exec_result.rows[:rows_to_llm],
-                    columns=list(exec_result.columns),
-                    row_count=exec_result.row_count,
-                    truncated=exec_result.truncated or exec_result.row_count > rows_to_llm,
-                    sql=exec_result.sql,
+                    rows=rows[:rows_to_llm],
+                    columns=list(columns),
+                    row_count=row_count,
+                    truncated=bool(result.extras.get("truncated"))
+                              or row_count > rows_to_llm,
+                    sql=sql,
                     tool_calls=tool_calls_seen,
                     messages=messages,
                     iterations=iteration + 1,
                 )
 
-            last_error = exec_result.error
-            last_querydef = qd
-            last_exec = exec_result
-            any_success = False  # noqa: F841 — kept for readability
+            if not result.success:
+                # Surface the most recent error to the caller in case
+                # max_iter is exhausted.
+                last_error = result.payload.get("error") or "tool reported failure"
 
     return Text2QueryResult(
         success=False,
-        querydef=last_querydef,
-        sql=last_exec.sql if last_exec else None,
         error=last_error or "no tool calls produced a successful query",
         tool_calls=tool_calls_seen,
         messages=messages,
