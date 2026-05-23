@@ -334,6 +334,25 @@ def chat_turn(
             logger.warning("validate_inline_view raised: %s", exc)
             view_yaml_to_return = None
 
+    # VG-234: when the query came from run_saved_view, prefer the saved
+    # view's chart spec over text2view's freshly-picked one. The caption
+    # still comes from text2view — same data-aware summary as any other
+    # turn — but the chart shape (and any drilldown config in future)
+    # comes from the human-authored view.
+    if q_result.view_spec is not None:
+        spec = q_result.view_spec
+        chart_type = spec.get("chart_type") or v_result.chart_type
+        x_field = spec.get("x_field")
+        y_field = spec.get("y_field")
+        color_field = spec.get("color_field")
+        # The saved view's YAML wins over the freshly-generated one.
+        view_yaml_to_return = q_result.view_yaml or view_yaml_to_return
+    else:
+        chart_type = v_result.chart_type
+        x_field = v_result.x_field
+        y_field = v_result.y_field
+        color_field = v_result.color_field
+
     return ChatTurnResult(
         success=True,
         content=v_result.caption,
@@ -344,10 +363,10 @@ def chat_turn(
         rows=q_result.rows,
         row_count=q_result.row_count,
         truncated=q_result.truncated,
-        chart_type=v_result.chart_type,
-        x_field=v_result.x_field,
-        y_field=v_result.y_field,
-        color_field=v_result.color_field,
+        chart_type=chart_type,
+        x_field=x_field,
+        y_field=y_field,
+        color_field=color_field,
         iterations=q_result.iterations,
         trace=list(q_result.trace) + list(v_result.trace),
     )

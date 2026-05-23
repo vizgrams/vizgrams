@@ -104,6 +104,15 @@ class Text2QueryResult:
     trace: list[ToolCallTrace] = field(default_factory=list)
     messages: list[dict] = field(default_factory=list)
     iterations: int = 0
+    # VG-234: when the successful tool was ``run_saved_view``, this carries
+    # the saved view's normalised chart spec
+    # ({chart_type, x_field, y_field, color_field, drilldown}) + the view's
+    # raw YAML. The orchestrator uses it INSTEAD of calling text2view's
+    # chart picker — preserves the saved view's chosen visualization
+    # rather than re-deriving it on every turn.
+    view_spec: dict | None = None
+    view_yaml: str | None = None
+    saved_view_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -245,13 +254,15 @@ Procedure for every question:
    paths, and relations are far more reliable than anything you'd guess
    from the entity schema alone. Anything with distance < 0.4 is usually
    directly relevant.
-2. Inspect the matches. **If a query match has distance < 0.4 and its
-   description fits the user's intent, call `run_saved_query` to invoke
-   it verbatim** instead of re-authoring — that preserves all the
-   tuning, params, and field choices the human author baked in. Pass
-   `params` when the saved query declares parameters (visible in the
-   description if any are required).
-3. **Only if no saved query is a good enough match**, call
+2. Inspect the matches. **Match the tool to the artifact kind**:
+   - `kind='view'` with distance < 0.5 → call `run_saved_view`. Views
+     carry their own chart spec + drilldown — this preserves the
+     author's end-to-end choices instead of re-deriving them.
+   - `kind='query'` with distance < 0.4 → call `run_saved_query`. Same
+     verbatim-invocation logic for the underlying data shape.
+   - Pass `params` to either when the artifact declares parameters
+     (visible in the description if required).
+3. **Only if no saved view or query is a good enough match**, call
    `build_and_run_query`. When you do, lift patterns from the matches:
    catalog descriptions render measures as `alias=expr(field)` — e.g.
    `avg_clt_prd=avg(change_lead_time_prd)`. The LLM-side `name` is the
@@ -334,6 +345,7 @@ def text2query_yaml(
     success_tool_names: tuple[str, ...] = (
         "build_and_run_query",
         "run_saved_query",
+        "run_saved_view",
     ),
     max_iter: int = 5,
     rows_to_llm: int = 40,
@@ -419,6 +431,15 @@ def text2query_yaml(
                 rows = result.payload.get("rows", [])
                 columns = result.payload.get("columns", [])
                 row_count = result.payload.get("row_count", len(rows))
+                # When the LLM invoked a saved view, carry its chart spec
+                # + YAML so the orchestrator can skip text2view's chart
+                # picker and reuse the author's choices verbatim.
+                view_spec = result.extras.get("chart_spec") if tc.name == "run_saved_view" else None
+                view_yaml = result.extras.get("view_yaml") if tc.name == "run_saved_view" else None
+                saved_view_name = (
+                    result.extras.get("saved_view_name")
+                    if tc.name == "run_saved_view" else None
+                )
                 return Text2QueryResult(
                     success=True,
                     yaml=qd_yaml,
@@ -433,6 +454,9 @@ def text2query_yaml(
                     trace=trace,
                     messages=messages,
                     iterations=iteration + 1,
+                    view_spec=view_spec,
+                    view_yaml=view_yaml,
+                    saved_view_name=saved_view_name,
                 )
 
             if not result.success:
