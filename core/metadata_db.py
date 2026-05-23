@@ -97,6 +97,23 @@ def _connect(model_dir: Path, db_path: Path | None = None) -> Generator[sqlite3.
 # Public API
 # ---------------------------------------------------------------------------
 
+# Optional hook called after a new artifact version is written. Used by
+# the embeddings indexer (Epic 20 VG-230) to reindex on save. Set via
+# ``set_index_hook``; nothing else should mutate it.
+_INDEX_HOOK = None
+
+
+def set_index_hook(hook) -> None:
+    """Register a ``(model_dir, artifact_type, name, content) -> None`` callback.
+
+    Fired after ``record_version`` writes a new version (skipped on no-op).
+    Implementations must not raise — the hook is best-effort, never on
+    the critical save path. Pass ``None`` to clear.
+    """
+    global _INDEX_HOOK
+    _INDEX_HOOK = hook
+
+
 def record_version(
     model_dir: Path,
     artifact_type: str,
@@ -108,7 +125,8 @@ def record_version(
     """Snapshot content for an artifact.
 
     Returns True if a new version row was created, False if content is
-    identical to the current version (no-op).
+    identical to the current version (no-op). Fires ``_INDEX_HOOK`` on
+    True so the embeddings layer can reindex.
     """
     if artifact_type not in ARTIFACT_TYPES:
         raise ValueError(f"Unknown artifact type: {artifact_type!r}")
@@ -151,7 +169,19 @@ def record_version(
             (str(uuid4()), model_id, artifact_type, name,
              next_num, content, checksum, message, now),
         )
-        return True
+
+    # Fire the indexing hook outside the DB transaction so a slow hook
+    # doesn't hold the SQLite lock. Hooks are expected to be non-raising
+    # but we guard defensively — index failures must never fail a save.
+    if _INDEX_HOOK is not None:
+        try:
+            _INDEX_HOOK(model_dir, artifact_type, name, content)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Artifact index hook raised for %s/%s — ignored", artifact_type, name,
+            )
+    return True
 
 
 def list_versions(
