@@ -26,7 +26,7 @@ import type { ChatResponse, ChatTraceStep, ViewResult } from '@/api/client'
 import { Card } from '@/components/Layout'
 import { ViewContent } from '@/components/view/ViewContent'
 import { useModel } from '@/context/ModelContext'
-import type { DrillFrame } from '@/hooks/useDrillStack'
+import { encodeFrame, type DrillFrame } from '@/hooks/useDrillStack'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -110,20 +110,12 @@ function ChatViewBody({ response }: { response: ChatResponse }) {
     return () => { cancelled = true }
   }, [api, response.saved_view, response.inline_view])
 
-  // Clicking a drilldown target navigates into the explorer where the
-  // saved-view + drill-stack machinery already exists.
+  // Clicking a drilldown target navigates into the explorer using the same
+  // hash-based frame URLs ExploreShell already produces. `encodeFrame` is the
+  // single source of truth for that format — using it here keeps chat
+  // drilldowns indistinguishable from in-explorer drilldowns.
   const handleNavigate = (frame: DrillFrame) => {
-    if (frame.kind === 'entity-detail') {
-      navigate(`/explore/${encodeURIComponent(frame.entity)}/${encodeURIComponent(frame.id)}`)
-    } else if (frame.kind === 'view') {
-      const qs = new URLSearchParams()
-      Object.entries(frame.params ?? {}).forEach(([k, v]) => qs.set(k, v))
-      navigate(`/explore?view=${encodeURIComponent(frame.name)}&${qs}`)
-    } else if (frame.kind === 'app') {
-      const qs = new URLSearchParams({ app: frame.name })
-      Object.entries(frame.params ?? {}).forEach(([k, v]) => qs.set(k, v))
-      navigate(`/explore?${qs}`)
-    }
+    navigate(`/explore${encodeFrame(frame)}`)
   }
 
   if (loading) {
