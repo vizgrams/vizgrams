@@ -102,7 +102,48 @@ async def lifespan(app: FastAPI):
                     model_dir.name, len(mappers), entity, mappers,
                 )
 
+    # Wire the embeddings indexer (Epic 20 VG-230). Best-effort: if the
+    # provider can't be constructed (no API key) or the CH store can't
+    # ensure its schema, log and disable rather than crash startup.
+    try:
+        from core import metadata_db
+        from semantic.llm.embeddings import get_default_provider
+        from semantic.llm.embeddings.index import configure as configure_indexer
+        from semantic.llm.embeddings.index import index_artifact_async
+        from semantic.llm.embeddings.store import EmbeddingsStore
+
+        provider = get_default_provider()
+        if provider is None:
+            _startup_logger.info(
+                "Embeddings disabled — no provider configured (set OPENAI_API_KEY to enable).",
+            )
+        else:
+            store = EmbeddingsStore()
+            try:
+                store.ensure_schema()
+            except Exception as exc:
+                _startup_logger.warning(
+                    "Embeddings store schema check failed (ClickHouse unavailable?): %s. "
+                    "Indexing disabled this session.", exc,
+                )
+            else:
+                configure_indexer(provider=provider, store=store)
+                metadata_db.set_index_hook(index_artifact_async)
+                _startup_logger.info(
+                    "Embeddings indexer wired — provider=%s store=%s.%s",
+                    provider.model, store.DATABASE, store.TABLE,
+                )
+    except Exception as exc:
+        _startup_logger.warning("Embeddings setup failed (non-fatal): %s", exc)
+
     yield
+
+    # Best-effort shutdown for the indexer thread pool.
+    try:
+        from semantic.llm.embeddings.index import shutdown as shutdown_indexer
+        shutdown_indexer()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 from api.limiter import limiter
