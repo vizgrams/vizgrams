@@ -146,6 +146,14 @@ def _handler(args: dict, ctx: ToolContext) -> ToolResult:
     )
 
 
+def _summarize(result: ToolResult) -> str:
+    """One-line trace summary for VG-239 'Show your work'."""
+    rows = result.payload.get("row_count", 0)
+    cols = result.payload.get("columns", []) or []
+    col_preview = ", ".join(cols[:4]) + (" …" if len(cols) > 4 else "")
+    return f"{rows} rows · columns: {col_preview}" if col_preview else f"{rows} rows"
+
+
 BUILD_AND_RUN_QUERY = Tool(
     name="build_and_run_query",
     description=(
@@ -156,4 +164,5 @@ BUILD_AND_RUN_QUERY = Tool(
     parameters_schema=PARAMETERS_SCHEMA,
     handler=_handler,
     tags=("query_authoring",),
+    summarize=_summarize,
 )

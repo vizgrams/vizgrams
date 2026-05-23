@@ -24,16 +24,20 @@ Why bother:
 
 from semantic.llm.tools.registry import (
     Tool,
+    ToolCallTrace,
     ToolContext,
     ToolRegistry,
     ToolResult,
     build_default_registry,
+    summarize_tool_result,
 )
 
 __all__ = [
     "Tool",
+    "ToolCallTrace",
     "ToolContext",
     "ToolRegistry",
     "ToolResult",
     "build_default_registry",
+    "summarize_tool_result",
 ]

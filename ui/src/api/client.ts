@@ -496,6 +496,15 @@ export interface ChatChartSpec {
   color_field: string | null
 }
 
+/** One tool invocation in the LLM's reasoning trace (VG-239). */
+export interface ChatTraceStep {
+  name: string
+  arguments: Record<string, unknown>
+  success: boolean
+  summary: string
+  payload: Record<string, unknown>
+}
+
 export interface ChatResponse extends ChatChartSpec {
   success: boolean
   content: string
@@ -508,6 +517,7 @@ export interface ChatResponse extends ChatChartSpec {
   row_count: number
   truncated: boolean
   iterations: number
+  trace: ChatTraceStep[]
 }
 
 export interface QuerySummary {

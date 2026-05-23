@@ -116,6 +116,19 @@ def _handler(args: dict, ctx: ToolContext) -> ToolResult:
     )
 
 
+def _summarize(result: ToolResult) -> str:
+    """One-line trace summary for VG-239 'Show your work'."""
+    matches = result.payload.get("matches") or []
+    if not matches:
+        warn = result.payload.get("warning")
+        return warn or "no matches"
+    top = matches[0]
+    return (
+        f"{len(matches)} matches; top: {top.get('kind')}/{top.get('name')} "
+        f"(dist {top.get('distance')})"
+    )
+
+
 FIND_ARTIFACTS = Tool(
     name="find_artifacts",
     description=(
@@ -128,4 +141,5 @@ FIND_ARTIFACTS = Tool(
     parameters_schema=PARAMETERS_SCHEMA,
     handler=_handler,
     tags=("query_authoring", "catalog"),
+    summarize=_summarize,
 )

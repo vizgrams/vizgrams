@@ -12,9 +12,9 @@
  */
 
 import { useState, type ReactNode } from 'react'
-import { AlertCircle, ChevronDown, ChevronUp, Code, FileCode } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronUp, Code, FileCode, Wand2 } from 'lucide-react'
 
-import type { ChatResponse } from '@/api/client'
+import type { ChatResponse, ChatTraceStep } from '@/api/client'
 import { Card } from '@/components/Layout'
 import { LineBarChart } from '@/components/charts/LineBarChart'
 import { cn } from '@/lib/utils'
@@ -23,7 +23,7 @@ interface Props {
   response: ChatResponse
 }
 
-type SourceTab = 'query_yaml' | 'view_yaml' | 'sql'
+type SourceTab = 'query_yaml' | 'view_yaml' | 'sql' | 'trace'
 
 export function ChatTurnCard({ response }: Props) {
   const [openTab, setOpenTab] = useState<SourceTab | null>(null)
@@ -38,6 +38,11 @@ export function ChatTurnCard({ response }: Props) {
             <div className="text-xs text-muted-foreground mt-1">{response.error || 'Unknown failure.'}</div>
           </div>
         </div>
+        {response.trace.length > 0 && (
+          <div className="mt-3">
+            <SourceToggle response={response} openTab={openTab} setOpenTab={setOpenTab} />
+          </div>
+        )}
       </Card>
     )
   }
@@ -62,9 +67,10 @@ export function ChatTurnCard({ response }: Props) {
 }
 
 // ---------------------------------------------------------------------------
-// Source viewer — Query YAML / View YAML / SQL tabs.
+// Source viewer — Query YAML / View YAML / SQL / Tool calls (VG-239).
 // The YAMLs are the canonical artifacts (validated against the same schemas
 // the existing query / view endpoints use). SQL is shown for debugging.
+// Tool calls is the "show your work" trace.
 // ---------------------------------------------------------------------------
 
 interface SourceToggleProps {
@@ -73,13 +79,26 @@ interface SourceToggleProps {
   setOpenTab: (tab: SourceTab | null) => void
 }
 
+interface TabSpec {
+  key: SourceTab
+  label: string
+  available: boolean
+  icon: ReactNode
+}
+
 function SourceToggle({ response, openTab, setOpenTab }: SourceToggleProps) {
-  const tabs: { key: SourceTab; label: string; content: string | null; icon: ReactNode }[] = [
-    { key: 'query_yaml', label: 'Query YAML', content: response.query_yaml, icon: <FileCode className="h-3 w-3" /> },
-    { key: 'view_yaml', label: 'View YAML', content: response.view_yaml, icon: <FileCode className="h-3 w-3" /> },
-    { key: 'sql', label: 'SQL', content: response.sql, icon: <Code className="h-3 w-3" /> },
+  const tabs: TabSpec[] = [
+    { key: 'query_yaml', label: 'Query YAML', available: !!response.query_yaml, icon: <FileCode className="h-3 w-3" /> },
+    { key: 'view_yaml', label: 'View YAML', available: !!response.view_yaml, icon: <FileCode className="h-3 w-3" /> },
+    { key: 'sql', label: 'SQL', available: !!response.sql, icon: <Code className="h-3 w-3" /> },
+    {
+      key: 'trace',
+      label: `Tool calls (${response.trace.length})`,
+      available: response.trace.length > 0,
+      icon: <Wand2 className="h-3 w-3" />,
+    },
   ]
-  const available = tabs.filter((t) => t.content)
+  const available = tabs.filter((t) => t.available)
   if (available.length === 0) return null
 
   function toggle(key: SourceTab) {
@@ -87,9 +106,10 @@ function SourceToggle({ response, openTab, setOpenTab }: SourceToggleProps) {
   }
 
   const current = available.find((t) => t.key === openTab)
+
   return (
     <div className="border-t pt-2">
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
         {available.map((t) => (
           <button
             key={t.key}
@@ -109,10 +129,82 @@ function SourceToggle({ response, openTab, setOpenTab }: SourceToggleProps) {
         ))}
       </div>
       {current && (
-        <pre className="mt-2 text-xs bg-muted rounded p-3 overflow-x-auto whitespace-pre-wrap">
-          {current.content}
-        </pre>
+        <div className="mt-2">
+          {current.key === 'trace' ? (
+            <TraceView trace={response.trace} />
+          ) : (
+            <pre className="text-xs bg-muted rounded p-3 overflow-x-auto whitespace-pre-wrap">
+              {current.key === 'query_yaml' ? response.query_yaml :
+               current.key === 'view_yaml' ? response.view_yaml :
+               response.sql}
+            </pre>
+          )}
+        </div>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// TraceView — collapsed-by-default tool-call list (VG-239).
+// Each step shows: status icon + tool name + one-line summary.
+// Expanding reveals the raw arguments and result payload.
+// ---------------------------------------------------------------------------
+
+function TraceView({ trace }: { trace: ChatTraceStep[] }) {
+  const [expanded, setExpanded] = useState<number | null>(null)
+  return (
+    <div className="space-y-1.5">
+      {trace.map((step, i) => {
+        const isOpen = expanded === i
+        return (
+          <div key={i} className="border rounded text-xs">
+            <button
+              type="button"
+              onClick={() => setExpanded(isOpen ? null : i)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-muted/40 transition-colors text-left"
+            >
+              <span className={cn(
+                'inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold',
+                step.success
+                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                  : 'bg-destructive/15 text-destructive',
+              )}>
+                {step.success ? '✓' : '✗'}
+              </span>
+              <code className="font-mono font-medium shrink-0">{step.name}</code>
+              <span className="text-muted-foreground flex-1 truncate">
+                {step.summary}
+              </span>
+              {isOpen
+                ? <ChevronUp className="h-3 w-3 shrink-0" />
+                : <ChevronDown className="h-3 w-3 shrink-0" />}
+            </button>
+            {isOpen && (
+              <div className="border-t p-2 bg-muted/20 space-y-2">
+                <div>
+                  <div className="text-muted-foreground mb-1 uppercase tracking-wide text-[10px]">
+                    Arguments
+                  </div>
+                  <pre className="bg-background rounded p-2 overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify(step.arguments, null, 2)}
+                  </pre>
+                </div>
+                {Object.keys(step.payload).length > 0 && (
+                  <div>
+                    <div className="text-muted-foreground mb-1 uppercase tracking-wide text-[10px]">
+                      Result
+                    </div>
+                    <pre className="bg-background rounded p-2 overflow-x-auto whitespace-pre-wrap">
+                      {JSON.stringify(step.payload, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
