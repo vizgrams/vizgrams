@@ -1649,8 +1649,8 @@ class TestMergeDuplicateCandidates:
         assert out[0] == {"person_key": "p1", "name": "Alice", "team": "alpha"}
 
     def test_later_candidate_fills_empty_fields(self):
-        """The iagai person/person_from_issues scenario: jira_users supplies
-        team, jira_issues supplies only name. Merge yields complete record."""
+        """Multi-group person mapper scenario: one group supplies team,
+        another supplies only name. Merge yields a complete record."""
         from engine.mapper import _merge_duplicate_candidates
 
         cands = [

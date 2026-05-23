@@ -706,9 +706,9 @@ def run_mapper(
                 if not candidates:
                     continue
                 # Multi-group mappers (`rows:`) can emit the same primary key
-                # from different groups with disjoint column sets — e.g. the
-                # iagai person mapper emits a row from jira_users (with team)
-                # and another from jira_issues (without team) for the same
+                # from different groups with disjoint column sets — e.g. a
+                # person mapper emits a row from one source (with team) and
+                # another from a different source (without team) for the same
                 # account. Merge such duplicates so bulk_scd2 sees one
                 # complete candidate per key: non-NULL / non-empty values win,
                 # falling back to whichever entry has them.

@@ -171,12 +171,12 @@ def test_get_service_account_from_header_returns_dict_for_valid_token(monkeypatc
     from core.service_accounts import create_service_account
     db = tmp_path / "api.db"
     monkeypatch.setenv("API_DB_PATH", str(db))
-    sa = create_service_account("iagai", "ci-bot", "user-1", db_path=db)
+    sa = create_service_account("demo", "ci-bot", "user-1", db_path=db)
     req = _mock_request_with_api_key(sa["token"])
     result = get_service_account_from_header(req)
     assert result is not None
     assert result["id"] == sa["id"]
-    assert result["model_id"] == "iagai"
+    assert result["model_id"] == "demo"
     assert "token" not in result and "token_hash" not in result
 
 
@@ -194,7 +194,7 @@ def test_require_service_account_raises_401_when_header_missing(monkeypatch, tmp
     monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
     req = _mock_request_with_api_key(None)
     with pytest.raises(HTTPException) as exc:
-        require_service_account(req, model="iagai")
+        require_service_account(req, model="demo")
     assert exc.value.status_code == 401
 
 
@@ -205,7 +205,7 @@ def test_require_service_account_raises_401_for_invalid_token(monkeypatch, tmp_p
     monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
     req = _mock_request_with_api_key("vzsa_bogus")
     with pytest.raises(HTTPException) as exc:
-        require_service_account(req, model="iagai")
+        require_service_account(req, model="demo")
     assert exc.value.status_code == 401
 
 
@@ -214,9 +214,9 @@ def test_require_service_account_returns_sa_when_scope_matches(monkeypatch, tmp_
     from core.service_accounts import create_service_account
     db = tmp_path / "api.db"
     monkeypatch.setenv("API_DB_PATH", str(db))
-    sa = create_service_account("iagai", "ci-bot", "user-1", db_path=db)
+    sa = create_service_account("demo", "ci-bot", "user-1", db_path=db)
     req = _mock_request_with_api_key(sa["token"])
-    result = require_service_account(req, model="iagai")
+    result = require_service_account(req, model="demo")
     assert result["id"] == sa["id"]
 
 
@@ -227,7 +227,7 @@ def test_require_service_account_raises_403_when_scope_mismatches(monkeypatch, t
     from core.service_accounts import create_service_account
     db = tmp_path / "api.db"
     monkeypatch.setenv("API_DB_PATH", str(db))
-    sa = create_service_account("iagai", "ci-bot", "user-1", db_path=db)
+    sa = create_service_account("demo", "ci-bot", "user-1", db_path=db)
     req = _mock_request_with_api_key(sa["token"])
     with pytest.raises(HTTPException) as exc:
         require_service_account(req, model="default")  # different model
