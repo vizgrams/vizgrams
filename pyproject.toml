@@ -36,6 +36,7 @@ opentelemetry-instrumentation-httpx = "*"
 opentelemetry-exporter-otlp-proto-http = "*"
 rdflib = "*"
 clickhouse-connect = "*"
+openai = "^2.38.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
