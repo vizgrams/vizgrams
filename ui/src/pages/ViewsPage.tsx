@@ -17,10 +17,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Activity, Hash,
-  Loader2, Play, Plus, Save, SlidersHorizontal, Table, Upload,
+  Loader2, Play, Plus, Save, Table, Upload,
 } from 'lucide-react'
 
-import type { ViewSummary, ViewResult, ParamDef } from '@/api/client'
+import type { ViewSummary, ViewResult } from '@/api/client'
 import { publishVizgram, previewCaption } from '@/api/client'
 import { useModel } from '@/context/ModelContext'
 import { useRole } from '@/context/RoleContext'
@@ -36,6 +36,7 @@ import {
   frameToUrl,
 } from '@/components/view/drilldown'
 import { ViewContent } from '@/components/view/ViewContent'
+import { ViewParamBar } from '@/components/view/ViewParamBar'
 
 // ---------------------------------------------------------------------------
 // Type icons / colours (left rail)
@@ -268,27 +269,12 @@ function ViewResultFrame({
         validErrors={validErrors}
       />
 
-      {(result?.params ?? []).length > 0 && (
-        <div className="flex items-end gap-3 flex-wrap rounded-lg border bg-muted/30 px-4 py-3">
-          <SlidersHorizontal className="h-4 w-4 text-muted-foreground shrink-0 mt-1" />
-          {(result!.params as ParamDef[]).map((p) => (
-            <div key={p.name} className="flex flex-col gap-1 min-w-[140px]">
-              <label className="text-xs text-muted-foreground font-medium">
-                {p.label ?? p.name}
-                {p.optional && <span className="ml-1 text-muted-foreground/60">(optional)</span>}
-              </label>
-              <input
-                type="text"
-                value={paramValues[p.name] ?? ''}
-                placeholder={p.optional ? 'all' : (p.default ?? '')}
-                onChange={(e) => setParamValues((prev) => ({ ...prev, [p.name]: e.target.value }))}
-                onKeyDown={(e) => { if (e.key === 'Enter') { runView(paramValues); onParamsApplied?.(paramValues) } }}
-                className="h-7 rounded border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring w-full"
-              />
-            </div>
-          ))}
-        </div>
-      )}
+      <ViewParamBar
+        params={result?.params ?? []}
+        values={paramValues}
+        onChange={setParamValues}
+        onApply={() => { runView(paramValues); onParamsApplied?.(paramValues) }}
+      />
 
       {loading && <Spinner />}
       {error && <ErrorMessage message={error} />}
