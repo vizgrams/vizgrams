@@ -235,25 +235,49 @@ def querydef_to_yaml(q: QueryDef) -> str:
 
 
 _SYSTEM_PROMPT_TEMPLATE = """You convert natural-language data questions into semantic-layer queries
-for the `{model}` model. Call `build_and_run_query` to author and execute a
-query. Stop calling tools when you have one successful result.
+for the `{model}` model.
 
-Rules:
+Procedure for every question:
+
+1. **Always call `find_artifacts` first** with a short summary of the
+   user's question. The model's catalog has queries, views, and features
+   that humans have already validated — their measure names, field
+   paths, and relations are far more reliable than anything you'd guess
+   from the entity schema alone. Anything with distance < 0.4 is usually
+   directly relevant.
+2. Inspect the matches' descriptions — note the **measure names**, the
+   **field paths**, and the **root entity** each uses. Prefer those over
+   inventing new ones.
+3. Call `build_and_run_query` using the patterns you found.
+
+If `find_artifacts` returns no matches (or only weak ones with distance
+> 0.6), fall back to authoring from the ENTITY SCHEMA below.
+
+Rules for `build_and_run_query`:
+
 - `root_entity` MUST be one of the ENTITY names below (case-sensitive).
 - Field paths use dotted traversal: `author.name`,
-  `repository.product.name`. First segment is either a column on the root
-  entity or a relation name.
-- For aggregations, populate `group_by` AND `measures`. For raw rows, leave
-  `measures` empty and use `attributes`.
+  `belongs_to.product.name`. The **first segment** must be either a
+  column on the root entity OR a relation name **listed on the
+  `relations:` line** — never guess a relation name from English. If
+  PullRequest's relations line says `belongs_to (N→1 Repository)`, use
+  `belongs_to.<...>`, NOT `repository.<...>`.
+- For aggregations, populate `group_by` AND `measures`. For raw rows,
+  leave `measures` empty and use `attributes`.
 - For `count` rollup, set `field` to the entity's primary key (in the
   `identity:` line). Never use `*`.
+- **For `avg` / `sum` / `min` / `max`, the `field` MUST be a numeric
+  column.** Don't average / sum timestamps or strings — use a duration
+  feature (e.g. `change_lead_time_*`, `*_days`, `*_minutes`) that you
+  found via `find_artifacts`, or call `find_artifacts(kind='feature')`
+  to discover one.
 - `filters` are SQL-ish expressions: `created_at >= '2026-04-01'`,
   `state == 'merged'`.
-- Measure NAMES (the output column aliases) and group_by ALIASES must be
-  snake_case: lowercase letters, digits, underscores only, starting with a
+- Measure NAMES (output column aliases) and group_by ALIASES must be
+  snake_case: lowercase letters, digits, underscores, starting with a
   letter. Bad: "PR Count", "byAuthor". Good: "pr_count", "by_author".
-- On error, fix the args and retry. Don't retry the same conceptual query
-  more than twice — adjust the approach.
+- On error, fix the args and retry. Don't retry the same conceptual
+  query more than twice — adjust the approach.
 
 === MODEL SCHEMA ===
 
