@@ -245,14 +245,18 @@ Procedure for every question:
    paths, and relations are far more reliable than anything you'd guess
    from the entity schema alone. Anything with distance < 0.4 is usually
    directly relevant.
-2. Inspect the matches' descriptions — note the **measure names**, the
-   **field paths**, and the **root entity** each uses. Catalog descriptions
-   render measures as `alias=expr(field)` — e.g.
-   `avg_clt_prd=avg(change_lead_time_prd)`. When copying that into your
-   own `measures`, the LLM-side name is the **alias** (`avg_clt_prd`)
-   and the `field` is the **inner field** (`change_lead_time_prd`),
-   never the alias itself.
-3. Call `build_and_run_query` using the patterns you found.
+2. Inspect the matches. **If a query match has distance < 0.4 and its
+   description fits the user's intent, call `run_saved_query` to invoke
+   it verbatim** instead of re-authoring — that preserves all the
+   tuning, params, and field choices the human author baked in. Pass
+   `params` when the saved query declares parameters (visible in the
+   description if any are required).
+3. **Only if no saved query is a good enough match**, call
+   `build_and_run_query`. When you do, lift patterns from the matches:
+   catalog descriptions render measures as `alias=expr(field)` — e.g.
+   `avg_clt_prd=avg(change_lead_time_prd)`. The LLM-side `name` is the
+   **alias** (`avg_clt_prd`); the `field` is the **inner field**
+   (`change_lead_time_prd`), never the alias itself.
 
 If `find_artifacts` returns no matches (or only weak ones with distance
 > 0.6), fall back to authoring from the ENTITY SCHEMA below.
@@ -327,16 +331,22 @@ def text2query_yaml(
     llm_client: LLMClient,
     history: list[dict] | None = None,
     tool_tags: tuple[str, ...] = ("query_authoring",),
-    success_tool: str = "build_and_run_query",
+    success_tool_names: tuple[str, ...] = (
+        "build_and_run_query",
+        "run_saved_query",
+    ),
     max_iter: int = 5,
     rows_to_llm: int = 40,
     llm_model: str | None = None,
 ) -> Text2QueryResult:
     """Convert ``prompt`` into a validated, executed ``QueryDef``.
 
-    Returns as soon as one ``success_tool`` call succeeds — refinement
-    loops are out of scope for v1. The LLM may retry up to ``max_iter``
-    times to recover from validation / execution errors.
+    Returns as soon as any of ``success_tool_names`` succeeds — both the
+    "author from scratch" path (``build_and_run_query``) and the "invoke a
+    saved query" path (``run_saved_query``) produce the same downstream
+    shape (rows + columns + extras), so either terminates the loop. The
+    LLM may retry up to ``max_iter`` times to recover from validation /
+    execution errors.
 
     Tools are pulled from the ``registry`` filtered by ``tool_tags``
     (default: just the query-authoring set). The same registry can host
@@ -401,7 +411,7 @@ def text2query_yaml(
                 payload=dict(result.payload),
             ))
 
-            if result.success and tc.name == success_tool:
+            if result.success and tc.name in success_tool_names:
                 # Pull the orchestrator-only pieces out of extras.
                 qd = result.extras.get("querydef")
                 qd_yaml = result.extras.get("querydef_yaml")
