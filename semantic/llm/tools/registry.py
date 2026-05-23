@@ -282,18 +282,19 @@ def build_default_registry() -> ToolRegistry:
     """Return a registry pre-loaded with the in-process tools we ship.
 
     Today: ``build_and_run_query``, ``find_artifacts``, ``run_saved_query``,
-    ``present_view``. VG-234 will add ``run_saved_view`` behind this same
-    function.
+    ``run_saved_view``, ``present_view``.
     """
     # Imported here to avoid a circular import (tools import the registry).
     from semantic.llm.tools.build_and_run_query import BUILD_AND_RUN_QUERY
     from semantic.llm.tools.find_artifacts import FIND_ARTIFACTS
     from semantic.llm.tools.present_view import PRESENT_VIEW
     from semantic.llm.tools.run_saved_query import RUN_SAVED_QUERY
+    from semantic.llm.tools.run_saved_view import RUN_SAVED_VIEW
 
     reg = ToolRegistry()
     reg.register(BUILD_AND_RUN_QUERY)
     reg.register(FIND_ARTIFACTS)
     reg.register(RUN_SAVED_QUERY)
+    reg.register(RUN_SAVED_VIEW)
     reg.register(PRESENT_VIEW)
     return reg
