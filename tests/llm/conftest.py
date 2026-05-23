@@ -98,10 +98,10 @@ def fake_executor():
 
 
 @pytest.fixture
-def schema_iagai_tiny():
+def schema_demo_tiny():
     """Minimal schema string for tests that don't depend on a real model."""
     return (
-        "MODEL: iagai\n\n"
+        "MODEL: demo\n\n"
         "ENTITY PullRequest — a pull request\n"
         "  identity: pull_request_key\n"
         "  attributes: title:STRING, state:STRING, created_at:TIMESTAMP\n"
