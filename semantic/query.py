@@ -558,6 +558,53 @@ def _validate_attribute_traversal(
     return []
 
 
+def _validate_expression_slice(
+    slice_def: SliceDef,
+    root_entity: EntityDef,
+    entities: dict[str, EntityDef],
+    extra_names: set[str] | None,
+) -> list[str]:
+    """Validate a slice whose ``field`` is a function-call expression.
+
+    Checks:
+      1. parses as a single ``FuncCallExpr``
+      2. the function is in the engine's function registry
+      3. every ``FieldRef`` argument resolves on the root entity
+         (via the same traversal column-only references use)
+    """
+    from engine.function_registry import is_registered
+    from semantic.expression import FieldRef, FuncCallExpr, parse_expression_str
+
+    try:
+        expr = parse_expression_str(slice_def.field)
+    except Exception as e:
+        return [f"failed to parse attribute expression '{slice_def.field}': {e}"]
+
+    if not isinstance(expr, FuncCallExpr):
+        return [
+            f"attribute expression '{slice_def.field}' must be a function call, "
+            f"got {type(expr).__name__}"
+        ]
+
+    if not is_registered(expr.name):
+        return [
+            f"unknown attribute function '{expr.name}'. "
+            "Register it in engine/function_registry.py or use a raw_sql feature."
+        ]
+
+    # Recurse: each FieldRef argument should resolve on the entity. Reuse the
+    # column-lookup path by faking a single-field SliceDef per arg so we get
+    # consistent error messages.
+    errors: list[str] = []
+    for arg in expr.args:
+        if isinstance(arg, FieldRef):
+            sub = SliceDef(field=".".join(arg.parts), alias=None)
+            errors.extend(
+                _validate_slice_traversal(sub, root_entity, entities, extra_names)
+            )
+    return errors
+
+
 def _validate_slice_traversal(
     slice_def: SliceDef,
     root_entity: EntityDef,
@@ -568,6 +615,17 @@ def _validate_slice_traversal(
 
     Returns list of error messages (empty = valid).
     """
+    # Expression slice (e.g. ``format_date(occurred_at, '...')``) — recognise
+    # any function the engine can compile, not just the format_time special
+    # case that ``_parse_attribute_item`` extracts up front. Without this,
+    # the literal expression string falls through to the column-lookup path
+    # below and yields "field 'format_date(...)' not found on entity" even
+    # though the compiler handles it fine (VG-044).
+    if "(" in slice_def.field:
+        return _validate_expression_slice(
+            slice_def, root_entity, entities, extra_names,
+        )
+
     parts = slice_def.field.split(".")
     if len(parts) == 1:
         all_attrs = _collect_entity_attributes(root_entity, extra_names=extra_names)
@@ -706,9 +764,11 @@ def validate_query_yaml(
 
         attr_str = attr_item if isinstance(attr_item, str) else str(attr_item)
         if "(" in attr_str:
-            # Expression attribute — validate it parses as a known function call
+            # Expression attribute — must parse as a call to a function the
+            # engine can actually compile (the function registry, queried
+            # directly so we never drift like VG-044).
+            from engine.function_registry import is_registered
             from semantic.expression import FuncCallExpr, parse_expression_str
-            _SUPPORTED_ATTR_FUNCS = {"format_date"}
             try:
                 expr = parse_expression_str(attr_str)
                 if not isinstance(expr, FuncCallExpr):
@@ -717,12 +777,13 @@ def validate_query_yaml(
                         message=f"expression attribute must be a function call, got {type(expr).__name__}",
                         rule="invalid_attribute_expr",
                     ))
-                elif expr.name not in _SUPPORTED_ATTR_FUNCS:
+                elif not is_registered(expr.name):
                     errors.append(ValidationError(
                         path=f"attributes[{i}]",
                         message=(
-                            f"unsupported attribute function '{expr.name}'; "
-                            f"supported: {sorted(_SUPPORTED_ATTR_FUNCS)}"
+                            f"unknown attribute function '{expr.name}'. "
+                            "Register it in engine/function_registry.py "
+                            "or use a raw_sql feature."
                         ),
                         rule="invalid_attribute_expr",
                     ))

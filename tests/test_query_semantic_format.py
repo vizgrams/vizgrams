@@ -531,6 +531,41 @@ class TestValidateQueryYaml:
         rules = {e.rule for e in errors}
         assert "invalid_metric_field" in rules
 
+    def test_format_date_attribute_passes_validation(self, tmp_path):
+        """VG-044: format_date is registered in engine/function_registry.py
+        but the validator used to hard-code only format_time; this would
+        reject the YAML with "field 'format_date(...)' not found on entity".
+        Now the validator queries the registry directly."""
+        path = _write_query(tmp_path, {
+            "root": "ProductVersion",
+            "attributes": [{"day_key": "format_date(released_at, 'YYYY-MM-dd')"}],
+            "measures": [{"cnt": {"expr": "count(build_duration)"}}],
+        })
+        errors = validate_query_yaml(path, _make_entities())
+        assert errors == [], f"unexpected errors: {[(e.path, e.message) for e in errors]}"
+
+    def test_unknown_attribute_function_fails_validation(self, tmp_path):
+        path = _write_query(tmp_path, {
+            "root": "ProductVersion",
+            "attributes": [{"x": "no_such_fn(released_at)"}],
+            "measures": [{"cnt": {"expr": "count(build_duration)"}}],
+        })
+        errors = validate_query_yaml(path, _make_entities())
+        msgs = [e.message for e in errors]
+        assert any("unknown attribute function 'no_such_fn'" in m for m in msgs), msgs
+
+    def test_attribute_function_arg_must_exist_on_entity(self, tmp_path):
+        """Even when the function is registered, its FieldRef args must
+        resolve on the root entity."""
+        path = _write_query(tmp_path, {
+            "root": "ProductVersion",
+            "attributes": [{"x": "format_date(no_such_column, 'YYYY-MM')"}],
+            "measures": [{"cnt": {"expr": "count(build_duration)"}}],
+        })
+        errors = validate_query_yaml(path, _make_entities())
+        msgs = [e.message for e in errors]
+        assert any("no_such_column" in m for m in msgs), msgs
+
     def test_timestamp_without_grain_fails(self, tmp_path):
         path = _write_query(tmp_path, {
             "root": "ProductVersion",

@@ -6,6 +6,7 @@ import pytest
 
 from engine.function_registry import (
     DialectFunctionError,
+    is_registered,
     register,
     render_function,
 )
@@ -43,6 +44,17 @@ class TestRegistry:
         """render_function normalises function names to lower-case."""
         result = render_function("concat", ["'a'", "'b'"], {})
         assert "a" in result and "b" in result
+
+    def test_is_registered(self):
+        """All built-in functions report registered; unknowns report not."""
+        assert is_registered("format_date")
+        assert is_registered("format_time")
+        assert is_registered("json_has_key")
+        assert is_registered("datetime_diff")
+        assert is_registered("concat")
+        # Case-insensitive — same normalisation as render_function.
+        assert is_registered("FORMAT_DATE")
+        assert not is_registered("definitely_not_a_function")
 
 
 # ---------------------------------------------------------------------------
