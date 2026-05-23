@@ -33,8 +33,8 @@ interface UserTurn {
 type Turn = UserTurn | AssistantTurn
 
 // Per-model sessionStorage key. Session-scoped so the chat survives
-// navigation into /explore (drilldown round-trips) and back, but is cleared
-// when the tab closes — chat state isn't meant to outlive the browser session.
+// drilldown round-trips into /views, /entities, or /apps and back, but is
+// cleared when the tab closes — chat state isn't meant to outlive the session.
 function storageKey(model: string) {
   return `vizgrams:chat:turns:${model}`
 }

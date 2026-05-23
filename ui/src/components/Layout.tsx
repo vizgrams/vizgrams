@@ -115,7 +115,7 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
             <NavItem to="/admin/models" matchPrefix="/admin/models" icon={<Box className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Models</NavItem>
             <NavItem to="/tools" icon={<Download className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Extractors</NavItem>
             <NavItem to="/mappers" icon={<Shuffle className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Mappers</NavItem>
-            <NavItem to="/entities" icon={<Layers className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Ontology</NavItem>
+            <NavItem to="/ontology" icon={<Layers className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Ontology</NavItem>
             <NavItem to="/jobs" icon={<Clock className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Jobs</NavItem>
           </NavSection>
         )}
@@ -134,10 +134,19 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
           {(role === 'creator' || role === 'admin') && (
             <NavItem to="/chat" matchExact icon={<MessageSquare className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Chat</NavItem>
           )}
-          <NavItem to="/explore" matchExact icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Views</NavItem>
-          <NavItem to="/explore?section=entities" matchSearch="section=entities" icon={<Layers className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Entity Explorer</NavItem>
+          <NavItem to="/views" matchPrefix="/views" icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Views</NavItem>
+          <NavItem to="/entities" matchPrefix="/entities" icon={<Layers className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Entity Explorer</NavItem>
           {apps.map((a) => (
-            <NavItem key={a.name} to={`/explore?app=${encodeURIComponent(a.name)}`} matchSearch={`app=${encodeURIComponent(a.name)}`} icon={<LayoutGrid className="h-3.5 w-3.5" />} collapsed={collapsed} dark>{a.name}</NavItem>
+            <NavItem
+              key={a.name}
+              to={`/apps/${encodeURIComponent(a.name)}`}
+              matchPrefix={`/apps/${encodeURIComponent(a.name)}`}
+              icon={<LayoutGrid className="h-3.5 w-3.5" />}
+              collapsed={collapsed}
+              dark
+            >
+              {a.name}
+            </NavItem>
           ))}
         </NavSection>
 
@@ -272,13 +281,17 @@ function NavItem({ to, icon, disabled, collapsed, dark, matchExact, matchPrefix,
 // ---------------------------------------------------------------------------
 
 function Breadcrumbs({ pathname }: { pathname: string }) {
-  if (!pathname.startsWith('/explore/')) return null
+  // Only on entity detail — the list pages already show the selected entity
+  // in the sidebar, so a breadcrumb there would be redundant. Detail is a
+  // standalone surface where a back-link to the list is genuinely useful.
+  if (!pathname.startsWith('/entities/')) return null
   const parts = pathname.split('/').filter(Boolean)
+  if (parts.length < 3) return null  // entity-list, not detail
 
   const crumbs = [
-    { href: '/explore', label: 'Entities' },
-    ...(parts[1] ? [{ href: `/explore/${parts[1]}`, label: parts[1] }] : []),
-    ...(parts[2] ? [{ href: `/explore/${parts[1]}/${parts[2]}`, label: decodeURIComponent(parts[2]) }] : []),
+    { href: '/entities', label: 'Entities' },
+    { href: `/entities/${parts[1]}`, label: parts[1] },
+    { href: `/entities/${parts[1]}/${parts[2]}`, label: decodeURIComponent(parts[2]) },
   ]
 
   return (

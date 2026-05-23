@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * EntityDetailFrame — props-driven version of EntityDetailPage.
- * Used inside ExploreShell where navigation is handled by useDrillStack.
+ * EntityDetailFrame — props-driven entity detail view used inside EntitiesPage.
+ * Calls ``onNavigate`` with a ``DrillFrame`` when the user clicks a related
+ * record; the page maps frames to router URLs via ``frameToUrl``.
  */
 import { useState } from 'react'
 import type { RelationshipStub, FeatureOut } from '@/api/client'
@@ -12,10 +13,10 @@ import { useModel } from '@/context/ModelContext'
 import { Badge, Card, ErrorMessage, Spinner } from '@/components/Layout'
 import { ChevronRight, Check, X, Pencil, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { DrillFrame } from '@/hooks/useDrillStack'
+import type { DrillFrame } from '@/components/view/drilldown'
 
 // ---------------------------------------------------------------------------
-// Feature inline editor (unchanged from EntityDetailPage)
+// Feature inline editor
 // ---------------------------------------------------------------------------
 
 function FeatureValueCell({

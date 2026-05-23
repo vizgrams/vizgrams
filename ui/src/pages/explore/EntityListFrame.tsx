@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * EntityListFrame — props-driven version of EntityListPage.
- * Used inside ExploreShell where navigation is handled by useDrillStack.
+ * EntityListFrame — props-driven entity data browser used inside EntitiesPage.
+ * Calls ``onNavigate`` with a ``DrillFrame`` on row click; the page maps
+ * frames to router URLs via ``frameToUrl``.
  */
 import { useState, useEffect } from 'react'
 import { ChevronUp, ChevronDown, ChevronsUpDown, RefreshCw, Play, ChevronRight } from 'lucide-react'
@@ -14,12 +15,12 @@ import { Badge, Card, ErrorMessage, Spinner } from '@/components/Layout'
 import { JobStatusPanel } from '@/components/JobStatusPanel'
 import { cn } from '@/lib/utils'
 import type { AttributeOut, FeatureOut } from '@/api/client'
-import type { DrillFrame } from '@/hooks/useDrillStack'
+import type { DrillFrame } from '@/components/view/drilldown'
 
 const PAGE_SIZE = 100
 
 // ---------------------------------------------------------------------------
-// Column selector (unchanged from EntityListPage)
+// Column selector
 // ---------------------------------------------------------------------------
 
 interface ColItem { id: string; label: string; isFeature: boolean; description?: string | null }

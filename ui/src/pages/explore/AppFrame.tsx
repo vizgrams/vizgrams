@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * AppFrame — props-driven app canvas used inside ExploreShell.
+ * AppFrame — props-driven app canvas used inside AppPage.
  *
  * Renders an application's views in their layout. Every table row that carries
  * a drilldown config (app_drilldown or row_drilldown) calls onNavigate so the
- * parent stack gets the next frame — keeping the breadcrumb unified across
- * apps, views, and entity details.
+ * page can map the resulting frame to a router URL — keeping navigation
+ * consistent across apps, views, and entity details.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Activity, AlertCircle, ChevronRight, Hash, Loader2, Map, Play, Save, SlidersHorizontal, Table } from 'lucide-react'
@@ -22,7 +22,7 @@ import { Card, Spinner, ErrorMessage } from '@/components/Layout'
 import { LineBarChart } from '@/components/charts/LineBarChart'
 import { CalendarHeatmapChart } from '@/components/charts/CalendarHeatmapChart'
 import { MapChart } from '@/components/charts/MapChart'
-import type { DrillFrame } from '@/hooks/useDrillStack'
+import type { DrillFrame } from '@/components/view/drilldown'
 
 // ---------------------------------------------------------------------------
 // Drilldown resolution — unified for app / view / entity targets

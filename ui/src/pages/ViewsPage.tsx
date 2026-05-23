@@ -2,44 +2,43 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * ExploreShell — unified exploration surface combining Views and Entity browsing.
+ * ViewsPage — saved-views surface.
  *
- * Left panel: scrollable list of Views + Entities (both sections).
- * Right panel: frame renderer driven by useDrillStack.
+ *   /views               left rail with the list of views, empty right pane
+ *   /views/:name         left rail + the named view rendered on the right
+ *   /views/:name?p=v     same, with the view params prefilled from the URL
  *
- * Drilldown: clicking within any frame pushes onto the shared stack.
- * Sidebar clicks reset the stack to a fresh frame.
- * Param changes update the URL hash — browser back/forward navigates between param states.
+ * Drilldown clicks bubble up through ``ViewContent`` and resolve to a
+ * router URL via ``frameToUrl`` — this page never holds a stack; browser
+ * history is the stack.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Activity, Hash,
   Loader2, Play, Plus, Save, SlidersHorizontal, Table, Upload,
 } from 'lucide-react'
-import type { ViewSummary, ViewResult, ParamDef, EntitySummary, ApplicationSummary } from '@/api/client'
+
+import type { ViewSummary, ViewResult, ParamDef } from '@/api/client'
 import { publishVizgram, previewCaption } from '@/api/client'
 import { useModel } from '@/context/ModelContext'
 import { useRole } from '@/context/RoleContext'
 import { cn } from '@/lib/utils'
 import { ErrorMessage, Spinner } from '@/components/Layout'
-import { useDrillStack } from '@/hooks/useDrillStack'
-import type { DrillFrame } from '@/hooks/useDrillStack'
-import { EntityDetailFrame } from '@/pages/explore/EntityDetailFrame'
-import { EntityListFrame } from '@/pages/explore/EntityListFrame'
-import { AppFrame } from '@/pages/explore/AppFrame'
 import { EditSection } from '@/pages/explore/EditSection'
 import type { ValidStatus } from '@/components/StatusBadge'
 import type { EditMode } from '@/pages/explore/EditShell'
 import { YamlEditor } from '@/components/YamlEditor'
-// View renderer + drilldown types extracted to their own module so the
-// chat (VG-237) can render saved/inline views with the same component path
-// the explorer uses. See ui/src/components/view/.
-import type { ViewDrilldownConfig } from '@/components/view/drilldown'
+import {
+  type DrillFrame,
+  type ViewDrilldownConfig,
+  frameToUrl,
+} from '@/components/view/drilldown'
 import { ViewContent } from '@/components/view/ViewContent'
 
 // ---------------------------------------------------------------------------
-// Type icons / colours
+// Type icons / colours (left rail)
 // ---------------------------------------------------------------------------
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
@@ -55,8 +54,11 @@ const TYPE_COLOURS: Record<string, string> = {
   map: 'bg-teal-50 text-teal-700 border-teal-200',
 }
 
+// Reserved-name validation matching the backend slug rules.
+const NAME_RE = /^[a-z][a-z0-9_]*$/
+
 // ---------------------------------------------------------------------------
-// View result frame — renders a single view execution + param bar
+// View result frame — renders a single saved view + param bar + edit + publish
 // ---------------------------------------------------------------------------
 
 function ViewResultFrame({
@@ -166,7 +168,6 @@ function ViewResultFrame({
     setPublishCaption('')
     setCaptionUnavailable(false)
     setPublishError(null)
-    setCaptionUnavailable(false)
     setPublishOpen(true)
     setCaptionLoading(true)
     try {
@@ -243,7 +244,6 @@ function ViewResultFrame({
         )}
       </div>
 
-      {/* Edit section — Builder + YAML unified, collapsed by default */}
       <EditSection
         defaultOpen={false}
         mode={editMode}
@@ -268,7 +268,6 @@ function ViewResultFrame({
         validErrors={validErrors}
       />
 
-      {/* Param bar */}
       {(result?.params ?? []).length > 0 && (
         <div className="flex items-end gap-3 flex-wrap rounded-lg border bg-muted/30 px-4 py-3">
           <SlidersHorizontal className="h-4 w-4 text-muted-foreground shrink-0 mt-1" />
@@ -367,285 +366,144 @@ function ViewResultFrame({
   )
 }
 
-
 // ---------------------------------------------------------------------------
-// Main shell
+// Page shell — sidebar + right pane
 // ---------------------------------------------------------------------------
 
-export function ExploreShell() {
+export function ViewsPage() {
   const { model, api } = useModel()
   const { role } = useRole()
-  const { stack, current, push, reset, replaceParams, navigateTo } = useDrillStack(model)
+  const navigate = useNavigate()
+  const { name } = useParams<{ name?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
+
   const canCreate = role === 'admin' || role === 'creator'
 
   const [views, setViews] = useState<ViewSummary[]>([])
-  const [entities, setEntities] = useState<EntitySummary[]>([])
-  const [apps, setApps] = useState<ApplicationSummary[]>([])
 
-  // Track the previous model value so we can distinguish a real model switch
-  // from the initial mount. We must NOT clear URL params on initial mount — the
-  // user may have navigated directly to /explore?app=name from another page and
-  // we need those params to survive so the search-params effect below can open
-  // the correct frame. Clearing only makes sense when the model actually changes
-  // from one value to another (stale params from the old model must be dropped).
-  // Using prevModelRef (rather than an "isFirstRun" bool) is StrictMode-safe:
-  // the simulated remount sees the same model value and therefore isModelChange
-  // stays false on the second invocation.
-  const prevModelRef = useRef<string | null>(null)
-
-  // Load sidebar data on model change; also clear URL params that belong to the
-  // previous model so the searchParams effect below doesn't re-apply a stale app.
+  // Reload the views list whenever the model changes.
   useEffect(() => {
-    const isModelChange = prevModelRef.current !== null && prevModelRef.current !== model
-    prevModelRef.current = model
-    setViews([]); setEntities([]); setApps([])
+    setViews([])
     api.listViews().then(setViews).catch(() => {})
-    api.listEntities().then(setEntities).catch(() => {})
-    api.listApplications().then(setApps).catch(() => {})
-    if (isModelChange && (searchParams.has('app') || searchParams.has('section'))) {
-      setSearchParams({}, { replace: true })
-    }
+    // api identity changes per-render — depend on the model string only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model])
 
-  // React to primary sidebar navigation params (?app=name, ?section=entities).
-  // Guard the app case: only restore the frame if the app actually exists in the
-  // current model — prevents a stale ?app= param from targeting the wrong model.
-  // Also skip the reset when the current frame is already this app — prevents a
-  // feedback loop where the sync effect (below) updates ?app= and this effect
-  // then resets the frame with empty params, losing drilldown context (e.g. team_name).
-  useEffect(() => {
-    const app = searchParams.get('app')
-    const section = searchParams.get('section')
-    if (app) {
-      if (apps.some((a) => a.name === app)) {
-        if (current?.kind !== 'app' || current.name !== app) {
-          reset({ kind: 'app', name: app, params: {} })
-        }
-      }
-    } else if (section === 'entities' && entities.length > 0) {
-      reset({ kind: 'entity-list', entity: entities[0].name })
-    } else if (current && window.location.hash === '') {
-      // Plain /explore — user clicked the Explore NavItem, which clears both
-      // search and hash. Drop the previously-loaded frame so the views list
-      // appears. Deep links like /explore#view/foo set the hash, so this
-      // branch leaves them alone.
-      navigateTo(-1)
+  const params = Object.fromEntries(searchParams)
+
+  const handleNavigate = useCallback((frame: DrillFrame) => {
+    navigate(frameToUrl(frame))
+  }, [navigate])
+
+  // Run/Enter on the param bar updates the URL search params so the state
+  // is shareable and survives a refresh.
+  const handleParamsApplied = useCallback((next: Record<string, string>) => {
+    const sp = new URLSearchParams()
+    for (const [k, v] of Object.entries(next)) {
+      if (v) sp.set(k, v)
     }
-  }, [searchParams.toString(), entities.length, apps.length])
-
-  // Sync ?app= search param with current frame so the Layout NavItem
-  // stays highlighted correctly, and so stale ?app= params don't trigger
-  // the reset effect above when navigating back to a non-app frame.
-  // After history.replaceState we dispatch a synthetic popstate so React
-  // Router's useLocation refreshes — raw history mutations are invisible to
-  // it otherwise, leaving the sidebar selection stuck on the old app.
-  useEffect(() => {
-    const url = new URL(window.location.href)
-    let changed = false
-    if (current?.kind === 'app') {
-      if (url.searchParams.get('app') !== current.name) {
-        url.searchParams.set('app', current.name)
-        url.searchParams.delete('section')
-        changed = true
-      }
-    } else if (current && url.searchParams.has('app')) {
-      // Only strip when there's an actual non-app frame loaded. A null current
-      // means we're still resolving the URL — the searchParams effect will
-      // populate the frame once apps finish loading; stripping here races and
-      // loses the ?app= param before that effect can use it.
-      url.searchParams.delete('app')
-      changed = true
-    }
-    if (changed) {
-      history.replaceState(history.state, '', url.pathname + url.search + url.hash)
-      window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
-    }
-  }, [current])
-
-  function selectView(name: string) {
-    reset({ kind: 'view', name, params: {} })
-  }
-
-  function selectEntity(entity: string) {
-    reset({ kind: 'entity-list', entity })
-  }
-
-  // Reserved-name validation matching the backend slug rules.
-  const NAME_RE = /^[a-z][a-z0-9_]*$/
+    setSearchParams(sp, { replace: true })
+  }, [setSearchParams])
 
   async function startNewView() {
-    const name = window.prompt('New view name (lowercase, underscores only):')?.trim()
-    if (!name) return
-    if (!NAME_RE.test(name)) {
-      alert(`Invalid name "${name}". Use lowercase letters, digits, and underscores; must start with a letter.`)
+    const newName = window.prompt('New view name (lowercase, underscores only):')?.trim()
+    if (!newName) return
+    if (!NAME_RE.test(newName)) {
+      alert(`Invalid name "${newName}". Use lowercase letters, digits, and underscores; must start with a letter.`)
       return
     }
-    if (views.some((v) => v.name === name)) {
-      alert(`A view named "${name}" already exists.`)
+    if (views.some((v) => v.name === newName)) {
+      alert(`A view named "${newName}" already exists.`)
       return
     }
-    const template = `name: ${name}\ntype: chart\nquery: query_name\nvisualization:\n  chart_type: bar\n  x: x_column\n  y:\n    - y_column\n`
+    const template = `name: ${newName}\ntype: chart\nquery: query_name\nvisualization:\n  chart_type: bar\n  x: x_column\n  y:\n    - y_column\n`
     try {
-      await api.saveView(name, template)
+      await api.saveView(newName, template)
       const list = await api.listViews()
       setViews(list)
-      reset({ kind: 'view', name, params: {} })
+      navigate(`/views/${encodeURIComponent(newName)}`)
     } catch (e) {
       alert(`Failed to create view: ${String(e)}`)
     }
   }
 
   async function startNewApp() {
-    const name = window.prompt('New app name (lowercase, underscores only):')?.trim()
-    if (!name) return
-    if (!NAME_RE.test(name)) {
-      alert(`Invalid name "${name}". Use lowercase letters, digits, and underscores; must start with a letter.`)
+    const newName = window.prompt('New app name (lowercase, underscores only):')?.trim()
+    if (!newName) return
+    if (!NAME_RE.test(newName)) {
+      alert(`Invalid name "${newName}". Use lowercase letters, digits, and underscores; must start with a letter.`)
       return
     }
-    if (apps.some((a) => a.name === name)) {
-      alert(`An app named "${name}" already exists.`)
-      return
-    }
-    const template = `name: ${name}\nviews: []\nlayout: []\nparams: []\n`
+    const template = `name: ${newName}\nviews: []\nlayout: []\nparams: []\n`
     try {
-      await api.saveApplication(name, template)
-      const list = await api.listApplications()
-      setApps(list)
-      reset({ kind: 'app', name, params: {} })
+      await api.saveApplication(newName, template)
+      navigate(`/apps/${encodeURIComponent(newName)}`)
     } catch (e) {
       alert(`Failed to create app: ${String(e)}`)
     }
   }
 
-
-  const handleNavigate = useCallback((frame: DrillFrame) => {
-    push(frame)
-  }, [push])
-
   return (
     <div className="flex h-full -mx-6 -my-6 overflow-hidden">
-
-      {/* ── Left panel — context-sensitive secondary nav ── */}
-      {searchParams.get('app') == null && current?.kind !== 'app' && (
-        <aside className="w-52 shrink-0 border-r flex flex-col overflow-hidden bg-card">
-          <div className="flex-1 overflow-y-auto py-2">
-
-            {/* Entity Explorer mode */}
-            {searchParams.get('section') === 'entities' && (
-              entities.length === 0
-                ? <p className="px-4 py-6 text-xs text-muted-foreground text-center">Loading…</p>
-                : entities.map((e) => {
-                    const active = stack.length > 0 && stack[0].kind === 'entity-list' && (stack[0] as { entity: string }).entity === e.name
-                    return (
-                      <button
-                        key={e.name}
-                        onClick={() => selectEntity(e.name)}
-                        title={e.name}
-                        className={cn(
-                          'w-full text-left px-4 py-2 transition-colors',
-                          active ? 'bg-primary/8 text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                        )}
-                      >
-                        <div className="text-xs line-clamp-1 break-all">{e.name}</div>
-                        {e.row_count != null && (
-                          <div className="text-[10px] text-muted-foreground/60 mt-0.5 tabular-nums">
-                            {e.row_count.toLocaleString()} rows
-                          </div>
-                        )}
-                      </button>
-                    )
-                  })
-            )}
-
-            {/* Views mode (default — no section or app param) */}
-            {searchParams.get('section') == null && (
-              <>
-                {canCreate && (
-                  <div className="px-2 pb-2 mb-1 border-b flex gap-1">
-                    <button
-                      onClick={startNewView}
-                      className="flex-1 flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded px-2 py-1.5 transition-colors"
-                      title="Create a new view"
-                    >
-                      <Plus className="h-3 w-3" /> View
-                    </button>
-                    <button
-                      onClick={startNewApp}
-                      className="flex-1 flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded px-2 py-1.5 transition-colors"
-                      title="Create a new app"
-                    >
-                      <Plus className="h-3 w-3" /> App
-                    </button>
-                  </div>
-                )}
-                {views.length === 0
-                ? <p className="px-4 py-6 text-xs text-muted-foreground text-center">Loading…</p>
-                : views.map((v) => {
-                    const active = stack.length > 0 && stack[0].kind === 'view' && stack[0].name === v.name
-                    return (
-                      <button
-                        key={v.name}
-                        onClick={() => selectView(v.name)}
-                        title={v.name}
-                        className={cn(
-                          'w-full text-left px-4 py-2 flex items-center gap-2.5 transition-colors',
-                          active ? 'bg-primary/8 text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                        )}
-                      >
-                        <span className={cn('shrink-0 inline-flex items-center rounded border p-0.5', TYPE_COLOURS[v.type] ?? 'bg-muted text-muted-foreground border-border')}>
-                          {TYPE_ICONS[v.type]}
-                        </span>
-                        <span className="text-xs font-mono leading-snug line-clamp-2 break-all">{v.name}</span>
-                      </button>
-                    )
-                  })
-                }
-              </>
-            )}
-
-          </div>
-        </aside>
-      )}
-
-      {/* ── Right panel ── */}
-      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-
-        {/* Frame content */}
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          {!current ? (
-            <div className="flex flex-col items-center justify-center h-48 text-center gap-2">
-              <p className="text-muted-foreground text-sm">Select an app, view, or entity to start exploring.</p>
+      <aside className="w-52 shrink-0 border-r flex flex-col overflow-hidden bg-card">
+        <div className="flex-1 overflow-y-auto py-2">
+          {canCreate && (
+            <div className="px-2 pb-2 mb-1 border-b flex gap-1">
+              <button
+                onClick={startNewView}
+                className="flex-1 flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded px-2 py-1.5 transition-colors"
+                title="Create a new view"
+              >
+                <Plus className="h-3 w-3" /> View
+              </button>
+              <button
+                onClick={startNewApp}
+                className="flex-1 flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded px-2 py-1.5 transition-colors"
+                title="Create a new app"
+              >
+                <Plus className="h-3 w-3" /> App
+              </button>
             </div>
-          ) : current.kind === 'app' ? (
-            <AppFrame
-              key={`${current.name}-${JSON.stringify(current.params)}`}
-              name={current.name}
-              initialParams={current.params}
-              onNavigate={handleNavigate}
-              onParamsApplied={replaceParams}
-            />
-          ) : current.kind === 'view' ? (
+          )}
+          {views.length === 0
+            ? <p className="px-4 py-6 text-xs text-muted-foreground text-center">Loading…</p>
+            : views.map((v) => {
+                const active = name === v.name
+                return (
+                  <button
+                    key={v.name}
+                    onClick={() => navigate(`/views/${encodeURIComponent(v.name)}`)}
+                    title={v.name}
+                    className={cn(
+                      'w-full text-left px-4 py-2 flex items-center gap-2.5 transition-colors',
+                      active ? 'bg-primary/8 text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                    )}
+                  >
+                    <span className={cn('shrink-0 inline-flex items-center rounded border p-0.5', TYPE_COLOURS[v.type] ?? 'bg-muted text-muted-foreground border-border')}>
+                      {TYPE_ICONS[v.type]}
+                    </span>
+                    <span className="text-xs font-mono leading-snug line-clamp-2 break-all">{v.name}</span>
+                  </button>
+                )
+              })
+          }
+        </div>
+      </aside>
+
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-y-auto px-6 py-6">
+          {name ? (
             <ViewResultFrame
-              key={`${current.name}-${JSON.stringify(current.params)}`}
-              name={current.name}
-              initialParams={current.params}
+              key={name}
+              name={name}
+              initialParams={params}
               onNavigate={handleNavigate}
-              onParamsApplied={replaceParams}
-            />
-          ) : current.kind === 'entity-list' ? (
-            <EntityListFrame
-              key={current.entity}
-              entity={current.entity}
-              onNavigate={handleNavigate}
+              onParamsApplied={handleParamsApplied}
             />
           ) : (
-            <EntityDetailFrame
-              key={`${current.entity}-${current.id}`}
-              entity={current.entity}
-              id={current.id}
-              onNavigate={handleNavigate}
-            />
+            <div className="flex flex-col items-center justify-center h-48 text-center gap-2">
+              <p className="text-muted-foreground text-sm">Select a view from the list to start exploring.</p>
+            </div>
           )}
         </div>
       </div>
