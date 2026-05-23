@@ -40,8 +40,8 @@ export default function ChatPage() {
   const [globalError, setGlobalError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
-  // Reset the conversation when the model changes — a chat about iagai
-  // makes no sense if the user switches to openflights mid-stream.
+  // Reset the conversation when the model changes — a chat about one
+  // model's data makes no sense if the user switches mid-stream.
   useEffect(() => {
     setTurns([])
     setInput('')
