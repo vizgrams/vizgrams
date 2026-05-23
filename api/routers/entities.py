@@ -4,7 +4,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.batch_client import BatchServiceError, submit_materialize_job
-from api.dependencies import require_user_or_service_account, resolve_entity, resolve_model_dir
+from api.dependencies import (
+    author_from_principal,
+    require_user_or_service_account,
+    resolve_entity,
+    resolve_model_dir,
+)
 from api.routers.jobs import _to_job_out
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.entity import EntityCreate, EntityDetail, EntitySummary
@@ -141,15 +146,21 @@ def update_feature(
     body: dict,
     entity: str = Depends(resolve_entity),
     model_dir: str = Depends(resolve_model_dir),
+    principal: dict = Depends(require_user_or_service_account),
 ):
     """Update a feature. Accepts either full YAML content ({"content": "..."}) or
     an expression-only update ({"expr": "..."}) for inline editing from entity detail views."""
+    user_id, via = author_from_principal(principal)
     try:
         if "content" in body:
             return feature_service.create_or_replace_feature(
-                model_dir, entity, feature_id, body["content"]
+                model_dir, entity, feature_id, body["content"],
+                user_id=user_id, via=via,
             )
-        return entity_service.save_feature_expr(model_dir, feature_id, body.get("expr", ""))
+        return entity_service.save_feature_expr(
+            model_dir, feature_id, body.get("expr", ""),
+            user_id=user_id, via=via,
+        )
     except FeatureValidationError as exc:
         raise HTTPException(
             status_code=422,
@@ -168,11 +179,14 @@ def save_entity_yaml(
     body: YAMLContent,
     entity: str = Depends(resolve_entity),
     model_dir: str = Depends(resolve_model_dir),
-    _principal: dict = Depends(require_user_or_service_account),
+    principal: dict = Depends(require_user_or_service_account),
 ):
     """Overwrite the entity's ontology YAML directly (no materialization triggered)."""
+    user_id, via = author_from_principal(principal)
     try:
-        return entity_service.save_entity_yaml(model_dir, entity, body.content)
+        return entity_service.save_entity_yaml(
+            model_dir, entity, body.content, user_id=user_id, via=via,
+        )
     except EntityValidationError as exc:
         raise HTTPException(
             status_code=422,

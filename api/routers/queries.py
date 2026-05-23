@@ -14,6 +14,7 @@ _log = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 
 from api.dependencies import (
+    author_from_principal,
     get_current_user,
     require_creator,
     require_user_or_service_account,
@@ -180,11 +181,14 @@ def upsert_query(
     query: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
-    _principal: dict = Depends(require_user_or_service_account),
+    principal: dict = Depends(require_user_or_service_account),
 ):
     """Validate YAML content and write (create or overwrite) a query file."""
+    user_id, via = author_from_principal(principal)
     try:
-        return query_service.create_or_replace_query(model_dir, query, body.content)
+        return query_service.create_or_replace_query(
+            model_dir, query, body.content, user_id=user_id, via=via,
+        )
     except QueryValidationError as exc:
         raise HTTPException(
             status_code=422,

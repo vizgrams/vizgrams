@@ -3,10 +3,10 @@
 
 from pydantic import BaseModel  # noqa: F401  (kept for any future plain-model additions)
 
-from api.schemas.common import CertFields
+from api.schemas.common import CertFields, OwnerFields
 
 
-class FeatureSummary(CertFields):
+class FeatureSummary(CertFields, OwnerFields):
     feature_id: str | None = None
     name: str
     entity: str

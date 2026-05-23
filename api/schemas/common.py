@@ -32,3 +32,17 @@ class CertFields(BaseModel):
     certified_by: str | None = None         # user UUID; resolve via vizgrams_db
     certified_by_display: str | None = None
     certified_at: str | None = None
+
+
+class OwnerFields(BaseModel):
+    """Ownership surface for user-facing artifacts (VG-252).
+
+    Mixed into View / Query / Feature summaries and details so the UI can
+    show "created by X" + filter to "things I own". The ``created_via``
+    enum reveals which surface authored the save — useful for distinguishing
+    library work from chat-spawned drafts.
+    """
+    created_by: str | None = None           # user UUID; null for legacy/system rows
+    created_by_display: str | None = None
+    created_via: str | None = None          # 'editor' | 'chat' | 'sync' | 'system'
+    created_at: str | None = None

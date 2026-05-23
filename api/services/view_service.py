@@ -16,9 +16,15 @@ def list_views(model_dir: Path) -> list[dict]:
     views_dir = model_dir / "views"
     views = YAMLAdapter.load_views(views_dir)
     from api.services.certification_service import list_cert_payloads
+    from api.services.ownership_service import list_owner_payloads
     certs = list_cert_payloads(model_dir, "view")
+    owners = list_owner_payloads(model_dir, "view")
     return [
-        {"name": v.name, "type": v.type, "query": v.query, **certs.get(v.name, _cert_default())}
+        {
+            "name": v.name, "type": v.type, "query": v.query,
+            **certs.get(v.name, _cert_default()),
+            **owners.get(v.name, _owner_default()),
+        }
         for v in views
     ]
 
@@ -30,10 +36,12 @@ def get_view(model_dir: Path, view_name: str) -> dict:
         raise KeyError(f"View '{view_name}' not found.")
     raw_yaml = metadata_db.get_current_content(model_dir, "view", view_name)
     from api.services.certification_service import get_cert_payload
+    from api.services.ownership_service import get_owner_payload
     return {
         **_view_detail(v, raw_yaml),
         "params": _query_params(model_dir, v.query),
         **get_cert_payload(model_dir, "view", view_name),
+        **get_owner_payload(model_dir, "view", view_name),
     }
 
 
@@ -44,6 +52,17 @@ def _cert_default() -> dict:
         "certified_by": None,
         "certified_by_display": None,
         "certified_at": None,
+    }
+
+
+def _owner_default() -> dict:
+    """Shape used when an artifact has no current version row (shouldn't happen
+    for listed artifacts, but defensive)."""
+    return {
+        "created_by": None,
+        "created_by_display": None,
+        "created_via": None,
+        "created_at": None,
     }
 
 
@@ -233,7 +252,10 @@ class ViewValidationError(Exception):
         super().__init__("View validation failed")
 
 
-def create_or_replace_view(model_dir: Path, view_name: str, content: str) -> dict:
+def create_or_replace_view(
+    model_dir: Path, view_name: str, content: str,
+    user_id: str | None = None, via: str | None = None,
+) -> dict:
     import shutil
     import tempfile
 
@@ -261,7 +283,9 @@ def create_or_replace_view(model_dir: Path, view_name: str, content: str) -> dic
     if errors:
         raise ViewValidationError([{"path": e.path, "message": e.message} for e in errors])
 
-    metadata_db.record_version(model_dir, "view", view_name, content)
+    metadata_db.record_version(
+        model_dir, "view", view_name, content, user_id=user_id, via=via,
+    )
     return get_view(model_dir, view_name)
 
 

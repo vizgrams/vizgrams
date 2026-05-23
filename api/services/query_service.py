@@ -17,7 +17,9 @@ def list_queries(model_dir: Path) -> list[dict]:
     queries_dir = model_dir / "queries"
     queries = YAMLAdapter.load_queries(queries_dir)
     from api.services.certification_service import list_cert_payloads
+    from api.services.ownership_service import list_owner_payloads
     certs = list_cert_payloads(model_dir, "query")
+    owners = list_owner_payloads(model_dir, "query")
     return [
         {
             "name": q.name,
@@ -25,6 +27,7 @@ def list_queries(model_dir: Path) -> list[dict]:
             "measure_count": _measure_count(q),
             "group_by_count": len(q.slices) if hasattr(q, "slices") and q.slices else 0,
             **certs.get(q.name, _cert_default()),
+            **owners.get(q.name, _owner_default()),
         }
         for q in queries
     ]
@@ -36,6 +39,15 @@ def _cert_default() -> dict:
         "certified_by": None,
         "certified_by_display": None,
         "certified_at": None,
+    }
+
+
+def _owner_default() -> dict:
+    return {
+        "created_by": None,
+        "created_by_display": None,
+        "created_via": None,
+        "created_at": None,
     }
 
 
@@ -63,6 +75,7 @@ def get_query(model_dir: Path, query_name: str) -> dict:
         })
 
     from api.services.certification_service import get_cert_payload
+    from api.services.ownership_service import get_owner_payload
     return {
         "name": q.name,
         "root": _root(q),
@@ -86,6 +99,7 @@ def get_query(model_dir: Path, query_name: str) -> dict:
         "compiled_sql": compiled_sql,
         "raw_yaml": raw_yaml,
         **get_cert_payload(model_dir, "query", query_name),
+        **get_owner_payload(model_dir, "query", query_name),
     }
 
 
@@ -354,7 +368,10 @@ class QueryValidationError(Exception):
         super().__init__(f"{len(errors)} validation error(s)")
 
 
-def create_or_replace_query(model_dir: Path, query_name: str, content: str) -> dict:
+def create_or_replace_query(
+    model_dir: Path, query_name: str, content: str,
+    user_id: str | None = None, via: str | None = None,
+) -> dict:
     """Validate YAML content and write to the metadata DB."""
     import shutil
     import tempfile
@@ -382,7 +399,9 @@ def create_or_replace_query(model_dir: Path, query_name: str, content: str) -> d
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    metadata_db.record_version(model_dir, "query", query_name, content)
+    metadata_db.record_version(
+        model_dir, "query", query_name, content, user_id=user_id, via=via,
+    )
     return get_query(model_dir, query_name)
 
 

@@ -103,7 +103,10 @@ class ExtractorValidationError(Exception):
         super().__init__(f"{len(errors)} validation error(s)")
 
 
-def create_or_replace_extractor(model_dir: Path, tool_name: str, content: str) -> dict:
+def create_or_replace_extractor(
+    model_dir: Path, tool_name: str, content: str,
+    user_id: str | None = None, via: str | None = None,
+) -> dict:
     """Validate YAML content and write extractor to the metadata DB."""
     import os
     import tempfile
@@ -124,7 +127,9 @@ def create_or_replace_extractor(model_dir: Path, tool_name: str, content: str) -
         except OSError:
             pass
 
-    metadata_db.record_version(model_dir, "extractor", tool_name, content)
+    metadata_db.record_version(
+        model_dir, "extractor", tool_name, content, user_id=user_id, via=via,
+    )
     return get_extractor(model_dir, tool_name)
 
 

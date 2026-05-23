@@ -138,7 +138,10 @@ class MapperValidationError(Exception):
         super().__init__(f"{len(errors)} validation error(s)")
 
 
-def create_or_replace_mapper(model_dir: Path, name: str, content: str) -> dict:
+def create_or_replace_mapper(
+    model_dir: Path, name: str, content: str,
+    user_id: str | None = None, via: str | None = None,
+) -> dict:
     """Validate YAML content and write to the metadata DB."""
     import os
     import tempfile
@@ -184,7 +187,9 @@ def create_or_replace_mapper(model_dir: Path, name: str, content: str) -> dict:
                     ),
                 }])
 
-    metadata_db.record_version(model_dir, "mapper", name, content)
+    metadata_db.record_version(
+        model_dir, "mapper", name, content, user_id=user_id, via=via,
+    )
     return _mapper_to_dict(mc, model_dir)
 
 

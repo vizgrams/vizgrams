@@ -381,12 +381,18 @@ def reconcile_all_async(model_dir: Path, job_service) -> object:
     return job
 
 
-def _write_entity_yaml(model_dir: Path, entity_name: str, data: dict) -> None:
+def _write_entity_yaml(
+    model_dir: Path, entity_name: str, data: dict,
+    user_id: str | None = None, via: str | None = None,
+) -> None:
     """Serialise request body dict to the ontology YAML format and store in DB."""
     import io
     content = io.StringIO()
     yaml.dump(_build_yaml_dict(data), content, default_flow_style=False, sort_keys=False, allow_unicode=True)
-    metadata_db.record_version(model_dir, "entity", _entity_db_key(model_dir, entity_name), content.getvalue())
+    metadata_db.record_version(
+        model_dir, "entity", _entity_db_key(model_dir, entity_name), content.getvalue(),
+        user_id=user_id, via=via,
+    )
 
 
 def _attr_to_yaml(attr: dict) -> dict:
@@ -521,7 +527,10 @@ def get_entity_relations(model_dir: Path, entity_name: str) -> dict:
     }
 
 
-def save_feature_expr(model_dir: Path, feature_id: str, expr: str) -> dict:
+def save_feature_expr(
+    model_dir: Path, feature_id: str, expr: str,
+    user_id: str | None = None, via: str | None = None,
+) -> dict:
     """Update the expr field of a feature in the DB."""
     content = metadata_db.get_current_content(model_dir, "feature", feature_id)
     if content is None:
@@ -529,7 +538,10 @@ def save_feature_expr(model_dir: Path, feature_id: str, expr: str) -> dict:
     data = yaml.safe_load(content)
     data["expr"] = expr
     new_content = yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
-    metadata_db.record_version(model_dir, "feature", feature_id, new_content)
+    metadata_db.record_version(
+        model_dir, "feature", feature_id, new_content,
+        user_id=user_id, via=via,
+    )
     return {
         "feature_id": feature_id,
         "name": data.get("name", feature_id),
@@ -571,7 +583,10 @@ def get___feature_values_for_entity(model_dir: Path, entity_name: str) -> dict:
     return result
 
 
-def save_entity_yaml(model_dir: Path, entity_name: str, content: str) -> dict:
+def save_entity_yaml(
+    model_dir: Path, entity_name: str, content: str,
+    user_id: str | None = None, via: str | None = None,
+) -> dict:
     """Validate raw YAML and store the entity in the metadata DB (no materialization)."""
     import os
     import tempfile
@@ -614,7 +629,10 @@ def save_entity_yaml(model_dir: Path, entity_name: str, content: str) -> dict:
     except Exception:
         pass  # parsing failure already caught above
 
-    metadata_db.record_version(model_dir, "entity", _entity_db_key(model_dir, entity_name), content)
+    metadata_db.record_version(
+        model_dir, "entity", _entity_db_key(model_dir, entity_name), content,
+        user_id=user_id, via=via,
+    )
     return get_entity(model_dir, entity_name)
 
 

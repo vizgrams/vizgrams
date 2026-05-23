@@ -4,7 +4,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.batch_client import BatchServiceError, submit_mapper_job
-from api.dependencies import require_user_or_service_account, resolve_entity, resolve_model_dir
+from api.dependencies import (
+    author_from_principal,
+    require_user_or_service_account,
+    resolve_entity,
+    resolve_model_dir,
+)
 from api.routers.jobs import _to_job_out
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.job import JobOut
@@ -74,11 +79,14 @@ def upsert_mapper(
     mapper_name: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
-    _principal: dict = Depends(require_user_or_service_account),
+    principal: dict = Depends(require_user_or_service_account),
 ):
     """Validate YAML content and write (create or overwrite) a mapper file."""
+    user_id, via = author_from_principal(principal)
     try:
-        return mapper_service.create_or_replace_mapper(model_dir, mapper_name, body.content)
+        return mapper_service.create_or_replace_mapper(
+            model_dir, mapper_name, body.content, user_id=user_id, via=via,
+        )
     except MapperValidationError as exc:
         raise HTTPException(
             status_code=422,

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import Path as PathParam
 
 from api.dependencies import (
+    author_from_principal,
     get_current_user,
     get_job_service,
     require_creator,
@@ -63,12 +64,14 @@ def upsert_feature(
     feature: str = PathParam(...),
     entity: str = Depends(resolve_entity),
     model_dir: str = Depends(resolve_model_dir),
-    _principal: dict = Depends(require_user_or_service_account),
+    principal: dict = Depends(require_user_or_service_account),
 ):
     """Validate YAML content and write (create or overwrite) a feature file."""
+    user_id, via = author_from_principal(principal)
     try:
         return feature_service.create_or_replace_feature(
-            model_dir, entity, feature, body.content
+            model_dir, entity, feature, body.content,
+            user_id=user_id, via=via,
         )
     except FeatureValidationError as exc:
         raise HTTPException(
@@ -107,10 +110,15 @@ def save_feature_yaml(
     feature_id: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
+    principal: dict = Depends(require_user_or_service_account),
 ):
     """Overwrite an existing feature's YAML file by feature_id."""
+    user_id, via = author_from_principal(principal)
     try:
-        return feature_service.save_feature_by_id(model_dir, feature_id, body.content)
+        return feature_service.save_feature_by_id(
+            model_dir, feature_id, body.content,
+            user_id=user_id, via=via,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BackendUnavailableError:

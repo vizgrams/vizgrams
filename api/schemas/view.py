@@ -5,16 +5,16 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from api.schemas.common import CertFields
+from api.schemas.common import CertFields, OwnerFields
 
 
-class ViewSummary(CertFields):
+class ViewSummary(CertFields, OwnerFields):
     name: str
     type: str
     query: str
 
 
-class ViewDetail(CertFields):
+class ViewDetail(CertFields, OwnerFields):
     name: str
     type: str
     query: str
