@@ -187,6 +187,45 @@ def test_chat_turn_failure_when_llm_stops_without_terminal_tool(monkeypatch):
     assert len(llm.received) == 1
 
 
+def test_chat_turn_auto_presents_when_llm_stops_after_successful_query(monkeypatch):
+    """Regression: live "Show me DORA metrics" — the LLM ran two queries
+    successfully but ended with a text summary instead of calling
+    present_view. The user saw "Couldn't answer that" even though the
+    data was right there.
+
+    Safety net: when the LLM stops without a terminal tool call but at
+    least one query has populated ``last_query``, auto-present the most
+    recent query as a table so the user sees the data. The LLM's text
+    becomes the caption."""
+    _stub_loaders(monkeypatch)
+    _skip_view_validation(monkeypatch)
+    llm = FakeLLMClient()
+    # Run a query successfully...
+    llm.responses.append(response_with_tool("build_and_run_query", {
+        "root_entity": "Widget",
+        "measures": [{"name": "n", "field": "widget_key", "rollup": "count"}],
+    }))
+    # ...then forget to present, writing a text summary instead.
+    llm.responses.append(response_text("Here's the count: 42 widgets total."))
+    executor = _FakeExecutor([QueryExecutionResult(
+        success=True, rows=[[42]], columns=["n"], row_count=1, sql="SELECT ...",
+    )])
+
+    result = chat_turn(
+        model_dir=Path("/fake/widget_model"),
+        message="how many widgets?",
+        llm_client=llm, executor=executor,
+    )
+
+    # Auto-present produced a successful turn instead of failure.
+    assert result.success
+    assert result.inline_view is not None
+    # Fallback chart is a table — safest default for any data shape.
+    assert "type: table" in result.inline_view["view_yaml"]
+    # Path C — query was inline, so the wrapper carries the query yaml.
+    assert result.inline_view["query_yaml"]
+
+
 def test_chat_turn_path_a_run_saved_view_terminates_without_present_view(monkeypatch):
     """Path A — LLM finds a saved view and runs it. Result is a saved_view
     ref with no inline_view. present_view is NEVER called (saved views

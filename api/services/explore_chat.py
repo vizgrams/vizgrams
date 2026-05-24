@@ -257,9 +257,21 @@ Available tools:
   run_saved_query (terminal). Call exactly once. Pass column names you
   saw in that tool result. Don't call after run_saved_view.
 
-You decide the sequence. A near-miss in the catalog is a different
-question — author a new query rather than reusing a saved one that
-doesn't quite fit.
+You decide the sequence, with two hard rules:
+
+1. **Every turn MUST end with a terminal tool call**: ``run_saved_view``
+   or ``present_view``. The user sees the rendered view — not your
+   prose. Text-only responses produce a failed turn and the user sees
+   nothing useful.
+
+2. **One view per turn.** If the user's question is compound ("show me
+   DORA metrics", "PR throughput AND cycle time"), pick the most
+   informative single metric and answer that. Don't run multiple
+   queries trying to summarise everything in text — pick one, call
+   ``present_view``, and the user can ask follow-ups for the rest.
+
+A near-miss in the catalog is a different question — author a new
+query rather than reusing a saved one that doesn't quite fit.
 
 When authoring with `build_and_run_query`:
 - `root_entity` MUST be one of the ENTITY names below (case-sensitive).
@@ -407,8 +419,27 @@ def chat_turn(
         messages.append(_assistant_msg(resp))
 
         if not resp.tool_calls:
-            # LLM gave up or thinks it's done without calling a terminal
-            # tool. Surface whatever it said as the error.
+            # LLM stopped without calling a terminal tool. Two cases:
+            #   (a) we have a successful query waiting — safety net: auto-
+            #       call present_view as a fallback table view so the user
+            #       sees the data anyway (the LLM forgot the contract).
+            #   (b) no query data — genuine failure; surface the LLM's
+            #       text as the error.
+            if last_query is not None:
+                logger.info(
+                    "LLM stopped without present_view; auto-presenting "
+                    "last query %r as table", last_query.name,
+                )
+                return _build_inline_view_turn(
+                    model_dir=model_dir,
+                    iteration=iteration + 1,
+                    trace=trace,
+                    last_query=last_query,
+                    present_payload={
+                        "chart_type": "table",
+                        "caption": resp.content or "",
+                    },
+                )
             return ChatTurnResult(
                 success=False,
                 error=resp.content or "LLM stopped without producing a view",
