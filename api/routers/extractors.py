@@ -12,9 +12,9 @@ from api.schemas.job import JobOut
 from api.services import extractor_service
 from api.services.extractor_service import ExtractorConflictError, ExtractorValidationError
 from api.services.job_service import JobService
+from api.version_routes import make_version_routes
 from core.db import BackendUnavailableError
 from core.rbac import ModelRole
-from core.version_routes import make_version_routes
 
 router = APIRouter(prefix="/model/{model}/tool", tags=["extractors"])
 

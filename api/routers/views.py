@@ -17,9 +17,9 @@ from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.view import ViewDetail, ViewResult, ViewSummary
 from api.services import view_service
 from api.services.view_service import ViewValidationError
+from api.version_routes import make_version_routes
 from core import metadata_db
 from core.db import BackendUnavailableError
-from core.version_routes import make_version_routes
 
 _log = logging.getLogger(__name__)
 
