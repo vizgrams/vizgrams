@@ -296,7 +296,7 @@ export function makeApi(model: string) {
       ),
 
     chatTurn: (message: string, history: ChatHistoryTurn[]) =>
-      post<ChatResponse>(`${BASE}/explore/chat`, { message, history }),
+      post<ChatResponse>(`${BASE}/chat`, { message, history }),
 
     // VG-240/241: publish a chat turn as a vizgram. Saves any inline
     // view/query as artifacts first (stamped created_via='chat'), then
@@ -310,7 +310,7 @@ export function makeApi(model: string) {
       params?: Record<string, string>
     }) =>
       post<{ vizgram_id: string; view_name: string; query_name: string | null }>(
-        `${BASE}/explore/chat/publish`, body,
+        `${BASE}/chat/publish`, body,
       ),
 
     runMapper: (entity: string) =>

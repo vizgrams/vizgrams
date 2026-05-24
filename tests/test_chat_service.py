@@ -1,13 +1,13 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for api.services.explore_chat orchestrator."""
+"""Tests for api.services.chat.service orchestrator."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from api.services.explore_chat import (
+from api.services.chat.service import (
     SemanticLayerExecutor,
     _history_to_openai,
     chat_turn,
@@ -55,13 +55,13 @@ def test_history_handles_none_input():
 def _stub_loaders(monkeypatch):
     """Patch the YAMLAdapter loaders + schema_context so tests don't need a real model."""
     monkeypatch.setattr(
-        "api.services.explore_chat.YAMLAdapter.load_entities", lambda _p: [],
+        "api.services.chat.service.YAMLAdapter.load_entities", lambda _p: [],
     )
     monkeypatch.setattr(
-        "api.services.explore_chat.YAMLAdapter.load_features", lambda _p: [],
+        "api.services.chat.service.YAMLAdapter.load_features", lambda _p: [],
     )
     monkeypatch.setattr(
-        "api.services.explore_chat.build_schema_context",
+        "api.services.chat.service.build_schema_context",
         lambda *args, **kwargs: "STUB SCHEMA",
     )
 
@@ -88,7 +88,7 @@ def _skip_view_validation(monkeypatch):
     """Validator needs a real saved query to resolve columns; stub it out
     so tests can exercise the orchestrator without dragging in the DB."""
     monkeypatch.setattr(
-        "api.services.explore_chat.view_service.validate_inline_view",
+        "api.services.chat.service.view_service.validate_inline_view",
         lambda *a, **k: {"valid": True, "errors": []},
     )
 
@@ -375,10 +375,10 @@ def test_chat_turn_present_view_before_query_is_recoverable(monkeypatch):
 
 def test_executor_returns_error_when_entity_not_in_schema(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "api.services.explore_chat.YAMLAdapter.load_entities", lambda _p: [],
+        "api.services.chat.service.YAMLAdapter.load_entities", lambda _p: [],
     )
     monkeypatch.setattr(
-        "api.services.explore_chat.YAMLAdapter.load_features", lambda _p: [],
+        "api.services.chat.service.YAMLAdapter.load_features", lambda _p: [],
     )
     qd = QueryDef(
         name="x", entity="NonExistent", detail=True,
@@ -398,11 +398,11 @@ def test_executor_catches_engine_exceptions(tmp_path, monkeypatch):
             raise RuntimeError("synthetic engine failure")
 
     monkeypatch.setattr(
-        "api.services.explore_chat.YAMLAdapter.load_entities",
+        "api.services.chat.service.YAMLAdapter.load_entities",
         lambda _p: ExplodingEntities(),
     )
     monkeypatch.setattr(
-        "api.services.explore_chat.YAMLAdapter.load_features", lambda _p: [],
+        "api.services.chat.service.YAMLAdapter.load_features", lambda _p: [],
     )
     qd = QueryDef(name="x", entity="Whatever", detail=True)
     result = SemanticLayerExecutor(model_dir=tmp_path).execute(qd)

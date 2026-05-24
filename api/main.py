@@ -180,9 +180,9 @@ from api.limiter import limiter
 from api.routers import (
     applications,
     batch,
+    chat,
     entities,
     explore,
-    explore_chat,
     expression,
     extractors,
     features,
@@ -257,7 +257,7 @@ app.include_router(views.router, prefix=PREFIX)
 app.include_router(applications.router, prefix=PREFIX)
 app.include_router(graph.router, prefix=PREFIX)
 app.include_router(explore.router, prefix=PREFIX)
-app.include_router(explore_chat.router, prefix=PREFIX)
+app.include_router(chat.router, prefix=PREFIX)
 app.include_router(jobs.router, prefix=PREFIX)
 app.include_router(input_data.router, prefix=PREFIX)
 app.include_router(vizgrams.router, prefix=PREFIX)

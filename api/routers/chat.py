@@ -1,20 +1,17 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
-"""Explore-chat HTTP route (Epic 19 VG-205, reshaped in VG-237).
+"""Chat HTTP routes (Epic 19 VG-205, reshaped in VG-237, renamed in ADR-0001).
 
-Single endpoint, single request shape, single response shape. The
-orchestrator does the work; this layer just translates between Pydantic
-and the dataclass and applies auth.
+Two endpoints: one runs an assistant turn (the agentic tool loop);
+the other publishes the resulting view as a vizgram. Both translate
+between Pydantic and the dataclass + apply auth — the orchestrator
+does the actual work.
 
-Response shape: each successful turn produces a saved_view ref or an
-inline_view spec. The UI renders both via ``ViewContent`` (the same
-component the entity explorer uses), so charts + drilldowns are uniform.
-
-The route shares the ``/explore`` prefix with the existing entity
-explorer (``api/routers/explore.py``) but doesn't conflict — the chat
-endpoint is a single-segment POST, while the entity routes match
-``/{entity}/{id}`` (two segments) and ``/{entity}/{id}/related/...``.
+Response shape (turn): each successful turn produces a saved_view ref
+or an inline_view spec. The UI renders both via ``ViewContent`` (the
+same component every other surface uses), so charts + drilldowns are
+uniform.
 """
 
 from __future__ import annotations
@@ -26,10 +23,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_current_user, require_creator, resolve_model_dir
-from api.services import chat_publish_service
-from api.services import explore_chat as service
+from api.services.chat import publish as chat_publish_service
+from api.services.chat import service
 
-router = APIRouter(prefix="/model/{model}/explore", tags=["explore-chat"])
+router = APIRouter(prefix="/model/{model}/chat", tags=["chat"])
 
 
 class HistoryTurn(BaseModel):
@@ -99,7 +96,7 @@ class ChatResponse(BaseModel):
     sql: str | None = None
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("", response_model=ChatResponse)
 def chat(
     body: ChatRequest,
     model_dir: str = Depends(resolve_model_dir),
@@ -162,7 +159,7 @@ class ChatPublishResponse(BaseModel):
     query_name: str | None = None
 
 
-@router.post("/chat/publish", response_model=ChatPublishResponse)
+@router.post("/publish", response_model=ChatPublishResponse)
 def chat_publish(
     body: ChatPublishRequest,
     model: str,

@@ -16,7 +16,7 @@ Decoupled from the FastAPI / DB layers via two protocols:
 
 This means ``text2query_yaml`` is unit-testable end-to-end with fake
 implementations of both protocols (see ``tests/llm/conftest.py``). The
-production orchestrator (``api/services/explore_chat.py``, VG-205) wires
+production orchestrator (``api/services/chat/service.py``, VG-205) wires
 in the real implementations.
 """
 
