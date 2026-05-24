@@ -165,6 +165,13 @@ class ChatTurnResult:
     saved_view: dict | None = None      # {name: str, params: dict}
     inline_view: dict | None = None     # {view_yaml, query_yaml?, params}
 
+    # Short factual title for the turn — set by present_view's ``title``
+    # arg (paths B/C) or pulled from the saved view's name (path A).
+    # The publish dialog seeds the Title input from this. Optional so
+    # the auto-present safety net (LLM forgot present_view) can still
+    # produce a turn without one.
+    title: str | None = None
+
     # Diagnostics — populated when available, shown in the "Show your work" tab.
     query_yaml: str | None = None
     view_yaml: str | None = None
@@ -498,15 +505,22 @@ def chat_turn(
 
             # Terminal: run_saved_view → saved_view ref (path A).
             if tc.name == "run_saved_view":
+                view_name = (
+                    result.extras.get("saved_view_name")
+                    or result.payload.get("view_name")
+                )
                 return ChatTurnResult(
                     success=True,
                     iterations=iteration + 1,
                     trace=trace,
                     saved_view={
-                        "name": result.extras.get("saved_view_name")
-                            or result.payload.get("view_name"),
+                        "name": view_name,
                         "params": tc.arguments.get("params") or {},
                     },
+                    # Saved views don't have a separate human title — the
+                    # snake_case name doubles as a sensible publish-default.
+                    # The user can edit it before publishing.
+                    title=view_name,
                     query_yaml=result.extras.get("querydef_yaml"),
                     view_yaml=result.extras.get("view_yaml"),
                     sql=result.extras.get("sql"),
@@ -594,6 +608,11 @@ def _build_inline_view_turn(
             query_yaml=last_query.yaml,
             is_query_inline=last_query.is_inline,
         ),
+        # Title comes from the LLM's present_view call; falls back to
+        # None for the auto-present safety net path (LLM never called
+        # present_view at all). The UI shows a sensible default in
+        # that case.
+        title=(present_payload.get("title") or "").strip() or None,
         query_yaml=last_query.yaml,
         view_yaml=wrapper_view_yaml,
         sql=last_query.sql,
