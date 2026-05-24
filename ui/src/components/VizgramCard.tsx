@@ -214,7 +214,7 @@ function EngageButton({
 // count, just a transient "copied" tick after a successful copy.
 // ---------------------------------------------------------------------------
 
-function ShareButton({ viewName }: { viewName: string }) {
+export function ShareButton({ viewName }: { viewName: string }) {
   const [copied, setCopied] = useState(false)
 
   async function handleClick() {
