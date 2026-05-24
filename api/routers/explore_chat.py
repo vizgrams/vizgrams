@@ -19,12 +19,14 @@ endpoint is a single-segment POST, while the entity routes match
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api.dependencies import require_creator, resolve_model_dir
+from api.dependencies import get_current_user, require_creator, resolve_model_dir
+from api.services import chat_publish_service
 from api.services import explore_chat as service
 
 router = APIRouter(prefix="/model/{model}/explore", tags=["explore-chat"])
@@ -105,7 +107,7 @@ def chat(
     """
     try:
         result = service.chat_turn(
-            model_dir=__import__("pathlib").Path(model_dir),
+            model_dir=Path(model_dir),
             message=body.message,
             history=[turn.model_dump() for turn in body.history],
         )
@@ -130,3 +132,63 @@ def chat(
             for t in result.trace
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Publish (Epic 21 — VG-240 + VG-241)
+# ---------------------------------------------------------------------------
+
+
+class ChatPublishRequest(BaseModel):
+    """Either ``saved_view`` or ``inline_view`` must be set — the same
+    discriminated payload the chat response uses, plus title + caption."""
+
+    title: str = Field(..., min_length=1, max_length=200)
+    caption: str | None = None
+    saved_view: SavedViewRef | None = None
+    inline_view: InlineView | None = None
+    params: dict[str, str] = Field(default_factory=dict)
+
+
+class ChatPublishResponse(BaseModel):
+    vizgram_id: str
+    view_name: str
+    query_name: str | None = None
+
+
+@router.post("/chat/publish", response_model=ChatPublishResponse)
+def chat_publish(
+    body: ChatPublishRequest,
+    model: str,
+    model_dir: str = Depends(resolve_model_dir),
+    user_id: str = Depends(get_current_user),
+    _email: str = Depends(require_creator),
+) -> ChatPublishResponse:
+    """Publish a chat turn as a vizgram. Saves any inline artifacts first.
+
+    Path A (saved_view ref): nothing new persisted; just snapshots +
+    publishes. Paths B / C: save the wrapper view (and inline query for C)
+    as artifacts stamped with ``created_via='chat'``, then publish.
+
+    Returns the vizgram id + the saved-view name so the UI can build a
+    "view live data" link (``/views/<name>``) — which is the shareable URL.
+    """
+    if body.saved_view is None and body.inline_view is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Either 'saved_view' or 'inline_view' must be set.",
+        )
+    try:
+        result = chat_publish_service.publish_from_chat(
+            model_dir=Path(model_dir),
+            model_id=model,
+            title=body.title,
+            caption=body.caption,
+            saved_view=body.saved_view.model_dump() if body.saved_view else None,
+            inline_view=body.inline_view.model_dump() if body.inline_view else None,
+            params=body.params,
+            user_id=user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ChatPublishResponse(**result)

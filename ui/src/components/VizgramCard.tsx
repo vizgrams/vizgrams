@@ -3,7 +3,7 @@
 
 import { useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
-import { Heart, Bookmark } from 'lucide-react'
+import { Bookmark, Check, Heart, Link2 } from 'lucide-react'
 import type { VizgramSummary } from '@/api/client'
 import { engageVizgram } from '@/api/client'
 import { LineBarChart } from '@/components/charts/LineBarChart'
@@ -209,6 +209,44 @@ function EngageButton({
 }
 
 // ---------------------------------------------------------------------------
+// Share button — copies a live-data link to the underlying view to the
+// clipboard. Pairs visually with Like/Save (same icon-button style); no
+// count, just a transient "copied" tick after a successful copy.
+// ---------------------------------------------------------------------------
+
+function ShareButton({ viewName }: { viewName: string }) {
+  const [copied, setCopied] = useState(false)
+
+  async function handleClick() {
+    const url = `${window.location.origin}/views/${encodeURIComponent(viewName)}`
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Non-secure context (no clipboard API). Fall back to a prompt so
+      // the user can still copy the link by hand — better than the
+      // button silently doing nothing.
+      window.prompt('Copy this link:', url)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      title="Copy link to live view"
+      className={`flex items-center gap-1 text-xs transition-colors ${
+        copied
+          ? 'text-emerald-500'
+          : 'text-muted-foreground/50 hover:text-muted-foreground'
+      }`}
+    >
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // VizgramCard
 // ---------------------------------------------------------------------------
 
@@ -292,6 +330,7 @@ export function VizgramCard({ vizgram }: { vizgram: VizgramSummary }) {
               activeClass="text-blue-500"
               onClick={() => handleEngage('save')}
             />
+            {vizgram.view_ref && <ShareButton viewName={vizgram.view_ref} />}
           </div>
         </div>
       </div>

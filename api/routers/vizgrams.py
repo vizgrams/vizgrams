@@ -64,6 +64,10 @@ class VizgramPayload(BaseModel):
     slice_config: dict = {}
     chart_config: dict = {}
     data_snapshot: list | None = None
+    # VG-240: optional explicit share-link target. Distinct from query_ref
+    # because callers historically overloaded that field (some put a view
+    # name, some put a query name) — view_ref is unambiguous.
+    view_ref: str | None = None
 
 
 class PublishVizgramRequest(VizgramPayload):
@@ -114,6 +118,7 @@ def publish_vizgram(
     vizgram_id = create_vizgram(
         dataset_ref=body.model,
         query_ref=body.query_ref,
+        view_ref=body.view_ref,
         title=body.title,
         author_id=author_id,
         author_display_name=get_user_display_name(author_id),

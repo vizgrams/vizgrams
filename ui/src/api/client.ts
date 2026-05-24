@@ -298,6 +298,21 @@ export function makeApi(model: string) {
     chatTurn: (message: string, history: ChatHistoryTurn[]) =>
       post<ChatResponse>(`${BASE}/explore/chat`, { message, history }),
 
+    // VG-240/241: publish a chat turn as a vizgram. Saves any inline
+    // view/query as artifacts first (stamped created_via='chat'), then
+    // creates the vizgram. Returns the saved view's name so the UI can
+    // build the shareable /views/<name> link.
+    chatPublish: (body: {
+      title: string
+      caption?: string | null
+      saved_view?: ChatSavedView | null
+      inline_view?: ChatInlineView | null
+      params?: Record<string, string>
+    }) =>
+      post<{ vizgram_id: string; view_name: string; query_name: string | null }>(
+        `${BASE}/explore/chat/publish`, body,
+      ),
+
     runMapper: (entity: string) =>
       post<JobOut>(`${BASE}/entity/${entity}/mapper/execute`, {}),
 
@@ -672,6 +687,7 @@ export interface VizgramSummary {
   id: string
   dataset_ref: string
   query_ref: string
+  view_ref: string | null                // VG-240: share-link target; null on legacy rows
   title: string
   caption: string | null
   author_id: string
@@ -705,6 +721,7 @@ export const listFeed = (params?: { limit?: number; offset?: number; dataset_ref
 export interface PublishVizgramRequest {
   model: string
   query_ref: string
+  view_ref?: string | null               // VG-240: share-link target
   title: string
   slice_config: Record<string, unknown>
   chart_config: Record<string, unknown>

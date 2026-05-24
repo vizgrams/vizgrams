@@ -161,6 +161,7 @@ function ViewResultFrame({
     return {
       model,
       query_ref: name,
+      view_ref: name,                     // VG-240: explicit share-link target
       title: publishTitle.trim(),
       slice_config: { parameters: paramValues, snapshot_at: new Date().toISOString() },
       chart_config: { type: result.type, visualization: result.visualization, columns: result.columns },

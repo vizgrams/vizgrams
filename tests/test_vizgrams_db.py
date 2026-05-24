@@ -51,6 +51,24 @@ def test_create_and_get_vizgram(db):
     assert vg["tags"] == []
     assert vg["caption"] is None
     assert vg["significance_score"] == 0.0
+    # VG-240: view_ref defaults NULL when the publisher doesn't supply it.
+    # Legacy callers stay working; the feed Share button hides for these rows.
+    assert vg["view_ref"] is None
+
+
+def test_create_with_view_ref_persists_share_target(db):
+    """VG-240: when the publisher supplies view_ref it round-trips so the
+    feed Share button can build /views/<view_ref>."""
+    vid = create_vizgram(
+        dataset_ref="acme",
+        query_ref="dora_clt_by_team",
+        view_ref="dora_clt_by_team",
+        title="DORA CLT by Team",
+        author_id="oliver@example.com",
+        db_path=db,
+    )
+    vg = get_vizgram(vid, db_path=db)
+    assert vg["view_ref"] == "dora_clt_by_team"
 
 
 def test_create_with_all_fields(db):
