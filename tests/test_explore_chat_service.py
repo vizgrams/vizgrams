@@ -76,15 +76,69 @@ class _FakeExecutor:
         return self.results.pop(0)
 
 
-def test_chat_turn_happy_path_returns_inline_view(monkeypatch):
-    """VG-237: text2query + text2view path C → inline_view payload."""
-    _stub_loaders(monkeypatch)
-    # Skip view-YAML validation since text2view's output references a
-    # transient query name the validator can't resolve through the stub.
+# ---------------------------------------------------------------------------
+# chat_turn — single agentic tool loop (replaces the prior two-phase
+# text2query → text2view orchestration; the four tests below cover the
+# three terminal paths + the "LLM gave up" failure mode against the
+# unified loop directly).
+# ---------------------------------------------------------------------------
+
+
+def _skip_view_validation(monkeypatch):
+    """Validator needs a real saved query to resolve columns; stub it out
+    so tests can exercise the orchestrator without dragging in the DB."""
     monkeypatch.setattr(
         "api.services.explore_chat.view_service.validate_inline_view",
         lambda *a, **k: {"valid": True, "errors": []},
     )
+
+
+def _patch_run_saved_view(monkeypatch, *, name: str, view_yaml: str, query_yaml: str):
+    """Stub view_service.execute_view + get_view so the run_saved_view
+    tool succeeds when invoked, returning the canned shape."""
+    monkeypatch.setattr(
+        "api.services.view_service.execute_view",
+        lambda model_dir, view_name, **kw: {
+            "name": view_name, "type": "chart", "query": "underlying_q",
+            "columns": ["team", "avg_clt"], "rows": [["alpha", 12.0]],
+            "row_count": 1, "total_row_count": 1,
+            "visualization": {"chart_type": "bar", "x": "team", "y": ["avg_clt"]},
+            "sql": "SELECT ...",
+            "params": [],
+        },
+    )
+    monkeypatch.setattr(
+        "api.services.view_service.get_view",
+        lambda model_dir, view_name: {"raw_yaml": view_yaml},
+    )
+    monkeypatch.setattr(
+        "api.services.query_service.get_query",
+        lambda model_dir, query_name: {"raw_yaml": query_yaml},
+    )
+
+
+def _patch_run_saved_query(monkeypatch, *, name: str, query_yaml: str):
+    """Stub query_service.execute_query + get_query so run_saved_query
+    succeeds when invoked."""
+    monkeypatch.setattr(
+        "api.services.query_service.execute_query",
+        lambda model_dir, query_name, **kw: {
+            "columns": ["author", "n"], "rows": [["alice", 42]],
+            "row_count": 1, "total_row_count": 1,
+            "sql": "SELECT ...",
+        },
+    )
+    monkeypatch.setattr(
+        "api.services.query_service.get_query",
+        lambda model_dir, query_name: {"raw_yaml": query_yaml},
+    )
+
+
+def test_chat_turn_path_c_build_then_present_returns_inline_view(monkeypatch):
+    """Path C — LLM authors a fresh query then picks a chart.
+    Wrapper view yaml + inline query yaml both come back."""
+    _stub_loaders(monkeypatch)
+    _skip_view_validation(monkeypatch)
     llm = FakeLLMClient()
     llm.responses.append(response_with_tool("build_and_run_query", {
         "root_entity": "Widget",
@@ -104,72 +158,106 @@ def test_chat_turn_happy_path_returns_inline_view(monkeypatch):
     )
 
     assert result.success
-    # Path C — query authored ourselves; both YAMLs are inline.
     assert result.saved_view is None
     assert result.inline_view is not None
-    assert "view_yaml" in result.inline_view
     assert result.inline_view["view_yaml"]
-    assert result.inline_view["query_yaml"]  # transient query yaml carried inline
-    assert result.iterations == 1
-    # Diagnostics — populated for the "Show your work" tab
+    assert result.inline_view["query_yaml"]    # inline query carried — path C
+    assert result.iterations == 2              # two LLM calls: build, present
     assert result.query_yaml is not None
     assert result.view_yaml is not None
-    assert result.sql.startswith("SELECT")
+    assert result.sql and result.sql.startswith("SELECT")
 
 
-def test_chat_turn_failure_returns_error_without_calling_text2view(monkeypatch):
+def test_chat_turn_failure_when_llm_stops_without_terminal_tool(monkeypatch):
+    """If the LLM emits text instead of a tool call before any terminal
+    tool runs, the turn fails — there's no view to render."""
     _stub_loaders(monkeypatch)
     llm = FakeLLMClient()
-    # text2query: LLM gives up — text response, no tool calls
     llm.responses.append(response_text("I can't build that query."))
-    executor = _FakeExecutor([])
 
     result = chat_turn(
         model_dir=Path("/fake/widget_model"),
         message="impossible question",
-        llm_client=llm, executor=executor,
+        llm_client=llm, executor=_FakeExecutor([]),
     )
 
     assert not result.success
     assert result.error is not None
-    # Only the one text2query LLM call — text2view never reached
+    assert "I can't" in result.error or "stopped" in result.error
     assert len(llm.received) == 1
 
 
-def test_chat_turn_falls_back_to_table_view_when_text2view_fails(monkeypatch):
-    """When text2view fails, orchestrator emits a minimal table-view YAML."""
+def test_chat_turn_path_a_run_saved_view_terminates_without_present_view(monkeypatch):
+    """Path A — LLM finds a saved view and runs it. Result is a saved_view
+    ref with no inline_view. present_view is NEVER called (saved views
+    carry their own chart spec)."""
     _stub_loaders(monkeypatch)
-    monkeypatch.setattr(
-        "api.services.explore_chat.view_service.validate_inline_view",
-        lambda *a, **k: {"valid": True, "errors": []},
+    _patch_run_saved_view(
+        monkeypatch,
+        name="dora_clt_by_team",
+        view_yaml="name: dora_clt_by_team\ntype: chart\nquery: underlying_q\n",
+        query_yaml="name: underlying_q\nroot: PullRequest\n",
     )
+
     llm = FakeLLMClient()
-    llm.responses.append(response_with_tool("build_and_run_query", {
-        "root_entity": "Widget",
-        "measures": [{"name": "n", "field": "widget_key", "rollup": "count"}],
-    }))
-    # text2view: LLM responds with text instead of calling present_view
-    llm.responses.append(response_text("not sure"))
-    executor = _FakeExecutor([QueryExecutionResult(
-        success=True, rows=[[42]], columns=["n"], row_count=1,
-    )])
+    llm.responses.append(response_with_tool("find_artifacts", {"query": "dora clt"}))
+    llm.responses.append(response_with_tool("run_saved_view", {"name": "dora_clt_by_team"}))
 
     result = chat_turn(
-        model_dir=Path("/fake/widget_model"),
-        message="count widgets",
-        llm_client=llm, executor=executor,
+        model_dir=Path("/fake/m"),
+        message="show me dora clt by team",
+        llm_client=llm, executor=_FakeExecutor([]),
     )
 
-    # Partial success: query worked, view-fallback is a table.
+    assert result.success
+    assert result.saved_view == {"name": "dora_clt_by_team", "params": {}}
+    assert result.inline_view is None
+    # No third LLM call — the loop exited as soon as run_saved_view
+    # succeeded. Two calls only: find_artifacts → run_saved_view.
+    assert len(llm.received) == 2
+
+
+def test_chat_turn_path_b_uses_saved_query_name_in_wrapper_view(monkeypatch):
+    """Path B — LLM runs an existing saved query, then picks a chart.
+    The wrapper view's ``query:`` field references the saved query's
+    actual name (not the "text2query" placeholder)."""
+    _stub_loaders(monkeypatch)
+    _skip_view_validation(monkeypatch)
+    _patch_run_saved_query(
+        monkeypatch,
+        name="top_pr_authors",
+        query_yaml="name: top_pr_authors\nroot: PullRequest\n",
+    )
+
+    llm = FakeLLMClient()
+    llm.responses.append(response_with_tool("find_artifacts", {"query": "prolific developers"}))
+    llm.responses.append(response_with_tool("run_saved_query", {"name": "top_pr_authors"}))
+    llm.responses.append(response_with_tool("present_view", {
+        "chart_type": "bar", "x_field": "author", "y_field": "n",
+        "caption": "alice leads with 42.",
+    }))
+
+    result = chat_turn(
+        model_dir=Path("/fake/m"),
+        message="most prolific developers",
+        llm_client=llm, executor=_FakeExecutor([]),
+    )
+
     assert result.success
     assert result.inline_view is not None
-    assert "type: table" in result.inline_view["view_yaml"]
-    # Inline query YAML carried — path C
-    assert result.inline_view["query_yaml"]
+    # Path B → query already saved, so the inline_view payload doesn't
+    # include a transient query yaml.
+    assert result.inline_view["query_yaml"] is None
+    # The wrapper view's ``query:`` field must reference the saved name.
+    assert "query: top_pr_authors" in result.inline_view["view_yaml"]
+    assert result.iterations == 3   # find → run_saved_query → present
 
 
-def test_chat_turn_passes_history_through_to_text2query(monkeypatch):
+def test_chat_turn_passes_history_to_llm(monkeypatch):
+    """Conversation history (prior user/assistant turns) lands in the
+    LLM message list before the current user prompt."""
     _stub_loaders(monkeypatch)
+    _skip_view_validation(monkeypatch)
     llm = FakeLLMClient()
     llm.responses.append(response_with_tool("build_and_run_query", {
         "root_entity": "Widget",
@@ -193,113 +281,47 @@ def test_chat_turn_passes_history_through_to_text2query(monkeypatch):
         llm_client=llm, executor=executor,
     )
 
-    # The first LLM call (text2query) should have system + history (2) + user = 4 messages.
     first_call_msgs = llm.received[0]["messages"]
+    # system + history(2) + user = 4 messages on the very first call.
     assert len(first_call_msgs) == 4
     assert first_call_msgs[1]["content"] == "first question"
     assert first_call_msgs[2]["content"] == "first answer"
     assert first_call_msgs[3]["content"] == "follow-up"
 
 
-def test_chat_turn_returns_saved_view_ref_when_run_saved_view_succeeded(monkeypatch):
-    """VG-237: run_saved_view → saved_view ref; text2view is NOT called."""
+def test_chat_turn_present_view_before_query_is_recoverable(monkeypatch):
+    """If the LLM jumps straight to present_view (no prior query), the
+    orchestrator feeds back an error and lets the loop continue so the
+    LLM can recover. This catches a regression class where a bad
+    sequence would silently produce an empty inline_view."""
     _stub_loaders(monkeypatch)
-
-    from semantic.llm.text2query import Text2QueryResult
-
-    text2view_call_count = []
-
-    def fake_text2query(**kwargs):
-        return Text2QueryResult(
-            success=True,
-            yaml="name: dora_clt_q\nroot: PullRequest\n",
-            rows=[["alpha", 12.0]],
-            columns=["team", "avg_clt"],
-            row_count=1,
-            sql="SELECT ...",
-            iterations=1,
-            view_yaml="name: dora_clt_by_team\ntype: chart\n",
-            saved_view_name="dora_clt_by_team",
-        )
-
-    def fake_text2view(**kwargs):
-        text2view_call_count.append(1)
-        raise AssertionError("text2view must not be called on path A")
-
-    monkeypatch.setattr("api.services.explore_chat.text2query_yaml", fake_text2query)
-    monkeypatch.setattr("api.services.explore_chat.text2view_yaml", fake_text2view)
+    _skip_view_validation(monkeypatch)
+    llm = FakeLLMClient()
+    # First: LLM jumps to present_view (wrong).
+    llm.responses.append(response_with_tool("present_view", {
+        "chart_type": "kpi", "y_field": "n", "caption": "premature.",
+    }))
+    # Second: LLM recovers — build a query.
+    llm.responses.append(response_with_tool("build_and_run_query", {
+        "root_entity": "Widget",
+        "measures": [{"name": "n", "field": "widget_key", "rollup": "count"}],
+    }, call_id="call_2"))
+    # Third: LLM presents the result correctly.
+    llm.responses.append(response_with_tool("present_view", {
+        "chart_type": "kpi", "y_field": "n", "caption": "42.",
+    }, call_id="call_3"))
+    executor = _FakeExecutor([QueryExecutionResult(
+        success=True, rows=[[42]], columns=["n"], row_count=1,
+    )])
 
     result = chat_turn(
-        model_dir=Path("/fake/m"), message="show me dora clt by team",
-        llm_client=FakeLLMClient(), executor=_FakeExecutor([]),
+        model_dir=Path("/fake/widget_model"),
+        message="how many widgets?",
+        llm_client=llm, executor=executor,
     )
 
     assert result.success
-    # Path A — saved_view ref, no inline_view
-    assert result.saved_view == {"name": "dora_clt_by_team", "params": {}}
-    assert result.inline_view is None
-    # The saved view's YAML is in diagnostics (for "Show your work")
-    assert "dora_clt_by_team" in result.view_yaml
-    # text2view was NOT invoked (saved view carries its own chart spec)
-    assert text2view_call_count == []
-
-
-def test_chat_turn_path_b_passes_saved_query_name_to_text2view(monkeypatch):
-    """Path B (run_saved_query): the wrapper view YAML must reference the
-    saved query's *actual* name, not the "text2query" placeholder.
-
-    Regression: live "Show me the most prolific developers" returned a
-    wrapper view with ``query: text2query`` which the inline-view endpoint
-    then couldn't find — "Query 'text2query' not found.".
-    """
-    _stub_loaders(monkeypatch)
-
-    from semantic.llm.text2query import Text2QueryResult
-    from semantic.llm.text2view import Text2ViewResult
-
-    captured: dict = {}
-
-    def fake_text2query(**kwargs):
-        # querydef=None signals "ran a saved query, not built one inline"
-        return Text2QueryResult(
-            success=True,
-            yaml="name: top_pr_authors\nroot: PullRequest\n",
-            querydef=None,
-            saved_query_name="top_pr_authors",  # the real saved name
-            rows=[["alice", 42]],
-            columns=["author", "n"],
-            row_count=1,
-            sql="SELECT ...",
-            iterations=1,
-        )
-
-    def fake_text2view(**kwargs):
-        captured["query_name"] = kwargs.get("query_name")
-        return Text2ViewResult(
-            success=True,
-            yaml=f"name: text2view\ntype: chart\nquery: {kwargs['query_name']}\n",
-            chart_type="bar",
-        )
-
-    monkeypatch.setattr("api.services.explore_chat.text2query_yaml", fake_text2query)
-    monkeypatch.setattr("api.services.explore_chat.text2view_yaml", fake_text2view)
-    # Skip validation — it'd need the actual saved query to resolve columns.
-    monkeypatch.setattr(
-        "api.services.explore_chat.view_service.validate_inline_view",
-        lambda *a, **k: {"valid": True, "errors": []},
-    )
-
-    result = chat_turn(
-        model_dir=Path("/fake/m"), message="most prolific developers",
-        llm_client=FakeLLMClient(), executor=_FakeExecutor([]),
-    )
-
-    assert result.success
-    # The view YAML must reference the saved query, NOT the placeholder.
-    assert captured["query_name"] == "top_pr_authors"
-    assert "query: top_pr_authors" in result.inline_view["view_yaml"]
-    # Path B → query is saved, no inline yaml in the payload.
-    assert result.inline_view["query_yaml"] is None
+    assert result.inline_view is not None
 
 
 # ---------------------------------------------------------------------------
