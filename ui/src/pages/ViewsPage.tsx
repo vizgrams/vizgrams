@@ -37,6 +37,11 @@ import {
 } from '@/components/view/drilldown'
 import { ViewContent } from '@/components/view/ViewContent'
 import { ViewParamBar } from '@/components/view/ViewParamBar'
+import {
+  LibraryFilter,
+  filterByLibrary,
+  type LibraryFilterValue,
+} from '@/components/library/LibraryFilter'
 
 // ---------------------------------------------------------------------------
 // Type icons / colours (left rail)
@@ -358,7 +363,7 @@ function ViewResultFrame({
 
 export function ViewsPage() {
   const { model, api } = useModel()
-  const { role } = useRole()
+  const { role, userId } = useRole()
   const navigate = useNavigate()
   const { name } = useParams<{ name?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -366,6 +371,7 @@ export function ViewsPage() {
   const canCreate = role === 'admin' || role === 'creator'
 
   const [views, setViews] = useState<ViewSummary[]>([])
+  const [filter, setFilter] = useState<LibraryFilterValue>('certified')
 
   // Reload the views list whenever the model changes.
   useEffect(() => {
@@ -374,6 +380,19 @@ export function ViewsPage() {
     // api identity changes per-render — depend on the model string only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model])
+
+  // When loading completes, if "Certified" is the active filter but nothing
+  // is certified yet, fall through to "All" so the user isn't staring at an
+  // empty list. Better UX than asking them to discover the toggle.
+  useEffect(() => {
+    if (filter !== 'certified') return
+    if (views.length === 0) return
+    if (!views.some((v) => v.is_certified)) setFilter('all')
+    // Intentionally only on first views payload — the user can re-pick later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [views.length > 0])
+
+  const filteredViews = filterByLibrary(views, filter, userId)
 
   const params = Object.fromEntries(searchParams)
 
@@ -451,9 +470,22 @@ export function ViewsPage() {
               </button>
             </div>
           )}
+          <div className="px-2 pb-2 mb-1 border-b">
+            <LibraryFilter
+              value={filter}
+              onChange={setFilter}
+              currentUserId={userId}
+              matchCount={filteredViews.length}
+              totalCount={views.length}
+            />
+          </div>
           {views.length === 0
             ? <p className="px-4 py-6 text-xs text-muted-foreground text-center">Loading…</p>
-            : views.map((v) => {
+            : filteredViews.length === 0
+            ? <p className="px-4 py-6 text-xs text-muted-foreground text-center">
+                No views match this filter.
+              </p>
+            : filteredViews.map((v) => {
                 const active = name === v.name
                 return (
                   <button
