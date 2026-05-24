@@ -4,7 +4,11 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   test: {
-    environment: 'node',
+    // jsdom so component tests can render React. Pure-function tests
+    // (no DOM access) work fine in jsdom too — the overhead is
+    // negligible and a single environment keeps config simple.
+    environment: 'jsdom',
+    setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
   plugins: [react()],
