@@ -225,11 +225,11 @@ def publish_from_chat(
     significance = compute_significance_score(snapshot_rows, chart_config)
     vizgram_id = create_vizgram(
         dataset_ref=model_id,
-        # Convention (matches the /views publish path): query_ref is the
-        # saved-view name. The feed Share button builds /views/<query_ref>
-        # for live-data links — keep this consistent so both publish
-        # surfaces produce shareable URLs out of the same field.
+        # query_ref keeps the historical "label" convention — the saved
+        # view's name doubles as a sensible reference. ``view_ref`` is the
+        # explicit share-link target that the feed UI uses; see VG-240.
         query_ref=view_name,
+        view_ref=view_name,
         title=title.strip(),
         author_id=user_id,
         author_display_name=get_user_display_name(user_id),

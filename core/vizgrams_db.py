@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS vizgrams (
     id                   TEXT    PRIMARY KEY,
     dataset_ref          TEXT    NOT NULL,
     query_ref            TEXT    NOT NULL,
+    -- VG-240 share-link target. Set explicitly by publish surfaces to the
+    -- saved-view name backing the vizgram (nullable so legacy rows that
+    -- pre-date the column gracefully render without a Share button).
+    view_ref             TEXT,
     slice_config         TEXT    NOT NULL DEFAULT '{}',
     chart_config         TEXT    NOT NULL DEFAULT '{}',
     title                TEXT    NOT NULL,
@@ -151,6 +155,13 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     }
     if "author_display_name" not in vg_cols:
         conn.execute("ALTER TABLE vizgrams ADD COLUMN author_display_name TEXT")
+        conn.commit()
+    if "view_ref" not in vg_cols:
+        # VG-240: new explicit share-link target. Stays NULL on legacy rows;
+        # the UI hides the Share button when null so we don't link to a
+        # view that may or may not exist (the old query_ref overload was
+        # not always a view name).
+        conn.execute("ALTER TABLE vizgrams ADD COLUMN view_ref TEXT")
         conn.commit()
 
     model_cols = {
@@ -293,23 +304,30 @@ def create_vizgram(
     live: bool = True,
     data_snapshot: list | None = None,
     significance_score: float = 0.0,
+    view_ref: str | None = None,
     db_path: Path | None = None,
 ) -> str:
-    """Insert a new vizgram. Returns the generated id."""
+    """Insert a new vizgram. Returns the generated id.
+
+    ``view_ref`` is the saved-view name backing this vizgram — used by the
+    feed Share button to build a ``/views/<view_ref>`` link. Nullable so
+    pre-VG-240 publish paths that didn't supply it still work.
+    """
     vizgram_id = str(uuid4())
     now = _now()
     conn_path = get_db_path(db_path)
     with _connect(conn_path) as conn:
         conn.execute(
             """INSERT INTO vizgrams
-               (id, dataset_ref, query_ref, slice_config, chart_config,
+               (id, dataset_ref, query_ref, view_ref, slice_config, chart_config,
                 title, live, data_snapshot, significance_score,
                 author_id, author_display_name, published_at, updated_at, tags)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 vizgram_id,
                 dataset_ref,
                 query_ref,
+                view_ref,
                 json.dumps(slice_config or {}),
                 json.dumps(chart_config or {}),
                 title,

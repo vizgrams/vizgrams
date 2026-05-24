@@ -687,6 +687,7 @@ export interface VizgramSummary {
   id: string
   dataset_ref: string
   query_ref: string
+  view_ref: string | null                // VG-240: share-link target; null on legacy rows
   title: string
   caption: string | null
   author_id: string
@@ -720,6 +721,7 @@ export const listFeed = (params?: { limit?: number; offset?: number; dataset_ref
 export interface PublishVizgramRequest {
   model: string
   query_ref: string
+  view_ref?: string | null               // VG-240: share-link target
   title: string
   slice_config: Record<string, unknown>
   chart_config: Record<string, unknown>

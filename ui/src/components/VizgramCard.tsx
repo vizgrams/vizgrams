@@ -330,7 +330,7 @@ export function VizgramCard({ vizgram }: { vizgram: VizgramSummary }) {
               activeClass="text-blue-500"
               onClick={() => handleEngage('save')}
             />
-            <ShareButton viewName={vizgram.query_ref} />
+            {vizgram.view_ref && <ShareButton viewName={vizgram.view_ref} />}
           </div>
         </div>
       </div>
