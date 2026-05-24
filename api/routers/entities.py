@@ -17,8 +17,8 @@ from api.schemas.job import JobOut
 from api.services import entity_service, feature_service
 from api.services.entity_service import EntityValidationError
 from api.services.feature_service import FeatureValidationError
+from api.version_routes import make_version_routes
 from core.db import BackendUnavailableError
-from core.version_routes import make_version_routes
 
 router = APIRouter(prefix="/model/{model}/entity", tags=["entities"])
 

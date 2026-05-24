@@ -3,7 +3,7 @@
 
 """Tests for core/significance.py"""
 
-from core.significance import compute_significance_score
+from api.services.feed_significance import compute_significance_score
 
 # ---------------------------------------------------------------------------
 # Edge cases — no data / insufficient data

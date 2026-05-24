@@ -14,8 +14,8 @@ from api.schemas.application import ApplicationDetail, ApplicationSummary
 from api.schemas.common import ValidationResult, YAMLContent
 from api.services import application_service
 from api.services.application_service import ApplicationValidationError
+from api.version_routes import make_version_routes
 from core.db import BackendUnavailableError
-from core.version_routes import make_version_routes
 
 _log = logging.getLogger(__name__)
 

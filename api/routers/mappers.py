@@ -16,8 +16,8 @@ from api.schemas.job import JobOut
 from api.schemas.mapper import MapperOut
 from api.services import mapper_service
 from api.services.mapper_service import MapperValidationError
+from api.version_routes import make_version_routes
 from core.db import BackendUnavailableError
-from core.version_routes import make_version_routes
 
 router = APIRouter(prefix="/model/{model}/entity/{entity}/mapper", tags=["mappers"])
 

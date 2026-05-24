@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.dependencies import resolve_model_dir
 from api.schemas.tool import ToolDetail, ToolSummary
-from api.services import tool_service
+from core import tool_service
 
 router = APIRouter(prefix="/model/{model}/tool", tags=["tools"])
 

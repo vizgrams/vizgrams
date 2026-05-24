@@ -361,7 +361,7 @@ def _write_tool_config(model_dir, tools: dict):
 
 def test_get_tool_rejects_unlisted_tool(tmp_path):
     """When config.yaml is present, tools not listed must be rejected."""
-    from api.services.tool_service import get_tool_instance
+    from core.tool_service import get_tool_instance
 
     _write_tool_config(tmp_path, {"git": {"enabled": True, "org": "X", "host": "github.com"}})
     with pytest.raises(ValueError, match="not listed"):
@@ -370,7 +370,7 @@ def test_get_tool_rejects_unlisted_tool(tmp_path):
 
 def test_get_tool_rejects_disabled_tool(tmp_path):
     """When config.yaml is present, disabled tools must be rejected."""
-    from api.services.tool_service import get_tool_instance
+    from core.tool_service import get_tool_instance
 
     _write_tool_config(tmp_path, {"jira": {"enabled": False, "server": "s", "email": "e", "api_token": "t"}})
     with pytest.raises(ValueError, match="disabled"):
@@ -379,7 +379,7 @@ def test_get_tool_rejects_disabled_tool(tmp_path):
 
 def test_get_tool_passes_model_dir_to_tool(tmp_path):
     """model_dir is forwarded to tool constructors."""
-    from api.services.tool_service import BUILTIN_REGISTRY, get_tool_instance
+    from core.tool_service import BUILTIN_REGISTRY, get_tool_instance
 
     class CaptureTool:
         def __init__(self, config, model_dir=None, **_kw):

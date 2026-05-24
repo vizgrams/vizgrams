@@ -9,12 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.dependencies import get_current_user, optional_user, require_creator
+from api.services.feed_significance import compute_significance_score
 from core.caption_provider import (
     build_caption_prompt,
     compute_snapshot_hash,
     get_caption_provider,
 )
-from core.significance import compute_significance_score
 from core.vizgrams_db import (
     add_engagement,
     create_vizgram,

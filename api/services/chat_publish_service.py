@@ -42,9 +42,9 @@ from api.services import (
     query_service,
     view_service,
 )
+from api.services.feed_significance import compute_significance_score
 from core import metadata_db
 from core.caption_provider import compute_snapshot_hash
-from core.significance import compute_significance_score
 from core.vizgrams_db import create_vizgram, get_user_display_name, update_caption
 
 logger = logging.getLogger(__name__)

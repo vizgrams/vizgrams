@@ -24,8 +24,8 @@ from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.query import QueryDetail, QueryResult, QuerySummary
 from api.services import query_service
 from api.services.query_service import QueryValidationError
+from api.version_routes import make_version_routes
 from core import metadata_db
-from core.version_routes import make_version_routes
 
 router = APIRouter(prefix="/model/{model}/query", tags=["queries"])
 
