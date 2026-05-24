@@ -3,10 +3,10 @@
 
 """HTTP tests for the chat-publish endpoint (VG-240 / VG-241).
 
-POST /api/v1/model/{m}/explore/chat/publish — turns a chat-turn payload
+POST /api/v1/model/{m}/chat/publish — turns a chat-turn payload
 into a vizgram. Three paths (saved_view / inline path B / inline path C)
 covered at the wire level; the deeper service-layer logic lives in
-``test_chat_publish_service.py``.
+``test_chat_publish.py``.
 """
 
 from __future__ import annotations
@@ -53,11 +53,11 @@ def _ok_publish_result(view_name="dora_clt_by_team", query_name=None):
 def test_publish_saved_view_returns_view_name(client):
     c, _ = client
     with patch(
-        "api.routers.explore_chat.chat_publish_service.publish_from_chat",
+        "api.routers.chat.chat_publish_service.publish_from_chat",
         return_value=_ok_publish_result(),
     ) as mock:
         resp = c.post(
-            "/api/v1/model/demo/explore/chat/publish",
+            "/api/v1/model/demo/chat/publish",
             json={
                 "title": "DORA CLT by team",
                 "caption": "Cycle time dropped 30%",
@@ -86,11 +86,11 @@ def test_publish_saved_view_returns_view_name(client):
 def test_publish_inline_view_path_c_returns_both_names(client):
     c, _ = client
     with patch(
-        "api.routers.explore_chat.chat_publish_service.publish_from_chat",
+        "api.routers.chat.chat_publish_service.publish_from_chat",
         return_value=_ok_publish_result(view_name="prs_by_author", query_name="prs_by_author"),
     ) as mock:
         resp = c.post(
-            "/api/v1/model/demo/explore/chat/publish",
+            "/api/v1/model/demo/chat/publish",
             json={
                 "title": "PRs by author",
                 "caption": None,
@@ -119,7 +119,7 @@ def test_publish_inline_view_path_c_returns_both_names(client):
 def test_publish_rejects_payload_without_view(client):
     c, _ = client
     resp = c.post(
-        "/api/v1/model/demo/explore/chat/publish",
+        "/api/v1/model/demo/chat/publish",
         json={"title": "x", "caption": None},
     )
     assert resp.status_code == 422
@@ -129,7 +129,7 @@ def test_publish_rejects_payload_without_view(client):
 def test_publish_rejects_empty_title(client):
     c, _ = client
     resp = c.post(
-        "/api/v1/model/demo/explore/chat/publish",
+        "/api/v1/model/demo/chat/publish",
         json={
             "title": "",
             "saved_view": {"name": "x", "params": {}},
@@ -141,11 +141,11 @@ def test_publish_rejects_empty_title(client):
 def test_publish_wraps_value_error_as_400(client):
     c, _ = client
     with patch(
-        "api.routers.explore_chat.chat_publish_service.publish_from_chat",
+        "api.routers.chat.chat_publish_service.publish_from_chat",
         side_effect=ValueError("boom"),
     ):
         resp = c.post(
-            "/api/v1/model/demo/explore/chat/publish",
+            "/api/v1/model/demo/chat/publish",
             json={
                 "title": "x",
                 "saved_view": {"name": "x", "params": {}},
@@ -173,7 +173,7 @@ def test_publish_rejects_non_creators(tmp_path, monkeypatch):
     try:
         with TestClient(app) as c:
             resp = c.post(
-                "/api/v1/model/demo/explore/chat/publish",
+                "/api/v1/model/demo/chat/publish",
                 json={
                     "title": "x",
                     "saved_view": {"name": "x", "params": {}},

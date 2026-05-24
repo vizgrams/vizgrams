@@ -12,7 +12,7 @@ Mirrors the existing /views publish UX: same vizgram shape, same caption
 flow. The extra step here is *creating* the underlying artifacts first,
 since chat turns produce inline YAML rather than referencing saved names.
 
-The three response shapes from ``api/services/explore_chat.py``:
+The three response shapes from ``api/services/chat/service.py``:
 
   Path A — saved_view ref (find_artifacts hit on a saved view)
     Nothing new to save. Just execute the view, snapshot, publish.

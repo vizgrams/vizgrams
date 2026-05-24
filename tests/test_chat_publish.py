@@ -1,7 +1,7 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for api/services/chat_publish_service.py (Epic 21 VG-240/241)."""
+"""Tests for api/services/chat/publish.py (Epic 21 VG-240/241)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml as _yaml
 
-from api.services.chat_publish_service import (
+from api.services.chat.publish import (
     _resolve_artifacts,
     slugify_title,
     unique_name,
@@ -112,11 +112,11 @@ class _Recorder:
 def recorder(monkeypatch) -> _Recorder:
     rec = _Recorder()
     monkeypatch.setattr(
-        "api.services.chat_publish_service.view_service.create_or_replace_view",
+        "api.services.chat.publish.view_service.create_or_replace_view",
         rec.save_view,
     )
     monkeypatch.setattr(
-        "api.services.chat_publish_service.query_service.create_or_replace_query",
+        "api.services.chat.publish.query_service.create_or_replace_query",
         rec.save_query,
     )
     return rec
