@@ -82,12 +82,19 @@ def _summarize(result: ToolResult) -> str:
 PRESENT_VIEW = Tool(
     name="present_view",
     description=(
-        "Specify the chart spec and caption for the given query result. "
-        "Call exactly once."
+        "Render the previous tool's query result as a chart. Call this "
+        "exactly once after build_and_run_query or run_saved_query — the "
+        "rows + columns from the most recent successful query become the "
+        "data; this call picks the chart type and a caption. Don't call "
+        "after run_saved_view (the saved view already carries its chart)."
     ),
     parameters_schema=PARAMETERS_SCHEMA,
     handler=_handler,
-    tags=("view_selection",),
+    # query_authoring: visible to the unified chat orchestrator alongside
+    # find_artifacts / build_and_run_query / run_saved_* (single tool loop).
+    # view_selection: legacy tag kept for any caller filtering to just
+    # the chart picker.
+    tags=("query_authoring", "view_selection"),
     terminal=True,
     summarize=_summarize,
 )

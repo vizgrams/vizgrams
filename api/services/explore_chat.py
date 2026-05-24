@@ -1,22 +1,24 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
-"""Explore-chat orchestrator (Epic 19 VG-205).
+"""Explore-chat orchestrator — single agentic tool loop.
 
-Chains the two ``semantic/llm/text2X`` capabilities into one assistant
-turn: text2query authors and executes a query, then text2view picks a
-chart spec and writes a caption. The orchestrator owns conversation
-state (passed in by the caller — ephemeral in v1) and the
-``SemanticLayerExecutor`` that adapts the existing engine to the
-``QueryExecutor`` protocol.
+One LLM tool-calling loop. The model sees five tools and decides the
+sequence itself; no hard-coded procedure, no distance thresholds in the
+prompt. Terminal tools are ``run_saved_view`` (reuse path — produces a
+saved_view ref) and ``present_view`` (build path — produces an inline
+view yaml on top of the most recent query result).
 
-Plain Python — no LangGraph. If/when we add a planner agent or
-multi-agent coordination, the orchestrator gets richer; the text2X
-modules don't change.
+Replaces the previous two-phase ``text2query`` → ``text2view`` pipeline
+which was biased toward reuse via prescriptive language ("always call
+find_artifacts first") + loose distance thresholds (0.5 for views).
+Bias now lives only in tool descriptions, which the LLM can weigh
+against the actual question.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,16 +26,12 @@ from typing import Any
 
 from api.services import query_service, view_service
 from semantic.feature import FeatureDef
-from semantic.llm.provider import LLMClient, get_default_client
+from semantic.llm.provider import LLMClient, LLMResponse, ToolCall, get_default_client
 from semantic.llm.schema_context import build_schema_context
-from semantic.llm.text2query import (
-    QueryExecutionResult,
-    Text2QueryResult,
-    querydef_to_yaml,
-    text2query_yaml,
-)
-from semantic.llm.text2view import Text2ViewResult, text2view_yaml
+from semantic.llm.text2query import QueryExecutionResult, querydef_to_yaml
+from semantic.llm.text2view import view_yaml as render_view_yaml
 from semantic.llm.tools import ToolCallTrace, ToolContext, ToolRegistry, build_default_registry
+from semantic.llm.tools.registry import summarize_tool_result
 from semantic.query import QueryDef
 from semantic.yaml_adapter import YAMLAdapter
 
@@ -226,6 +224,133 @@ def _build_semantic_search():
 
 
 # ---------------------------------------------------------------------------
+# System prompt — short, tool-focused, no prescriptive procedure
+# ---------------------------------------------------------------------------
+
+
+_SYSTEM_PROMPT_TEMPLATE = """You answer the user's data question for the `{model}` model by calling tools.
+
+Available tools:
+
+- `find_artifacts(query, kind?, top_k?)` — semantic search over the
+  model's catalog of saved queries, views, and features. Useful for
+  checking whether the user's question matches existing work.
+
+- `run_saved_view(name, params?)` — execute a saved view (terminal).
+  Use only when find_artifacts returned a view that truly answers the
+  user's question — typically distance ≲ 0.2. Saved views carry their
+  own chart spec + drilldown; running one preserves the author's
+  end-to-end choices.
+
+- `run_saved_query(name, params?)` — execute a saved query, then call
+  `present_view` to pick a chart. Same bar as run_saved_view: only when
+  the catalog match really is the same question.
+
+- `build_and_run_query(...)` — author and execute a new query from the
+  ENTITY SCHEMA below. Default for novel questions and for near-misses
+  in the catalog. Lift naming + measure definitions from any matches
+  find_artifacts returned (descriptions render measures as
+  `alias=expr(field)`).
+
+- `present_view(chart_type, x_field?, y_field?, caption)` — pick a chart
+  for the rows returned by the *most recent* build_and_run_query or
+  run_saved_query (terminal). Call exactly once. Pass column names you
+  saw in that tool result. Don't call after run_saved_view.
+
+You decide the sequence, with two hard rules:
+
+1. **Every turn MUST end with a terminal tool call**: ``run_saved_view``
+   or ``present_view``. The user sees the rendered view — not your
+   prose. Text-only responses produce a failed turn and the user sees
+   nothing useful.
+
+2. **One view per turn.** If the user's question is compound ("show me
+   DORA metrics", "PR throughput AND cycle time"), pick the most
+   informative single metric and answer that. Don't run multiple
+   queries trying to summarise everything in text — pick one, call
+   ``present_view``, and the user can ask follow-ups for the rest.
+
+A near-miss in the catalog is a different question — author a new
+query rather than reusing a saved one that doesn't quite fit.
+
+When authoring with `build_and_run_query`:
+- `root_entity` MUST be one of the ENTITY names below (case-sensitive).
+- Field paths use dotted traversal: `author.name`. First segment must
+  be a column on the root entity OR a relation name listed on the
+  `relations:` line — never guess.
+- Aggregations: populate `group_by` AND `measures`. Raw rows: leave
+  `measures` empty and use `attributes`.
+- For `count` rollup, set `field` to the entity's primary key.
+- For `avg` / `sum` / `min` / `max`, `field` MUST be a numeric column.
+  Don't aggregate timestamps or strings — find or build a duration
+  feature.
+- Filters are SQL-ish: `created_at >= '2026-04-01'`, `state == 'merged'`.
+- Measure names and group_by aliases are snake_case
+  (lowercase letters, digits, underscores, starting with a letter).
+- On error, fix the args and retry — don't loop on the same conceptual
+  query.
+
+=== MODEL SCHEMA ===
+
+{schema}"""
+
+
+def build_system_prompt(model_name: str, schema_context: str) -> str:
+    return _SYSTEM_PROMPT_TEMPLATE.format(model=model_name, schema=schema_context)
+
+
+# ---------------------------------------------------------------------------
+# Loop state — what the orchestrator tracks across tool calls
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _QueryState:
+    """The most recent successful build/run_saved_query in this turn.
+
+    ``present_view`` consumes whichever of these is current to construct
+    the wrapper view yaml. Updated each time a query-producing tool
+    succeeds; reset never (a later successful call just overwrites).
+    """
+    name: str
+    yaml: str | None
+    columns: list[str]
+    sql: str | None
+    is_inline: bool                 # True for build_and_run_query (path C),
+                                    # False for run_saved_query (path B).
+
+
+def _assistant_msg(resp: LLMResponse) -> dict:
+    """Render an LLMResponse as an OpenAI-shape assistant message."""
+    msg: dict = {"role": "assistant", "content": resp.content}
+    if resp.tool_calls:
+        msg["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+            }
+            for tc in resp.tool_calls
+        ]
+    return msg
+
+
+def _trace_step(tc: ToolCall, result: Any, registry: ToolRegistry) -> ToolCallTrace:
+    """Build one trace entry for the VG-239 'Show your work' tab."""
+    tool_def = registry.get(tc.name)
+    return ToolCallTrace(
+        name=tc.name,
+        arguments=tc.arguments,
+        success=result.success,
+        summary=summarize_tool_result(
+            tc.name, result,
+            summarize_hook=tool_def.summarize if tool_def else None,
+        ),
+        payload=dict(result.payload),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -238,24 +363,31 @@ def chat_turn(
     llm_client: LLMClient | None = None,
     executor: SemanticLayerExecutor | None = None,
     registry: ToolRegistry | None = None,
-    text2query_kwargs: dict[str, Any] | None = None,
-    text2view_kwargs: dict[str, Any] | None = None,
+    max_iter: int = 6,
+    rows_to_llm: int = 40,
+    llm_model: str | None = None,
 ) -> ChatTurnResult:
-    """Run one assistant turn: prompt → query → chart spec + caption.
+    """One agentic tool-calling loop.
 
-    ``llm_client`` and ``executor`` are injectable for testability and to
-    let callers swap providers per request (e.g. a per-customer model
-    routing layer). Defaults: ``get_default_client()`` (reads env) and
-    a ``SemanticLayerExecutor`` for ``model_dir``.
+    Tools available: find_artifacts, run_saved_view, run_saved_query,
+    build_and_run_query, present_view. The LLM picks the sequence.
+
+    Terminal paths:
+      - run_saved_view succeeds → ChatTurnResult.saved_view (path A)
+      - present_view succeeds after build_and_run_query (path C) or
+        run_saved_query (path B) → ChatTurnResult.inline_view
+
+    Everything else (find_artifacts, failed tool calls, LLM thinking
+    aloud) keeps the loop running until ``max_iter`` or until the LLM
+    stops calling tools.
     """
     model_name = model_dir.name
     client = llm_client or get_default_client()
     exec_ = executor or SemanticLayerExecutor(model_dir=model_dir)
     reg = registry or build_default_registry()
-    # Wire the semantic-search adapter for the find_artifacts tool. If
-    # embeddings aren't configured (no OPENAI_API_KEY, or ClickHouse
-    # unavailable), search stays None and find_artifacts degrades to an
-    # empty match list — chat keeps working.
+    # Wire the semantic-search adapter for find_artifacts. Missing
+    # OPENAI_API_KEY or unavailable ClickHouse → search is None and
+    # find_artifacts gracefully returns an empty match list.
     search = _build_semantic_search()
     ctx = ToolContext(
         model_id=model_name, model_dir=model_dir,
@@ -268,120 +400,203 @@ def chat_turn(
         features_by_entity.setdefault(fd.entity_type, []).append(fd)
     schema = build_schema_context(model_name, entities, features_by_entity)
 
-    q_result: Text2QueryResult = text2query_yaml(
-        prompt=message,
-        model_name=model_name,
-        schema_context=schema,
-        registry=reg,
-        ctx=ctx,
-        llm_client=client,
-        history=_history_to_openai(history),
-        **(text2query_kwargs or {}),
-    )
+    messages: list[dict] = [
+        {"role": "system", "content": build_system_prompt(model_name, schema)},
+        *_history_to_openai(history),
+        {"role": "user", "content": message},
+    ]
+    # The unified tool set — all under the ``query_authoring`` tag
+    # (present_view picked up the tag in this PR specifically to join
+    # the loop).
+    openai_tools = reg.to_openai_tools(tags=("query_authoring",))
 
-    if not q_result.success:
-        return ChatTurnResult(
-            success=False,
-            error=q_result.error or "query authoring failed",
-            iterations=q_result.iterations,
-            trace=list(q_result.trace),
-        )
+    trace: list[ToolCallTrace] = []
+    last_query: _QueryState | None = None
+    last_error: str | None = None
 
-    # VG-237 path A: the LLM invoked a saved view. Return a saved_view ref
-    # — the UI renders it through the same component the explorer uses.
-    # No text2view call needed; the saved view carries its own chart spec.
-    if q_result.saved_view_name:
-        return ChatTurnResult(
-            success=True,
-            iterations=q_result.iterations,
-            trace=list(q_result.trace),
-            saved_view={"name": q_result.saved_view_name, "params": {}},
-            query_yaml=q_result.yaml,
-            view_yaml=q_result.view_yaml,
-            sql=q_result.sql,
-        )
+    for iteration in range(max_iter):
+        resp = client.complete(messages=messages, tools=openai_tools, model=llm_model)
+        messages.append(_assistant_msg(resp))
 
-    # Paths B (run_saved_query) and C (build_and_run_query) both need
-    # text2view to PICK a chart shape that wraps the data. The wrapper
-    # view becomes the inline-view we return.
-    #
-    # ``query_name`` is what text2view writes into the view's ``query:``
-    # field. The inline-view endpoint uses it to find the underlying
-    # query — saved-by-name for path B, inline by-the-same-name for path
-    # C. We resolve through three sources in order: the inline querydef
-    # (path C), the saved query's real name (path B), and finally the
-    # placeholder (defensive — both prior should cover live runs).
-    wrapper_query_name = (
-        (q_result.querydef.name if q_result.querydef else None)
-        or q_result.saved_query_name
-        or QUERY_ARTIFACT_NAME
-    )
-
-    v_result: Text2ViewResult = text2view_yaml(
-        columns=q_result.columns,
-        rows=q_result.rows,
-        registry=reg,
-        user_intent=message,
-        llm_client=client,
-        query_name=wrapper_query_name,
-        view_name=VIEW_ARTIFACT_NAME,
-        **(text2view_kwargs or {}),
-    )
-
-    if not v_result.success:
-        # Chart picker failed. Wrap the data in a minimal table view so the
-        # UI still has something to render through the standard path.
-        fallback_view = _fallback_table_view_yaml(
-            view_name=VIEW_ARTIFACT_NAME,
-            query_name=wrapper_query_name,
-            columns=q_result.columns,
-        )
-        return ChatTurnResult(
-            success=True,
-            iterations=q_result.iterations,
-            trace=list(q_result.trace) + list(v_result.trace),
-            inline_view=_inline_view_payload(
-                view_yaml=fallback_view,
-                query_yaml=q_result.yaml,
-                # Path B passes query_yaml=None because the query is saved.
-                # Detect: q_result.querydef is None when run_saved_query was the success path.
-                is_query_inline=q_result.querydef is not None,
-            ),
-            query_yaml=q_result.yaml,
-            view_yaml=fallback_view,
-            sql=q_result.sql,
-        )
-
-    # Validate the wrapper view YAML against the same schema the existing
-    # POST /view routes use.
-    if v_result.yaml:
-        try:
-            view_validation = view_service.validate_inline_view(
-                model_dir, VIEW_ARTIFACT_NAME, v_result.yaml,
-                known_query_columns={wrapper_query_name: q_result.columns},
+        if not resp.tool_calls:
+            # LLM stopped without calling a terminal tool. Two cases:
+            #   (a) we have a successful query waiting — safety net: auto-
+            #       call present_view as a fallback table view so the user
+            #       sees the data anyway (the LLM forgot the contract).
+            #   (b) no query data — genuine failure; surface the LLM's
+            #       text as the error.
+            if last_query is not None:
+                logger.info(
+                    "LLM stopped without present_view; auto-presenting "
+                    "last query %r as table", last_query.name,
+                )
+                return _build_inline_view_turn(
+                    model_dir=model_dir,
+                    iteration=iteration + 1,
+                    trace=trace,
+                    last_query=last_query,
+                    present_payload={
+                        "chart_type": "table",
+                        "caption": resp.content or "",
+                    },
+                )
+            return ChatTurnResult(
+                success=False,
+                error=resp.content or "LLM stopped without producing a view",
+                iterations=iteration + 1,
+                trace=trace,
             )
-            if not view_validation.get("valid", False):
-                errs = view_validation.get("errors") or []
-                msg = "; ".join(
-                    f"{e.get('path') or '<root>'}: {e.get('message') or 'invalid'}"
-                    for e in errs
-                ) or "view validation failed"
-                logger.info("View YAML rejected by validator: %s", msg)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("validate_inline_view raised: %s", exc)
+
+        for tc in resp.tool_calls:
+            try:
+                result = reg.dispatch(tc.name, tc.arguments, ctx)
+            except KeyError:
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id,
+                    "content": json.dumps({"error": f"unknown tool {tc.name!r}"}),
+                })
+                trace.append(ToolCallTrace(
+                    name=tc.name, arguments=tc.arguments,
+                    success=False, summary=f"unknown tool {tc.name!r}",
+                ))
+                continue
+
+            messages.append({
+                "role": "tool", "tool_call_id": tc.id,
+                "content": result.to_tool_message_content(max_rows=rows_to_llm),
+            })
+            trace.append(_trace_step(tc, result, reg))
+
+            if not result.success:
+                last_error = result.payload.get("error") or "tool reported failure"
+                continue
+
+            # State update: query-producing tools refresh ``last_query``
+            # so a subsequent present_view has the right context.
+            if tc.name == "build_and_run_query":
+                qd: QueryDef | None = result.extras.get("querydef")
+                last_query = _QueryState(
+                    name=(qd.name if qd else QUERY_ARTIFACT_NAME),
+                    yaml=result.extras.get("querydef_yaml"),
+                    columns=list(result.payload.get("columns") or []),
+                    sql=result.extras.get("sql"),
+                    is_inline=True,
+                )
+                continue
+
+            if tc.name == "run_saved_query":
+                last_query = _QueryState(
+                    name=result.extras.get("saved_query_name")
+                        or result.payload.get("query_name")
+                        or QUERY_ARTIFACT_NAME,
+                    yaml=result.extras.get("querydef_yaml"),
+                    columns=list(result.payload.get("columns") or []),
+                    sql=result.extras.get("sql"),
+                    is_inline=False,
+                )
+                continue
+
+            # Terminal: run_saved_view → saved_view ref (path A).
+            if tc.name == "run_saved_view":
+                return ChatTurnResult(
+                    success=True,
+                    iterations=iteration + 1,
+                    trace=trace,
+                    saved_view={
+                        "name": result.extras.get("saved_view_name")
+                            or result.payload.get("view_name"),
+                        "params": tc.arguments.get("params") or {},
+                    },
+                    query_yaml=result.extras.get("querydef_yaml"),
+                    view_yaml=result.extras.get("view_yaml"),
+                    sql=result.extras.get("sql"),
+                )
+
+            # Terminal: present_view → inline_view yaml on top of the
+            # most recent query (paths B / C).
+            if tc.name == "present_view":
+                if last_query is None:
+                    # The LLM jumped to present_view without first
+                    # running a query. Treat as an error and let the
+                    # loop continue so it can retry the right way.
+                    err = "present_view called before any query produced data"
+                    messages.append({
+                        "role": "tool", "tool_call_id": tc.id,
+                        "content": json.dumps({"error": err}),
+                    })
+                    last_error = err
+                    continue
+                return _build_inline_view_turn(
+                    model_dir=model_dir,
+                    iteration=iteration + 1,
+                    trace=trace,
+                    last_query=last_query,
+                    present_payload=result.payload,
+                )
+
+    # Loop exhausted without a terminal tool.
+    return ChatTurnResult(
+        success=False,
+        error=last_error or "max iterations reached without producing a view",
+        iterations=max_iter,
+        trace=trace,
+    )
+
+
+def _build_inline_view_turn(
+    *,
+    model_dir: Path,
+    iteration: int,
+    trace: list[ToolCallTrace],
+    last_query: _QueryState,
+    present_payload: dict,
+) -> ChatTurnResult:
+    """Package a present_view result + the prior query state as inline_view.
+
+    Builds the wrapper view yaml, runs it past validate_inline_view (best
+    effort — failure just logs), and returns a ChatTurnResult shaped like
+    the historic paths B/C output.
+    """
+    wrapper_view_yaml = render_view_yaml(
+        name=VIEW_ARTIFACT_NAME,
+        query_name=last_query.name,
+        chart_type=present_payload["chart_type"],
+        x_field=present_payload.get("x_field"),
+        y_field=present_payload.get("y_field"),
+        color_field=present_payload.get("color_field"),
+        caption=present_payload.get("caption", ""),
+        columns=last_query.columns,
+    )
+
+    # Best-effort validation. Mirrors the historic flow — broken views
+    # still ship; the UI degrades gracefully.
+    try:
+        view_validation = view_service.validate_inline_view(
+            model_dir, VIEW_ARTIFACT_NAME, wrapper_view_yaml,
+            known_query_columns={last_query.name: last_query.columns},
+        )
+        if not view_validation.get("valid", False):
+            errs = view_validation.get("errors") or []
+            msg = "; ".join(
+                f"{e.get('path') or '<root>'}: {e.get('message') or 'invalid'}"
+                for e in errs
+            ) or "view validation failed"
+            logger.info("View YAML rejected by validator: %s", msg)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("validate_inline_view raised: %s", exc)
 
     return ChatTurnResult(
         success=True,
-        iterations=q_result.iterations,
-        trace=list(q_result.trace) + list(v_result.trace),
+        iterations=iteration,
+        trace=trace,
         inline_view=_inline_view_payload(
-            view_yaml=v_result.yaml or "",
-            query_yaml=q_result.yaml,
-            is_query_inline=q_result.querydef is not None,
+            view_yaml=wrapper_view_yaml,
+            query_yaml=last_query.yaml,
+            is_query_inline=last_query.is_inline,
         ),
-        query_yaml=q_result.yaml,
-        view_yaml=v_result.yaml,
-        sql=q_result.sql,
+        query_yaml=last_query.yaml,
+        view_yaml=wrapper_view_yaml,
+        sql=last_query.sql,
     )
 
 
@@ -403,16 +618,3 @@ def _inline_view_payload(
     }
 
 
-def _fallback_table_view_yaml(*, view_name: str, query_name: str, columns: list[str]) -> str:
-    """Minimal table-view YAML for when text2view fails.
-
-    Lets the UI still render the data through ``ViewContent`` instead of
-    failing the whole turn. Lists every result column so nothing's hidden.
-    """
-    import yaml as _yaml
-    return _yaml.safe_dump({
-        "name": view_name,
-        "type": "table",
-        "query": query_name,
-        "visualization": {"columns": list(columns)},
-    }, sort_keys=False)
