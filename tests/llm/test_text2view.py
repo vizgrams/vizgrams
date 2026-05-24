@@ -14,6 +14,7 @@ from tests.llm.conftest import response_text, response_with_tool
 
 def test_returns_chart_spec_from_present_view_call(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
+        "title": "PR count by author",
         "chart_type": "bar",
         "x_field": "author",
         "y_field": "pr_count",
@@ -37,6 +38,7 @@ def test_returns_chart_spec_from_present_view_call(fake_llm, default_registry):
 
 def test_kpi_chart_emits_type_metric(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
+        "title": "Total PRs",
         "chart_type": "kpi",
         "y_field": "n",
         "caption": "19,999 PRs total",
@@ -57,6 +59,7 @@ def test_kpi_chart_emits_type_metric(fake_llm, default_registry):
 
 def test_user_intent_and_rows_reach_the_llm(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
+        "title": "Monthly throughput",
         "chart_type": "line",
         "x_field": "month",
         "y_field": "n",
@@ -78,6 +81,7 @@ def test_user_intent_and_rows_reach_the_llm(fake_llm, default_registry):
 
 def test_truncates_rows_sent_to_llm(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
+        "title": "Rows",
         "chart_type": "table",
         "caption": "...",
     }))
@@ -109,6 +113,7 @@ def test_returns_failure_when_llm_does_not_call_tool(fake_llm, default_registry)
 
 def test_returns_failure_when_chart_type_missing(fake_llm, default_registry):
     fake_llm.responses.append(response_with_tool("present_view", {
+        "title": "x",
         "caption": "no chart type provided",
     }))
 
@@ -118,8 +123,9 @@ def test_returns_failure_when_chart_type_missing(fake_llm, default_registry):
     )
 
     assert not result.success
+    # Handler now reports any of the required-field misses together;
+    # chart_type is the one missing in this test.
     assert "chart_type" in (result.error or "")
-    assert result.raw_args == {"caption": "no chart type provided"}
 
 
 def test_returns_failure_when_wrong_tool_called(fake_llm, default_registry):

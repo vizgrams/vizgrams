@@ -14,6 +14,17 @@ from semantic.llm.tools.registry import Tool, ToolContext, ToolResult
 PARAMETERS_SCHEMA: dict = {
     "type": "object",
     "properties": {
+        "title": {
+            "type": "string",
+            "description": (
+                "Short factual title for the chart — what it shows, NOT what "
+                "it means. Sentence case, no trailing period, ≤ 60 chars. "
+                "Good: 'PR count by team, last 12 weeks', 'Change lead time "
+                "by team'. Bad: 'Insights into PR throughput', 'Team "
+                "performance is improving', 'PR Throughput Chart'."
+            ),
+            "maxLength": 80,
+        },
         "chart_type": {
             "type": "string",
             "enum": ["bar", "line", "table", "scatter", "kpi"],
@@ -45,7 +56,7 @@ PARAMETERS_SCHEMA: dict = {
             ),
         },
     },
-    "required": ["chart_type", "caption"],
+    "required": ["title", "chart_type", "caption"],
 }
 
 
@@ -53,13 +64,15 @@ def _handler(args: dict, ctx: ToolContext) -> ToolResult:  # noqa: ARG001 — ct
     """Validate the LLM's chart spec and bounce it back as the terminal result."""
     chart_type = args.get("chart_type")
     caption = args.get("caption", "")
-    if not chart_type or not caption:
+    title = (args.get("title") or "").strip()
+    if not chart_type or not caption or not title:
         return ToolResult(
-            payload={"error": "missing required chart_type or caption"},
+            payload={"error": "missing required title / chart_type / caption"},
             success=False,
         )
     return ToolResult(
         payload={
+            "title": title,
             "chart_type": chart_type,
             "x_field": args.get("x_field"),
             "y_field": args.get("y_field"),

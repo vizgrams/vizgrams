@@ -561,6 +561,10 @@ export interface ChatResponse {
   // Exactly one is non-null on success:
   saved_view: ChatSavedView | null
   inline_view: ChatInlineView | null
+  // Short factual title for the turn (e.g. "PR count by team, last 12 weeks").
+  // Used as the default Title in the publish dialog. Null only when the LLM
+  // forgot to call present_view and the auto-present safety net kicked in.
+  title: string | null
   // Diagnostics — feed the "Show your work" tab; not user-facing chrome.
   query_yaml: string | null
   view_yaml: string | null

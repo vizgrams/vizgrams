@@ -145,6 +145,7 @@ def test_chat_turn_path_c_build_then_present_returns_inline_view(monkeypatch):
         "measures": [{"name": "n", "field": "widget_key", "rollup": "count"}],
     }))
     llm.responses.append(response_with_tool("present_view", {
+        "title": "Widget count",
         "chart_type": "kpi", "y_field": "n", "caption": "42 widgets.",
     }))
     executor = _FakeExecutor([QueryExecutionResult(
@@ -162,6 +163,8 @@ def test_chat_turn_path_c_build_then_present_returns_inline_view(monkeypatch):
     assert result.inline_view is not None
     assert result.inline_view["view_yaml"]
     assert result.inline_view["query_yaml"]    # inline query carried — path C
+    # Title comes from the LLM's present_view call — feeds the publish dialog default.
+    assert result.title == "Widget count"
     assert result.iterations == 2              # two LLM calls: build, present
     assert result.query_yaml is not None
     assert result.view_yaml is not None
@@ -272,6 +275,7 @@ def test_chat_turn_path_b_uses_saved_query_name_in_wrapper_view(monkeypatch):
     llm.responses.append(response_with_tool("find_artifacts", {"query": "prolific developers"}))
     llm.responses.append(response_with_tool("run_saved_query", {"name": "top_pr_authors"}))
     llm.responses.append(response_with_tool("present_view", {
+        "title": "Top PR authors",
         "chart_type": "bar", "x_field": "author", "y_field": "n",
         "caption": "alice leads with 42.",
     }))
@@ -303,7 +307,7 @@ def test_chat_turn_passes_history_to_llm(monkeypatch):
         "measures": [{"name": "n", "field": "widget_key", "rollup": "count"}],
     }))
     llm.responses.append(response_with_tool("present_view", {
-        "chart_type": "bar", "y_field": "n", "caption": "x",
+        "title": "T", "chart_type": "bar", "y_field": "n", "caption": "x",
     }))
     executor = _FakeExecutor([QueryExecutionResult(
         success=True, rows=[["a", 1]], columns=["x", "n"], row_count=1,
@@ -338,7 +342,7 @@ def test_chat_turn_present_view_before_query_is_recoverable(monkeypatch):
     llm = FakeLLMClient()
     # First: LLM jumps to present_view (wrong).
     llm.responses.append(response_with_tool("present_view", {
-        "chart_type": "kpi", "y_field": "n", "caption": "premature.",
+        "title": "x", "chart_type": "kpi", "y_field": "n", "caption": "premature.",
     }))
     # Second: LLM recovers — build a query.
     llm.responses.append(response_with_tool("build_and_run_query", {
@@ -347,6 +351,7 @@ def test_chat_turn_present_view_before_query_is_recoverable(monkeypatch):
     }, call_id="call_2"))
     # Third: LLM presents the result correctly.
     llm.responses.append(response_with_tool("present_view", {
+        "title": "Widget count",
         "chart_type": "kpi", "y_field": "n", "caption": "42.",
     }, call_id="call_3"))
     executor = _FakeExecutor([QueryExecutionResult(

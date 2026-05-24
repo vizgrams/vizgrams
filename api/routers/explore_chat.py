@@ -89,6 +89,11 @@ class ChatResponse(BaseModel):
     trace: list[TraceStep] = Field(default_factory=list)
     saved_view: SavedViewRef | None = None
     inline_view: InlineView | None = None
+    # Short factual title for the turn (e.g. "PR count by team, last 12
+    # weeks"). The publish dialog seeds the Title input from this. Null
+    # only when the LLM forgot to call present_view and the auto-present
+    # safety net kicked in — UI falls back to a placeholder.
+    title: str | None = None
     query_yaml: str | None = None
     view_yaml: str | None = None
     sql: str | None = None
@@ -121,6 +126,7 @@ def chat(
         iterations=result.iterations,
         saved_view=SavedViewRef(**result.saved_view) if result.saved_view else None,
         inline_view=InlineView(**result.inline_view) if result.inline_view else None,
+        title=result.title,
         query_yaml=result.query_yaml,
         view_yaml=result.view_yaml,
         sql=result.sql,

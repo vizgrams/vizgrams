@@ -239,9 +239,11 @@ function PublishDialog({
   onClose: () => void
 }) {
   const { api } = useModel()
-  // Default title: saved-view name when path A, else "Untitled chat answer".
-  // The user almost always edits this — the AI caption arrives shortly after.
-  const defaultTitle = response.saved_view?.name ?? 'Untitled chat answer'
+  // Default title: the short factual title the LLM produced for this turn
+  // (set by present_view's ``title`` arg, or the saved view's name for
+  // path A). Falls back to a placeholder only when the auto-present
+  // safety net produced the turn (LLM forgot present_view entirely).
+  const defaultTitle = response.title || response.saved_view?.name || 'Untitled chat answer'
   const [title, setTitle] = useState(defaultTitle)
   const [caption, setCaption] = useState('')
   const [captionLoading, setCaptionLoading] = useState(true)
