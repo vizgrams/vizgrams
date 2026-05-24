@@ -19,15 +19,20 @@
  * carry a drill stack — browser back/forward returns here.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, ChevronDown, ChevronUp, Code, FileCode, Loader2, Wand2 } from 'lucide-react'
+import {
+  AlertCircle, Check, ChevronDown, ChevronUp, Code, Copy, ExternalLink,
+  FileCode, Loader2, Upload, Wand2,
+} from 'lucide-react'
 
 import type { ChatResponse, ChatTraceStep, ViewResult } from '@/api/client'
+import { previewCaption } from '@/api/client'
 import { Card } from '@/components/Layout'
 import { ViewContent } from '@/components/view/ViewContent'
 import { ViewParamBar } from '@/components/view/ViewParamBar'
 import { useModel } from '@/context/ModelContext'
+import { useRole } from '@/context/RoleContext'
 import { frameToUrl, type DrillFrame } from '@/components/view/drilldown'
 import { cn } from '@/lib/utils'
 
@@ -74,11 +79,14 @@ export function ChatViewCard({ response }: Props) {
 // ---------------------------------------------------------------------------
 
 function ChatViewBody({ response }: { response: ChatResponse }) {
-  const { api } = useModel()
+  const { api, model } = useModel()
+  const { role } = useRole()
+  const canPublish = role === 'admin' || role === 'creator'
   const navigate = useNavigate()
   const [result, setResult] = useState<ViewResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [publishOpen, setPublishOpen] = useState(false)
   // The values the user is editing in the param bar. Seeded from the chat
   // response (the params the LLM picked); the schema (label/default/optional)
   // arrives in ``result.params`` after the first execute and is rendered by
@@ -164,12 +172,26 @@ function ChatViewBody({ response }: { response: ChatResponse }) {
 
   return (
     <div className="space-y-3">
-      <ViewParamBar
-        params={result.params ?? []}
-        values={paramValues}
-        onChange={setParamValues}
-        onApply={() => runWithParams(paramValues)}
-      />
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <ViewParamBar
+            params={result.params ?? []}
+            values={paramValues}
+            onChange={setParamValues}
+            onApply={() => runWithParams(paramValues)}
+          />
+        </div>
+        {canPublish && (
+          <button
+            onClick={() => setPublishOpen(true)}
+            className="flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs hover:bg-muted transition-colors shrink-0"
+            title="Publish this answer as a vizgram"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Publish
+          </button>
+        )}
+      </div>
       {loading && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
@@ -182,6 +204,232 @@ function ChatViewBody({ response }: { response: ChatResponse }) {
         paramValues={paramValues}
         onNavigate={handleNavigate}
       />
+      {publishOpen && (
+        <PublishDialog
+          response={response}
+          result={result}
+          paramValues={paramValues}
+          modelId={model}
+          onClose={() => setPublishOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+
+// ---------------------------------------------------------------------------
+// Publish dialog (Epic 21 — VG-240 + VG-241)
+//
+// Mirrors the existing /views publish dialog so the UX is identical for
+// the user. The one extra step happens server-side: if the chat turn is
+// inline (path B / C), the backend saves view + optional query as
+// artifacts (created_via='chat', uncertified) before creating the
+// vizgram. The link we hand back goes to /views/<name> so the user
+// shares live data, not a static snapshot.
+// ---------------------------------------------------------------------------
+
+function PublishDialog({
+  response, result, paramValues, modelId, onClose,
+}: {
+  response: ChatResponse
+  result: ViewResult
+  paramValues: Record<string, string>
+  modelId: string
+  onClose: () => void
+}) {
+  const { api } = useModel()
+  // Default title: saved-view name when path A, else "Untitled chat answer".
+  // The user almost always edits this — the AI caption arrives shortly after.
+  const defaultTitle = response.saved_view?.name ?? 'Untitled chat answer'
+  const [title, setTitle] = useState(defaultTitle)
+  const [caption, setCaption] = useState('')
+  const [captionLoading, setCaptionLoading] = useState(true)
+  const [captionUnavailable, setCaptionUnavailable] = useState(false)
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
+  const [published, setPublished] = useState<{ view_name: string; vizgram_id: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+  const titleRef = useRef<HTMLInputElement>(null)
+
+  // Seed the AI caption on open. Same endpoint the /views publish
+  // dialog uses, so cached captions on the same data hash get reused.
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const MAX_ROWS = result.type === 'table' ? 50 : 500
+        const res = await previewCaption({
+          model: modelId,
+          query_ref: result.query || defaultTitle,
+          title: defaultTitle,
+          slice_config: { parameters: paramValues, snapshot_at: new Date().toISOString() },
+          chart_config: {
+            type: result.type,
+            visualization: result.visualization,
+            columns: result.columns,
+          },
+          data_snapshot: result.rows.slice(0, MAX_ROWS),
+        })
+        if (cancelled) return
+        if (res.caption) setCaption(res.caption)
+        else setCaptionUnavailable(true)
+      } catch {
+        if (!cancelled) setCaptionUnavailable(true)
+      } finally {
+        if (!cancelled) setCaptionLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+    // We deliberately don't re-run when the user edits the title —
+    // captions are seeded once from the data, not the title.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function handlePublish() {
+    if (!title.trim() || publishing) return
+    setPublishing(true); setPublishError(null)
+    try {
+      const out = await api.chatPublish({
+        title: title.trim(),
+        caption: caption.trim() || null,
+        saved_view: response.saved_view ?? null,
+        inline_view: response.inline_view ?? null,
+        params: paramValues,
+      })
+      setPublished({ view_name: out.view_name, vizgram_id: out.vizgram_id })
+    } catch (e) {
+      setPublishError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  const shareUrl = published
+    ? `${window.location.origin}/views/${encodeURIComponent(published.view_name)}`
+    : ''
+
+  async function copyLink() {
+    if (!shareUrl) return
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard API can fail in non-secure contexts; the user can
+      // copy from the input box manually.
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onClick={onClose}
+    >
+      <div
+        className="bg-background rounded-lg border shadow-lg p-6 w-full max-w-md space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {published ? (
+          <>
+            <h2 className="text-base font-semibold flex items-center gap-2">
+              <Check className="h-4 w-4 text-emerald-500" />
+              Published
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Anyone with this link can open the view with live data.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={shareUrl}
+                onFocus={(e) => e.target.select()}
+                className="flex-1 h-8 rounded border bg-muted/30 px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <button
+                onClick={copyLink}
+                className="flex items-center gap-1.5 border rounded-md px-2.5 h-8 text-xs hover:bg-muted transition-colors"
+                title="Copy link"
+              >
+                {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <div className="flex justify-between items-center pt-1">
+              <a
+                href={`/views/${encodeURIComponent(published.view_name)}`}
+                className="text-xs text-primary hover:underline flex items-center gap-1"
+              >
+                Open view
+                <ExternalLink className="h-3 w-3" />
+              </a>
+              <button
+                onClick={onClose}
+                className="bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity"
+              >
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 className="text-base font-semibold">Publish vizgram</h2>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Title</label>
+              <input
+                ref={titleRef}
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                autoFocus
+                onFocus={(e) => e.target.select()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !captionLoading && title.trim()) handlePublish()
+                }}
+                className="w-full h-8 rounded border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-muted-foreground">Caption</label>
+                {captionLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                {captionUnavailable && !captionLoading && (
+                  <span className="text-xs text-muted-foreground/60">AI unavailable — write your own</span>
+                )}
+              </div>
+              <textarea
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                placeholder={captionLoading ? 'Generating…' : 'Add a caption (optional)'}
+                disabled={captionLoading}
+                rows={3}
+                className="w-full rounded border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring resize-none disabled:opacity-50"
+              />
+            </div>
+
+            {publishError && <p className="text-xs text-destructive">{publishError}</p>}
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={onClose}
+                className="border rounded-md px-3 py-1.5 text-xs hover:bg-muted transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={publishing || !title.trim() || captionLoading}
+                onClick={handlePublish}
+                className="bg-primary text-primary-foreground rounded-md px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
+              >
+                {publishing ? 'Publishing…' : 'Publish'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }

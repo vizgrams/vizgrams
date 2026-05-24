@@ -298,6 +298,21 @@ export function makeApi(model: string) {
     chatTurn: (message: string, history: ChatHistoryTurn[]) =>
       post<ChatResponse>(`${BASE}/explore/chat`, { message, history }),
 
+    // VG-240/241: publish a chat turn as a vizgram. Saves any inline
+    // view/query as artifacts first (stamped created_via='chat'), then
+    // creates the vizgram. Returns the saved view's name so the UI can
+    // build the shareable /views/<name> link.
+    chatPublish: (body: {
+      title: string
+      caption?: string | null
+      saved_view?: ChatSavedView | null
+      inline_view?: ChatInlineView | null
+      params?: Record<string, string>
+    }) =>
+      post<{ vizgram_id: string; view_name: string; query_name: string | null }>(
+        `${BASE}/explore/chat/publish`, body,
+      ),
+
     runMapper: (entity: string) =>
       post<JobOut>(`${BASE}/entity/${entity}/mapper/execute`, {}),
 
