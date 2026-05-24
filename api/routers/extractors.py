@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.batch_client import BatchServiceError
-from api.dependencies import get_job_service, require_role, resolve_model_dir
+from api.dependencies import get_current_user, get_job_service, require_role, resolve_model_dir
 from api.limiter import limiter
 from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.extractor import ExtractorDetail
@@ -89,11 +89,14 @@ def upsert_extractor(
     tool: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
+    user_id: str = Depends(get_current_user),
     _=Depends(require_role(ModelRole.ADMIN)),
 ):
     """Validate YAML content and write (create or overwrite) an extractor file."""
     try:
-        return extractor_service.create_or_replace_extractor(model_dir, tool, body.content)
+        return extractor_service.create_or_replace_extractor(
+            model_dir, tool, body.content, user_id=user_id, via="editor",
+        )
     except ExtractorValidationError as exc:
         raise HTTPException(
             status_code=422,

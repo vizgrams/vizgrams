@@ -5,7 +5,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.dependencies import require_user_or_service_account, resolve_model_dir
+from api.dependencies import (
+    author_from_principal,
+    require_user_or_service_account,
+    resolve_model_dir,
+)
 from api.schemas.application import ApplicationDetail, ApplicationSummary
 from api.schemas.common import ValidationResult, YAMLContent
 from api.services import application_service
@@ -51,10 +55,13 @@ def upsert_application(
     app: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
-    _principal: dict = Depends(require_user_or_service_account),
+    principal: dict = Depends(require_user_or_service_account),
 ):
+    user_id, via = author_from_principal(principal)
     try:
-        return application_service.create_or_replace_application(model_dir, app, body.content)
+        return application_service.create_or_replace_application(
+            model_dir, app, body.content, user_id=user_id, via=via,
+        )
     except ApplicationValidationError as exc:
         raise HTTPException(
             status_code=422,

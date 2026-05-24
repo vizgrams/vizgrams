@@ -115,6 +115,18 @@ def optional_user(request: Request) -> str | None:
     return _user_uuid(provider, external_id, email, display_name)
 
 
+def author_from_principal(principal: dict) -> tuple[str | None, str]:
+    """Return ``(user_id, via)`` for the ``created_by`` / ``created_via``
+    columns on artifact_versions (VG-251).
+
+    User saves resolve to ``(uuid, 'editor')``; service-account saves
+    don't have an owning user so they resolve to ``(None, 'sync')``.
+    """
+    if principal.get("kind") == "user":
+        return principal.get("id"), "editor"
+    return None, "sync"
+
+
 def get_base_dir() -> Path:
     """Return the workspace base directory."""
     env = os.environ.get("VZ_BASE_DIR")

@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from api.dependencies import (
+    author_from_principal,
     get_current_user,
     require_creator,
     require_user_or_service_account,
@@ -143,10 +144,13 @@ def upsert_view(
     view: str,
     body: YAMLContent,
     model_dir: str = Depends(resolve_model_dir),
-    _principal: dict = Depends(require_user_or_service_account),
+    principal: dict = Depends(require_user_or_service_account),
 ):
+    user_id, via = author_from_principal(principal)
     try:
-        return view_service.create_or_replace_view(model_dir, view, body.content)
+        return view_service.create_or_replace_view(
+            model_dir, view, body.content, user_id=user_id, via=via,
+        )
     except ViewValidationError as exc:
         raise HTTPException(
             status_code=422,

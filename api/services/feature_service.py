@@ -14,7 +14,9 @@ from semantic.yaml_adapter import YAMLAdapter
 def list_features(model_dir: Path, entity_name: str) -> list[dict]:
     features_dir = model_dir / "features"
     from api.services.certification_service import list_cert_payloads
+    from api.services.ownership_service import list_owner_payloads
     certs = list_cert_payloads(model_dir, "feature")
+    owners = list_owner_payloads(model_dir, "feature")
     result = []
     for fd in YAMLAdapter.load_features(features_dir):
         if fd.entity_type != entity_name:
@@ -25,6 +27,7 @@ def list_features(model_dir: Path, entity_name: str) -> list[dict]:
             "entity": entity_name,
             "feature_type": getattr(fd, "feature_type", "raw_sql"),
             **certs.get(fd.feature_id, _cert_default()),
+            **owners.get(fd.feature_id, _owner_default()),
         }
         if hasattr(fd, "description") and fd.description:
             item["description"] = fd.description
@@ -35,6 +38,7 @@ def list_features(model_dir: Path, entity_name: str) -> list[dict]:
 def get_feature(model_dir: Path, entity_name: str, feature_name: str) -> dict:
     features_dir = model_dir / "features"
     from api.services.certification_service import get_cert_payload
+    from api.services.ownership_service import get_owner_payload
 
     for fd in YAMLAdapter.load_features(features_dir):
         if fd.entity_type != entity_name:
@@ -48,6 +52,7 @@ def get_feature(model_dir: Path, entity_name: str, feature_name: str) -> dict:
             "entity": entity_name,
             "feature_type": feature_type,
             **get_cert_payload(model_dir, "feature", fd.feature_id),
+            **get_owner_payload(model_dir, "feature", fd.feature_id),
         }
 
         if hasattr(fd, "description") and fd.description:
@@ -73,10 +78,21 @@ def _cert_default() -> dict:
     }
 
 
+def _owner_default() -> dict:
+    return {
+        "created_by": None,
+        "created_by_display": None,
+        "created_via": None,
+        "created_at": None,
+    }
+
+
 def list_all_features(model_dir: Path) -> list[dict]:
     """List all features across every entity."""
     from api.services.certification_service import list_cert_payloads
+    from api.services.ownership_service import list_owner_payloads
     certs = list_cert_payloads(model_dir, "feature")
+    owners = list_owner_payloads(model_dir, "feature")
     result = []
     for name in metadata_db.list_artifact_names(model_dir, "feature"):
         content = metadata_db.get_current_content(model_dir, "feature", name)
@@ -93,6 +109,7 @@ def list_all_features(model_dir: Path) -> list[dict]:
             "expr": raw.get("expr", raw.get("raw_sql", "")),
             "raw_yaml": content,
             **certs.get(raw["feature_id"], _cert_default()),
+            **owners.get(raw["feature_id"], _owner_default()),
         }
         if raw.get("description"):
             item["description"] = raw["description"]
@@ -110,7 +127,8 @@ class FeatureValidationError(Exception):
 
 
 def create_or_replace_feature(
-    model_dir: Path, entity_name: str, feature_name: str, content: str
+    model_dir: Path, entity_name: str, feature_name: str, content: str,
+    user_id: str | None = None, via: str | None = None,
 ) -> dict:
     """Validate YAML content and write feature to DB.
 
@@ -163,15 +181,24 @@ def create_or_replace_feature(
         except OSError:
             pass
 
-    metadata_db.record_version(model_dir, "feature", canonical_feature_id, content)
+    metadata_db.record_version(
+        model_dir, "feature", canonical_feature_id, content,
+        user_id=user_id, via=via,
+    )
     return get_feature(model_dir, entity_name, feature_name)
 
 
-def save_feature_by_id(model_dir: Path, feature_id: str, content: str) -> dict:
+def save_feature_by_id(
+    model_dir: Path, feature_id: str, content: str,
+    user_id: str | None = None, via: str | None = None,
+) -> dict:
     """Overwrite feature content in the DB by feature_id."""
     if metadata_db.get_current_content(model_dir, "feature", feature_id) is None:
         raise KeyError(f"Feature '{feature_id}' not found.")
-    metadata_db.record_version(model_dir, "feature", feature_id, content)
+    metadata_db.record_version(
+        model_dir, "feature", feature_id, content,
+        user_id=user_id, via=via,
+    )
     updated = yaml.safe_load(content)
     return {
         "feature_id": updated.get("feature_id", feature_id),

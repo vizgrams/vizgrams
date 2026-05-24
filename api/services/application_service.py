@@ -89,7 +89,10 @@ class ApplicationValidationError(Exception):
         super().__init__("Application validation failed")
 
 
-def create_or_replace_application(model_dir: Path, app_name: str, content: str) -> dict:
+def create_or_replace_application(
+    model_dir: Path, app_name: str, content: str,
+    user_id: str | None = None, via: str | None = None,
+) -> dict:
     import shutil
     import tempfile
 
@@ -115,7 +118,9 @@ def create_or_replace_application(model_dir: Path, app_name: str, content: str) 
     if errors:
         raise ApplicationValidationError([{"path": e.path, "message": e.message} for e in errors])
 
-    metadata_db.record_version(model_dir, "application", app_name, content)
+    metadata_db.record_version(
+        model_dir, "application", app_name, content, user_id=user_id, via=via,
+    )
     return get_application(model_dir, app_name)
 
 

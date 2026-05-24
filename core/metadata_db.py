@@ -44,7 +44,11 @@ CREATE TABLE IF NOT EXISTS artifact_versions (
     checksum    TEXT    NOT NULL,
     message     TEXT,
     created_at  TEXT    NOT NULL,
-    is_current  INTEGER NOT NULL DEFAULT 0
+    is_current  INTEGER NOT NULL DEFAULT 0,
+    -- VG-250: ownership columns. Nullable so historical rows + writes
+    -- with no resolvable user (system / startup seeds) stay valid.
+    created_by  TEXT,
+    created_via TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uix_current
     ON artifact_versions (model_id, type, name)
@@ -110,8 +114,25 @@ def _migration_backfill_certify_existing(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_add_ownership_columns(conn: sqlite3.Connection) -> None:
+    """VG-250: add ``created_by`` + ``created_via`` to ``artifact_versions``.
+
+    For fresh databases the columns are already created by ``_DDL``; for
+    existing prod DBs they need to be added via ALTER. SQLite's
+    ``ADD COLUMN`` isn't idempotent, so we inspect the current schema
+    before each ALTER. Both columns are nullable — historical rows stay
+    valid with NULL author/origin until backfilled or rewritten.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(artifact_versions)").fetchall()}
+    if "created_by" not in cols:
+        conn.execute("ALTER TABLE artifact_versions ADD COLUMN created_by TEXT")
+    if "created_via" not in cols:
+        conn.execute("ALTER TABLE artifact_versions ADD COLUMN created_via TEXT")
+
+
 _MIGRATIONS: dict[str, callable] = {
     "backfill_certify_existing": _migration_backfill_certify_existing,
+    "add_ownership_columns": _migration_add_ownership_columns,
 }
 
 
@@ -199,12 +220,21 @@ def record_version(
     content: str,
     message: str | None = None,
     db_path: Path | None = None,
+    user_id: str | None = None,
+    via: str | None = None,
 ) -> bool:
     """Snapshot content for an artifact.
 
     Returns True if a new version row was created, False if content is
     identical to the current version (no-op). Fires ``_INDEX_HOOK`` on
     True so the embeddings layer can reindex.
+
+    VG-250: ``user_id`` is the authoring user's internal UUID (from
+    ``Depends(get_current_user)``); ``via`` is the surface that
+    triggered the write — one of ``'editor' | 'chat' | 'sync' |
+    'system'``. Both default to None for backwards compatibility with
+    callers that pre-date the ownership PR (their writes show up as
+    unattributed in the audit trail).
     """
     if artifact_type not in ARTIFACT_TYPES:
         raise ValueError(f"Unknown artifact type: {artifact_type!r}")
@@ -242,10 +272,11 @@ def record_version(
         # Insert new current version
         conn.execute(
             """INSERT INTO artifact_versions
-               (id, model_id, type, name, version_num, content, checksum, message, created_at, is_current)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+               (id, model_id, type, name, version_num, content, checksum,
+                message, created_at, is_current, created_by, created_via)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
             (str(uuid4()), model_id, artifact_type, name,
-             next_num, content, checksum, message, now),
+             next_num, content, checksum, message, now, user_id, via),
         )
 
     # Fire the indexing hook outside the DB transaction so a slow hook
@@ -397,6 +428,64 @@ def seed_from_directory(model_dir: Path, db_path: Path | None = None) -> int:
                 count += 1
 
     return count
+
+
+# ---------------------------------------------------------------------------
+# Ownership (VG-250 / VG-252)
+# ---------------------------------------------------------------------------
+
+
+def get_owner(
+    model_dir: Path, artifact_type: str, name: str,
+    db_path: Path | None = None,
+) -> dict | None:
+    """Return ``{created_by, created_via, created_at}`` for the current version.
+
+    None if the artifact has no current version. Values may individually
+    be NULL when the row pre-dates VG-250 or was written by a path that
+    didn't pass author info.
+    """
+    model_id = Path(model_dir).name
+    with _connect(model_dir, db_path) as conn:
+        row = conn.execute(
+            "SELECT created_by, created_via, created_at "
+            "FROM artifact_versions "
+            "WHERE model_id=? AND type=? AND name=? AND is_current=1",
+            (model_id, artifact_type, name),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "created_by": row["created_by"],
+        "created_via": row["created_via"],
+        "created_at": row["created_at"],
+    }
+
+
+def list_owners(
+    model_dir: Path, artifact_type: str,
+    db_path: Path | None = None,
+) -> dict[str, dict]:
+    """Batched lookup keyed by ``name`` for ``artifact_type`` (current version).
+
+    Used by list endpoints to populate owner fields in one query.
+    """
+    model_id = Path(model_dir).name
+    with _connect(model_dir, db_path) as conn:
+        rows = conn.execute(
+            "SELECT name, created_by, created_via, created_at "
+            "FROM artifact_versions "
+            "WHERE model_id=? AND type=? AND is_current=1",
+            (model_id, artifact_type),
+        ).fetchall()
+    return {
+        r["name"]: {
+            "created_by": r["created_by"],
+            "created_via": r["created_via"],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    }
 
 
 # ---------------------------------------------------------------------------

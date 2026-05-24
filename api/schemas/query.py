@@ -5,10 +5,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from api.schemas.common import CertFields
+from api.schemas.common import CertFields, OwnerFields
 
 
-class QuerySummary(CertFields):
+class QuerySummary(CertFields, OwnerFields):
     name: str
     root: str | None = None
     measure_count: int = 0
@@ -27,7 +27,7 @@ class SliceDetail(BaseModel):
     format_pattern: str = ""
 
 
-class QueryDetail(CertFields):
+class QueryDetail(CertFields, OwnerFields):
     name: str
     root: str | None = None
     description: str | None = None
