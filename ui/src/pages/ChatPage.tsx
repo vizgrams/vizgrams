@@ -2,22 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * ChatPage — natural-language data exploration (Epic 19 VG-206).
+ * ChatPage — natural-language data exploration (Epic 19 VG-206; persisted
+ * across sessions in Epic 25 VG-282).
  *
- * Ask a question of the current model; the LLM authors a query, runs it,
- * picks a chart, and writes a caption. Follow-up questions drill in via
- * the previous turn's conversation context.
+ * Sidebar = the user's past chat sessions (server-backed via
+ * /api/v1/model/{m}/chat/sessions). Right pane = the active conversation.
+ * Selecting a session re-hydrates the transcript from the server.
  *
- * State is ephemeral (Zustand-style local state only) — refresh clears
- * the chat. Persistence comes in a later phase.
+ * Persistence sources (in priority order):
+ *   1. Server (the source of truth — survives across tabs / devices)
+ *   2. sessionStorage of the current session id only (so a tab refresh
+ *      mid-conversation lands you back where you were without an extra
+ *      click on the sidebar)
+ *
+ * The full turn list used to live in sessionStorage too; that was a
+ * pre-VG-280 fallback. Now the server has it, so we just store the id.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Send } from 'lucide-react'
 
-import type { ChatHistoryTurn, ChatResponse, EntitySummary, ViewSummary } from '@/api/client'
+import type {
+  ChatHistoryTurn, ChatResponse, ChatTurnPersisted,
+  EntitySummary, ViewSummary,
+} from '@/api/client'
 import { Card } from '@/components/Layout'
 import { ChatViewCard } from '@/components/chat/ChatViewCard'
+import { ChatHistorySidebar } from '@/components/chat/ChatHistorySidebar'
 import { useModel } from '@/context/ModelContext'
 
 interface AssistantTurn {
@@ -32,63 +43,71 @@ interface UserTurn {
 
 type Turn = UserTurn | AssistantTurn
 
-// Per-model sessionStorage key. Session-scoped so the chat survives
-// drilldown round-trips into /views, /entities, or /apps and back, but is
-// cleared when the tab closes — chat state isn't meant to outlive the session.
-function storageKey(model: string) {
-  return `vizgrams:chat:turns:${model}`
-}
-
-function loadTurns(model: string): Turn[] {
-  if (!model) return []
-  try {
-    const raw = sessionStorage.getItem(storageKey(model))
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as Turn[]) : []
-  } catch {
-    return []
-  }
+// Per-model sessionStorage key — only stores the active session id now
+// (server holds the actual turn data). Lets a tab refresh land you back
+// in the right session without a sidebar click.
+function activeSessionKey(model: string) {
+  return `vizgrams:chat:active_session:${model}`
 }
 
 export default function ChatPage() {
   const { api, model } = useModel()
-  const [turns, setTurns] = useState<Turn[]>(() => loadTurns(model))
+  const [turns, setTurns] = useState<Turn[]>([])
+  const [sessionId, setSessionId] = useState<string | null>(() => {
+    return model ? sessionStorage.getItem(activeSessionKey(model)) : null
+  })
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [globalError, setGlobalError] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<string[]>([])
+  // Bumped after each turn so the sidebar re-fetches and the just-touched
+  // session bubbles to the top of the list.
+  const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
-  // Switching models loads that model's chat (or starts fresh). Each model
-  // gets its own session-scoped buffer so a chat about openflights doesn't
-  // leak into iagai.
+  // Load the active session's turns whenever the session id changes
+  // (sidebar click, tab refresh with stored id, model switch reading
+  // the model's last active session).
   useEffect(() => {
-    setTurns(loadTurns(model))
+    if (!sessionId) {
+      setTurns([])
+      return
+    }
+    let cancelled = false
+    api.chatSessions.get(sessionId).then((detail) => {
+      if (cancelled) return
+      setTurns(hydrateTurns(detail.turns))
+    }).catch(() => {
+      // Stale id (deleted on server, or different user) — silently fall
+      // through to a fresh chat. The persistTurn fallback in the server
+      // will give us a new session id on the next send.
+      if (!cancelled) {
+        setSessionId(null)
+        setTurns([])
+      }
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId])
+
+  // Switch models → load THAT model's last-active session if there is one,
+  // otherwise show empty state.
+  useEffect(() => {
+    if (!model) return
+    const stored = sessionStorage.getItem(activeSessionKey(model))
+    setSessionId(stored)
     setInput('')
     setGlobalError(null)
   }, [model])
 
-  // Persist turns whenever they change. Skipping when empty keeps the empty
-  // state clean (no stray storage entries for models never chatted with).
+  // Persist the active session id whenever it changes (per-model key).
   useEffect(() => {
     if (!model) return
-    if (turns.length === 0) {
-      sessionStorage.removeItem(storageKey(model))
-    } else {
-      try {
-        sessionStorage.setItem(storageKey(model), JSON.stringify(turns))
-      } catch {
-        // Quota or serialization issues — degrade silently; chat still works
-        // in-memory, you just lose round-trip persistence for this turn.
-      }
-    }
-  }, [model, turns])
+    if (sessionId) sessionStorage.setItem(activeSessionKey(model), sessionId)
+    else sessionStorage.removeItem(activeSessionKey(model))
+  }, [model, sessionId])
 
-  // Build empty-state suggestion prompts from the model's saved views.
-  // Falls back to entity-based prompts when the model has no views yet.
-  // Per-model so the chips read naturally on openflights / crypto / etc.
-  // instead of hard-coded PR-throughput examples.
+  // Empty-state prompt chips — derived from the model's saved views.
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -103,7 +122,6 @@ export default function ChatPage() {
         if (cancelled) return
         setSuggestions(entitiesToPrompts(entities))
       } catch {
-        // Suggestions are a nice-to-have; failures shouldn't break the page.
         if (!cancelled) setSuggestions([])
       }
     }
@@ -134,7 +152,7 @@ export default function ChatPage() {
     })
   }
 
-  async function handleSend(messageOverride?: string) {
+  const handleSend = useCallback(async (messageOverride?: string) => {
     const message = (messageOverride ?? input).trim()
     if (!message || busy) return
     setGlobalError(null)
@@ -144,16 +162,27 @@ export default function ChatPage() {
     setInput('')
 
     try {
-      const response = await api.chatTurn(message, history)
+      const response = await api.chatTurn(message, history, sessionId)
       setTurns((prev) => [...prev, { role: 'assistant', response }])
+      // Server may have created a fresh session (first turn) or returned
+      // the one we passed in. Either way: thread the id back through.
+      if (response.session_id && response.session_id !== sessionId) {
+        setSessionId(response.session_id)
+      }
+      // Bump the sidebar so it re-fetches with the just-touched session
+      // at the top.
+      setSidebarRefreshKey((k) => k + 1)
     } catch (err) {
-      // 503 (LLM unavailable) and other transport-level failures land here.
       const detail = err instanceof Error ? err.message : String(err)
       setGlobalError(detail)
     } finally {
       setBusy(false)
     }
-  }
+    // turns is intentionally not a dep — we rebuild history from
+    // current turns each call, but stale closure on `turns` would only
+    // affect the in-flight message which we just appended above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, busy, input, sessionId])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -162,95 +191,125 @@ export default function ChatPage() {
     }
   }
 
-  function handleClear() {
+  function handleNewChat() {
+    // Drop session id → empty turns. Next send creates a fresh server
+    // session and we'll get the id back on the response.
+    setSessionId(null)
     setTurns([])
+    setGlobalError(null)
+    setInput('')
+  }
+
+  function handleSelectSession(id: string) {
+    if (id === sessionId) return
+    setSessionId(id)
     setGlobalError(null)
   }
 
   return (
-    <div className="flex flex-col h-full -mx-6 -my-6">
-      {/* Header */}
-      <div className="border-b px-6 py-3 flex items-center justify-between bg-card">
-        <div>
-          <h1 className="text-lg font-semibold">Chat</h1>
-          <p className="text-xs text-muted-foreground">
-            Ask questions in plain English; we'll author a query, run it, and chart the result.
-          </p>
-        </div>
-        {turns.length > 0 && (
-          <button
-            type="button"
-            onClick={handleClear}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            Clear conversation
-          </button>
-        )}
-      </div>
+    <div className="flex h-full -mx-6 -my-6 overflow-hidden">
+      <ChatHistorySidebar
+        currentSessionId={sessionId}
+        onSelect={handleSelectSession}
+        onNewChat={handleNewChat}
+        refreshKey={sidebarRefreshKey}
+      />
 
-      {/* Message stream */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-        {turns.length === 0 && !busy && (
-          <EmptyState
-            model={model}
-            suggestions={suggestions}
-            onSelect={(prompt) => handleSend(prompt)}
-          />
-        )}
-
-        {turns.map((t, i) =>
-          t.role === 'user' ? (
-            <UserBubble key={i} content={t.content} />
-          ) : (
-            <ChatViewCard key={i} response={t.response} />
-          ),
-        )}
-
-        {busy && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Authoring query…
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="border-b px-6 py-3 flex items-center justify-between bg-card shrink-0">
+          <div>
+            <h1 className="text-lg font-semibold">Chat</h1>
+            <p className="text-xs text-muted-foreground">
+              Ask questions in plain English; we'll author a query, run it, and chart the result.
+            </p>
           </div>
-        )}
+        </div>
 
-        {globalError && (
-          <Card>
-            <div className="text-sm text-destructive">
-              <strong>Request failed:</strong> {globalError}
+        {/* Message stream */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {turns.length === 0 && !busy && (
+            <EmptyState
+              model={model}
+              suggestions={suggestions}
+              onSelect={(prompt) => handleSend(prompt)}
+            />
+          )}
+
+          {turns.map((t, i) =>
+            t.role === 'user' ? (
+              <UserBubble key={i} content={t.content} />
+            ) : (
+              <ChatViewCard key={i} response={t.response} />
+            ),
+          )}
+
+          {busy && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Authoring query…
             </div>
-          </Card>
-        )}
-      </div>
+          )}
 
-      {/* Input */}
-      <div className="border-t px-6 py-3 bg-card">
-        <div className="flex gap-2 items-end max-w-4xl mx-auto">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={busy}
-            placeholder={
-              turns.length === 0
-                ? `Ask anything about ${model}…  (Shift+Enter for newline)`
-                : 'Ask a follow-up, or drill into the last result…'
-            }
-            rows={Math.min(4, Math.max(1, input.split('\n').length))}
-            className="flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-          />
-          <button
-            type="button"
-            onClick={() => handleSend()}
-            disabled={busy || !input.trim()}
-            className="rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium disabled:opacity-50 hover:bg-primary/90"
-            aria-label="Send"
-          >
-            <Send className="h-4 w-4" />
-          </button>
+          {globalError && (
+            <Card>
+              <div className="text-sm text-destructive">
+                <strong>Request failed:</strong> {globalError}
+              </div>
+            </Card>
+          )}
+        </div>
+
+        {/* Input */}
+        <div className="border-t px-6 py-3 bg-card shrink-0">
+          <div className="flex gap-2 items-end max-w-4xl mx-auto">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={busy}
+              placeholder={
+                turns.length === 0
+                  ? `Ask anything about ${model}…  (Shift+Enter for newline)`
+                  : 'Ask a follow-up, or drill into the last result…'
+              }
+              rows={Math.min(4, Math.max(1, input.split('\n').length))}
+              className="flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            />
+            <button
+              type="button"
+              onClick={() => handleSend()}
+              disabled={busy || !input.trim()}
+              className="rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium disabled:opacity-50 hover:bg-primary/90"
+              aria-label="Send"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
   )
+}
+
+// ---------------------------------------------------------------------------
+// Re-hydrate server-side turn rows into the local Turn shape used by the
+// renderer. User rows become UserTurn; assistant rows wrap the stored
+// ChatResponse JSON.
+// ---------------------------------------------------------------------------
+
+function hydrateTurns(persisted: ChatTurnPersisted[]): Turn[] {
+  const out: Turn[] = []
+  for (const t of persisted) {
+    if (t.role === 'user') {
+      out.push({ role: 'user', content: t.content ?? '' })
+    } else if (t.role === 'assistant' && t.response) {
+      out.push({ role: 'assistant', response: t.response })
+    }
+    // Assistant turns without response_json (very old / mid-failed) are
+    // dropped — nothing to render. Rare edge case.
+  }
+  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -301,11 +360,7 @@ function EmptyState({ model, suggestions, onSelect }: EmptyStateProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Suggestion derivation — turn the model's catalog into natural prompts
-//
-// Views are preferred (they're user-facing and well-named). Falls back to
-// entities when the model has none yet. The prompts read as if a user
-// typed them, so clicking a chip behaves indistinguishably from typing.
+// Suggestion derivation
 // ---------------------------------------------------------------------------
 
 const SUGGESTION_CAP = 5
@@ -335,7 +390,6 @@ function snakeToWords(s: string): string {
 }
 
 function pascalToWords(s: string): string {
-  // PullRequest → "pull request"; DORAMetric → "dora metric"; URL → "url"
   return s
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
