@@ -261,6 +261,11 @@ class ChatPublishRequest(BaseModel):
     saved_view: SavedViewRef | None = None
     inline_view: InlineView | None = None
     params: dict[str, str] = Field(default_factory=dict)
+    # VG-283: id of the chat turn this publish came from. When set, the
+    # produced artifacts get attached to the turn so the UI can show
+    # "this view came from chat ⤴" + the catalog can show a
+    # "view source chat" link on chat-spawned artifacts.
+    turn_id: str | None = None
 
 
 class ChatPublishResponse(BaseModel):
@@ -304,6 +309,24 @@ def chat_publish(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # VG-283: attach the newly-created artifacts to the originating
+    # turn. Best-effort — failure logs but doesn't fail the publish.
+    if body.turn_id:
+        try:
+            artifacts: list[dict] = [{"kind": "view", "name": result["view_name"]}]
+            if result.get("query_name"):
+                artifacts.append({"kind": "query", "name": result["query_name"]})
+            chat_history_db.attach_saved_artifacts(
+                body.turn_id, artifacts=artifacts,
+            )
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning(
+                "attach_saved_artifacts failed for turn %s: %s",
+                body.turn_id, exc,
+            )
+
     return ChatPublishResponse(**result)
 
 

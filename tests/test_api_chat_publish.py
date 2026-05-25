@@ -183,3 +183,78 @@ def test_publish_rejects_non_creators(tmp_path, monkeypatch):
         assert resp.status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# VG-283 link-back: chat-publish attaches artifacts to the originating turn
+# ---------------------------------------------------------------------------
+
+
+def test_publish_attaches_artifacts_to_turn(client):
+    """When turn_id is supplied + publish succeeds, the produced
+    view+query land on the turn's ``saved_artifact_ids`` so the catalog
+    can show a "view source chat" link on chat-spawned artifacts."""
+    c, _ = client
+    # Seed a turn we can attach to.
+    from core import chat_history_db
+    sid = chat_history_db.create_session(
+        user_id="dev-user-id", model_id="demo",
+    )
+    tid = chat_history_db.append_turn(
+        session_id=sid, role="assistant", response={"placeholder": True},
+    )
+
+    with patch(
+        "api.routers.chat.chat_publish_service.publish_from_chat",
+        return_value=_ok_publish_result(view_name="prs_by_author", query_name="prs_by_author"),
+    ):
+        resp = c.post(
+            "/api/v1/model/demo/chat/publish",
+            json={
+                "title": "PRs by author",
+                "saved_view": {"name": "prs_by_author", "params": {}},
+                "turn_id": tid,
+            },
+        )
+    assert resp.status_code == 200
+
+    # The turn now records the publish output.
+    turns = chat_history_db.list_turns_for_session(sid, user_id="dev-user-id")
+    assert turns[0]["saved_artifact_ids"] == [
+        {"kind": "view", "name": "prs_by_author"},
+        {"kind": "query", "name": "prs_by_author"},
+    ]
+
+
+def test_publish_without_turn_id_still_works(client):
+    """turn_id is optional — back-compat for callers that don't supply it
+    + for one-off direct API uses."""
+    c, _ = client
+    with patch(
+        "api.routers.chat.chat_publish_service.publish_from_chat",
+        return_value=_ok_publish_result(),
+    ):
+        resp = c.post(
+            "/api/v1/model/demo/chat/publish",
+            json={"title": "T", "saved_view": {"name": "v", "params": {}}},
+        )
+    assert resp.status_code == 200
+
+
+def test_publish_with_stale_turn_id_does_not_fail(client):
+    """A turn id that no longer exists shouldn't 5xx — the artifact
+    is published; the link-back is best-effort."""
+    c, _ = client
+    with patch(
+        "api.routers.chat.chat_publish_service.publish_from_chat",
+        return_value=_ok_publish_result(),
+    ):
+        resp = c.post(
+            "/api/v1/model/demo/chat/publish",
+            json={
+                "title": "T",
+                "saved_view": {"name": "v", "params": {}},
+                "turn_id": "no-such-turn",
+            },
+        )
+    assert resp.status_code == 200

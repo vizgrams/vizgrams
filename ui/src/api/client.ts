@@ -317,6 +317,7 @@ export function makeApi(model: string) {
       saved_view?: ChatSavedView | null
       inline_view?: ChatInlineView | null
       params?: Record<string, string>
+      turn_id?: string | null            // VG-283: link saved artifacts back to the chat turn
     }) =>
       post<{ vizgram_id: string; view_name: string; query_name: string | null }>(
         `${BASE}/chat/publish`, body,

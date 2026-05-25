@@ -332,6 +332,78 @@ def set_turn_feedback(
 
 
 # ---------------------------------------------------------------------------
+# Retention (VG-284)
+#
+# Two complementary signals: age (TTL) and count (per-user cap). Both
+# soft-delete by setting ``ended_at`` — turn data stays on disk for the
+# eval feedback loop (VG-267) and any future audit / analytics work.
+# Cheap insurance against runaway storage when chat usage grows.
+#
+# These functions only update — they don't run on a schedule. Callers
+# decide cadence: cron, admin endpoint, or post-create hook.
+# ---------------------------------------------------------------------------
+
+
+def end_sessions_older_than(
+    *,
+    days: int,
+    user_id: str | None = None,
+    db_path: Path | None = None,
+) -> int:
+    """Mark sessions inactive longer than ``days`` as ended. Returns count.
+
+    "Inactive" = no turn written for ``days``; the index is on
+    ``updated_at`` which append_turn bumps. Per-user when ``user_id`` is
+    set; otherwise cluster-wide (admin use).
+    """
+    from datetime import timedelta
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    now = _now()
+    sql = (
+        "UPDATE chat_sessions SET ended_at=? "
+        "WHERE ended_at IS NULL AND updated_at < ?"
+    )
+    params: list = [now, cutoff]
+    if user_id is not None:
+        sql += " AND user_id=?"
+        params.append(user_id)
+    with _connect(db_path) as conn:
+        cur = conn.execute(sql, params)
+        return cur.rowcount
+
+
+def end_oldest_sessions_above_cap(
+    *,
+    user_id: str,
+    max_active: int,
+    db_path: Path | None = None,
+) -> int:
+    """When ``user_id`` has more than ``max_active`` open sessions, end
+    the oldest until they're at the cap. Returns the number ended.
+
+    Cap applies only to non-ended sessions — already-ended ones don't
+    count against the active cap.
+    """
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id FROM chat_sessions "
+            "WHERE user_id=? AND ended_at IS NULL "
+            "ORDER BY updated_at DESC",
+            (user_id,),
+        ).fetchall()
+        excess = rows[max_active:]
+        if not excess:
+            return 0
+        now = _now()
+        for r in excess:
+            conn.execute(
+                "UPDATE chat_sessions SET ended_at=? WHERE id=?",
+                (now, r["id"]),
+            )
+        return len(excess)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

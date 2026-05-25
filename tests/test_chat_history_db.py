@@ -11,7 +11,9 @@ from core.chat_history_db import (
     append_turn,
     attach_saved_artifacts,
     create_session,
+    end_oldest_sessions_above_cap,
     end_session,
+    end_sessions_older_than,
     get_session,
     list_sessions_for_user,
     list_turns_for_session,
@@ -199,3 +201,82 @@ class TestSetFeedback:
         set_turn_feedback(tid, feedback={"rating": "down", "reason": "wrong chart"})
         turns = list_turns_for_session(session_id, user_id="alice")
         assert turns[0]["feedback"] == {"rating": "down", "reason": "wrong chart"}
+
+
+# ---------------------------------------------------------------------------
+# Retention (VG-284)
+# ---------------------------------------------------------------------------
+
+
+class TestRetentionByAge:
+    def test_ends_old_sessions(self, monkeypatch):
+        """Sessions inactive longer than the TTL get auto-ended."""
+        sid_old = create_session(user_id="alice", model_id="iagai")
+        sid_new = create_session(user_id="alice", model_id="iagai")
+        # Backdate the old session's updated_at by editing the DB directly.
+        import sqlite3
+
+        from core.metadata_db import get_api_db_path
+        conn = sqlite3.connect(str(get_api_db_path()))
+        conn.execute(
+            "UPDATE chat_sessions SET updated_at='2020-01-01T00:00:00+00:00' WHERE id=?",
+            (sid_old,),
+        )
+        conn.commit()
+        conn.close()
+
+        ended = end_sessions_older_than(days=90)
+        assert ended == 1
+        # Old session is ended; new one isn't.
+        assert get_session(sid_old, user_id="alice")["ended_at"] is not None
+        assert get_session(sid_new, user_id="alice")["ended_at"] is None
+
+    def test_scoped_to_one_user_when_user_id_supplied(self):
+        sid_a = create_session(user_id="alice", model_id="iagai")
+        sid_b = create_session(user_id="bob", model_id="iagai")
+        import sqlite3
+
+        from core.metadata_db import get_api_db_path
+        conn = sqlite3.connect(str(get_api_db_path()))
+        conn.execute(
+            "UPDATE chat_sessions SET updated_at='2020-01-01T00:00:00+00:00'",
+        )
+        conn.commit()
+        conn.close()
+
+        ended = end_sessions_older_than(days=90, user_id="alice")
+        assert ended == 1
+        assert get_session(sid_a, user_id="alice")["ended_at"] is not None
+        assert get_session(sid_b, user_id="bob")["ended_at"] is None
+
+
+class TestRetentionByCap:
+    def test_ends_oldest_over_cap(self):
+        # Create 5 sessions in order; cap to 3 → oldest 2 get ended.
+        import time
+        sids = []
+        for _ in range(5):
+            sids.append(create_session(user_id="alice", model_id="iagai"))
+            time.sleep(0.001)  # ensure distinct updated_at
+
+        ended = end_oldest_sessions_above_cap(user_id="alice", max_active=3)
+        assert ended == 2
+        # Oldest two (first created) are ended.
+        assert get_session(sids[0], user_id="alice")["ended_at"] is not None
+        assert get_session(sids[1], user_id="alice")["ended_at"] is not None
+        # Newest three stay active.
+        for sid in sids[2:]:
+            assert get_session(sid, user_id="alice")["ended_at"] is None
+
+    def test_under_cap_is_noop(self):
+        for _ in range(2):
+            create_session(user_id="alice", model_id="iagai")
+        assert end_oldest_sessions_above_cap(user_id="alice", max_active=10) == 0
+
+    def test_already_ended_dont_count(self):
+        # 5 sessions: end 2 manually, cap at 3 → no additional ends needed
+        # because only 3 are still active.
+        sids = [create_session(user_id="alice", model_id="iagai") for _ in range(5)]
+        end_session(sids[0], user_id="alice")
+        end_session(sids[1], user_id="alice")
+        assert end_oldest_sessions_above_cap(user_id="alice", max_active=3) == 0

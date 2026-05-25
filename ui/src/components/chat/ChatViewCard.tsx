@@ -299,6 +299,10 @@ function PublishDialog({
         saved_view: response.saved_view ?? null,
         inline_view: response.inline_view ?? null,
         params: paramValues,
+        // VG-283: when the chat turn was persisted (server returned a
+        // turn_id), pass it through so the publish endpoint can attach
+        // the produced artifacts back to the originating turn.
+        turn_id: response.turn_id ?? null,
       })
       setPublished({ view_name: out.view_name, vizgram_id: out.vizgram_id })
     } catch (e) {
