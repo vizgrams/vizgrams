@@ -25,8 +25,22 @@ from pydantic import BaseModel, Field
 from api.dependencies import get_current_user, require_creator, resolve_model_dir
 from api.services.chat import publish as chat_publish_service
 from api.services.chat import service
+from core import chat_history_db
 
 router = APIRouter(prefix="/model/{model}/chat", tags=["chat"])
+
+
+# Used as the default session title when the user doesn't pick one —
+# first ~60 chars of their first message. Real UX could regenerate via
+# the LLM later; this is a good-enough placeholder.
+_TITLE_FROM_MESSAGE_LIMIT = 60
+
+
+def _session_title_from_message(message: str) -> str:
+    msg = (message or "").strip().replace("\n", " ")
+    if len(msg) <= _TITLE_FROM_MESSAGE_LIMIT:
+        return msg
+    return msg[: _TITLE_FROM_MESSAGE_LIMIT - 1].rstrip() + "…"
 
 
 class HistoryTurn(BaseModel):
@@ -37,6 +51,11 @@ class HistoryTurn(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
     history: list[HistoryTurn] = Field(default_factory=list)
+    # VG-281: resume an existing session. Null/absent → new session.
+    # Owner-scoped — if the id doesn't match a session owned by the
+    # caller, we create a fresh one (treating the id as stale rather
+    # than erroring keeps the UX forgiving when sessions are pruned).
+    session_id: str | None = None
 
 
 class TraceStep(BaseModel):
@@ -91,6 +110,12 @@ class ChatResponse(BaseModel):
     # only when the LLM forgot to call present_view and the auto-present
     # safety net kicked in — UI falls back to a placeholder.
     title: str | None = None
+    # VG-281: id of the session this turn was persisted to. Caller
+    # passes this back on follow-up requests to extend the same session.
+    # Always populated on success (a fresh session is created when the
+    # request didn't supply one).
+    session_id: str | None = None
+    turn_id: str | None = None        # id of THIS assistant turn (for VG-283 link-back)
     query_yaml: str | None = None
     view_yaml: str | None = None
     sql: str | None = None
@@ -99,13 +124,17 @@ class ChatResponse(BaseModel):
 @router.post("", response_model=ChatResponse)
 def chat(
     body: ChatRequest,
+    model: str,
     model_dir: str = Depends(resolve_model_dir),
+    user_id: str = Depends(get_current_user),
     _email: str = Depends(require_creator),
 ) -> ChatResponse:
     """One assistant turn: user message in, view (saved or inline) out.
 
-    Creator-gated. Stateless — the client sends the full conversation
-    history in every request.
+    Creator-gated. VG-281: turns are persisted under a chat_sessions row
+    so users can resume + the publish flow can link artifacts back to
+    the originating turn. The client passes ``session_id`` to extend an
+    existing session; absent → fresh session.
     """
     try:
         result = service.chat_turn(
@@ -117,6 +146,17 @@ def chat(
         # Most commonly: VZ_LLM_PROVIDER is set but no API key in env.
         raise HTTPException(status_code=503, detail=f"LLM unavailable: {exc}") from exc
 
+    # VG-281 persistence — run regardless of success so failed turns
+    # still show up in the user's history (debugging + resume affordance).
+    # Best-effort: a DB error doesn't fail the turn (the user has the
+    # response already; losing the history is degraded UX not a hard
+    # error).
+    session_id, turn_id = _persist_turn(
+        user_id=user_id, model_id=model,
+        requested_session_id=body.session_id,
+        user_message=body.message, response=_response_to_json(result),
+    )
+
     return ChatResponse(
         success=result.success,
         error=result.error,
@@ -124,6 +164,8 @@ def chat(
         saved_view=SavedViewRef(**result.saved_view) if result.saved_view else None,
         inline_view=InlineView(**result.inline_view) if result.inline_view else None,
         title=result.title,
+        session_id=session_id,
+        turn_id=turn_id,
         query_yaml=result.query_yaml,
         view_yaml=result.view_yaml,
         sql=result.sql,
@@ -135,6 +177,74 @@ def chat(
             for t in result.trace
         ],
     )
+
+
+def _persist_turn(
+    *,
+    user_id: str,
+    model_id: str,
+    requested_session_id: str | None,
+    user_message: str,
+    response: dict,
+) -> tuple[str | None, str | None]:
+    """Append the user msg + assistant turn to chat_history_db. Returns
+    ``(session_id, assistant_turn_id)``.
+
+    Best-effort: any error here returns (None, None) — the chat
+    response itself still ships. Logging the failure would be useful
+    but we don't want to fail the turn the user just paid for.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+    try:
+        # Resolve the session. If the client supplied an id that's
+        # actually theirs, append to it; otherwise (no id, or someone
+        # else's id) start fresh.
+        session_id = requested_session_id
+        if session_id is not None:
+            existing = chat_history_db.get_session(session_id, user_id=user_id)
+            if existing is None:
+                session_id = None
+        if session_id is None:
+            session_id = chat_history_db.create_session(
+                user_id=user_id, model_id=model_id,
+                title=_session_title_from_message(user_message),
+            )
+        # Append the user msg + the assistant response in order.
+        chat_history_db.append_turn(
+            session_id=session_id, role="user", content=user_message,
+        )
+        turn_id = chat_history_db.append_turn(
+            session_id=session_id, role="assistant", response=response,
+        )
+        return session_id, turn_id
+    except Exception as exc:  # noqa: BLE001 — never fail a chat turn
+        log.warning("chat persistence failed: %s", exc, exc_info=True)
+        return None, None
+
+
+def _response_to_json(result) -> dict:
+    """Project the orchestrator's ChatTurnResult into a JSON-safe dict
+    for storage. Mirrors the wire response shape so the UI can
+    re-hydrate a transcript byte-for-byte."""
+    return {
+        "success": result.success,
+        "error": result.error,
+        "iterations": result.iterations,
+        "saved_view": result.saved_view,
+        "inline_view": result.inline_view,
+        "title": result.title,
+        "query_yaml": result.query_yaml,
+        "view_yaml": result.view_yaml,
+        "sql": result.sql,
+        "trace": [
+            {
+                "name": t.name, "arguments": t.arguments,
+                "success": t.success, "summary": t.summary, "payload": t.payload,
+            }
+            for t in result.trace
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -195,3 +305,124 @@ def chat_publish(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ChatPublishResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# Sessions API (Epic 25 VG-281)
+# ---------------------------------------------------------------------------
+
+
+class ChatSessionSummary(BaseModel):
+    id: str
+    title: str | None
+    created_at: str
+    updated_at: str
+
+
+class ChatTurnOut(BaseModel):
+    """One row from chat_history_db.list_turns_for_session.
+
+    ``response`` carries the same shape as ChatResponse so the UI can
+    re-hydrate the chat transcript without an extra round-trip per
+    turn. Null for user turns.
+    """
+    id: str
+    ord: int
+    role: Literal["user", "assistant"]
+    content: str | None = None
+    response: dict | None = None     # named ``response_json`` on the DB row; remapped below
+    saved_artifact_ids: list | None = None
+    feedback: dict | None = None
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row: dict) -> ChatTurnOut:
+        """Build from a chat_history_db.list_turns_for_session row."""
+        return cls(
+            id=row["id"],
+            ord=row["ord"],
+            role=row["role"],
+            content=row.get("content"),
+            response=row.get("response_json"),
+            saved_artifact_ids=row.get("saved_artifact_ids"),
+            feedback=row.get("feedback"),
+            created_at=row["created_at"],
+        )
+
+
+class ChatSessionDetail(ChatSessionSummary):
+    turns: list[ChatTurnOut]
+
+
+@router.get("/sessions", response_model=list[ChatSessionSummary])
+def list_chat_sessions(
+    model: str,
+    limit: int = 50,
+    offset: int = 0,
+    user_id: str = Depends(get_current_user),
+    _email: str = Depends(require_creator),
+):
+    """List the caller's chat sessions for this model, newest-updated first."""
+    rows = chat_history_db.list_sessions_for_user(
+        user_id=user_id, model_id=model, limit=limit, offset=offset,
+    )
+    return [
+        ChatSessionSummary(
+            id=r["id"], title=r["title"],
+            created_at=r["created_at"], updated_at=r["updated_at"],
+        )
+        for r in rows
+    ]
+
+
+@router.get("/sessions/{session_id}", response_model=ChatSessionDetail)
+def get_chat_session(
+    session_id: str,
+    user_id: str = Depends(get_current_user),
+    _email: str = Depends(require_creator),
+):
+    """Full transcript for one session. Owner-scoped — 404 for non-owners."""
+    s = chat_history_db.get_session(session_id, user_id=user_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    turns = chat_history_db.list_turns_for_session(session_id, user_id=user_id)
+    return ChatSessionDetail(
+        id=s["id"], title=s["title"],
+        created_at=s["created_at"], updated_at=s["updated_at"],
+        turns=[ChatTurnOut.from_row(t) for t in turns],
+    )
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+def delete_chat_session(
+    session_id: str,
+    user_id: str = Depends(get_current_user),
+    _email: str = Depends(require_creator),
+):
+    """Soft-delete a session (sets ended_at). Owner-scoped — 404 otherwise."""
+    if not chat_history_db.end_session(session_id, user_id=user_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return None
+
+
+class ChatSessionRenameRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+
+
+@router.put("/sessions/{session_id}", response_model=ChatSessionSummary)
+def rename_chat_session(
+    session_id: str,
+    body: ChatSessionRenameRequest,
+    user_id: str = Depends(get_current_user),
+    _email: str = Depends(require_creator),
+):
+    """Rename a session. Owner-scoped — 404 otherwise."""
+    if not chat_history_db.update_session_title(
+        session_id, user_id=user_id, title=body.title,
+    ):
+        raise HTTPException(status_code=404, detail="Session not found")
+    s = chat_history_db.get_session(session_id, user_id=user_id)
+    return ChatSessionSummary(
+        id=s["id"], title=s["title"],
+        created_at=s["created_at"], updated_at=s["updated_at"],
+    )
