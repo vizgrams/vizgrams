@@ -295,8 +295,17 @@ export function makeApi(model: string) {
         `${BASE}/explore/${entity}/${encodeURIComponent(id)}/related/${relationship}?limit=${limit}&offset=${offset}`,
       ),
 
-    chatTurn: (message: string, history: ChatHistoryTurn[]) =>
-      post<ChatResponse>(`${BASE}/chat`, { message, history }),
+    chatTurn: (
+      message: string,
+      history: ChatHistoryTurn[],
+      sessionId: string | null = null,
+    ) =>
+      // VG-281: passing sessionId extends an existing chat_sessions row;
+      // null/absent → server creates a fresh one. Either way the response
+      // carries session_id so the UI can thread follow-ups.
+      post<ChatResponse>(`${BASE}/chat`, {
+        message, history, session_id: sessionId,
+      }),
 
     // VG-240/241: publish a chat turn as a vizgram. Saves any inline
     // view/query as artifacts first (stamped created_via='chat'), then
@@ -312,6 +321,24 @@ export function makeApi(model: string) {
       post<{ vizgram_id: string; view_name: string; query_name: string | null }>(
         `${BASE}/chat/publish`, body,
       ),
+
+    // VG-281 sessions API — list / read / delete / rename chat history.
+    chatSessions: {
+      list: (limit = 50, offset = 0) =>
+        get<ChatSessionSummary[]>(
+          `${BASE}/chat/sessions?limit=${limit}&offset=${offset}`,
+        ),
+      get: (id: string) =>
+        get<ChatSessionDetail>(
+          `${BASE}/chat/sessions/${encodeURIComponent(id)}`,
+        ),
+      delete: (id: string) =>
+        del(`${BASE}/chat/sessions/${encodeURIComponent(id)}`),
+      rename: (id: string, title: string) =>
+        put<ChatSessionSummary>(
+          `${BASE}/chat/sessions/${encodeURIComponent(id)}`, { title },
+        ),
+    },
 
     runMapper: (entity: string) =>
       post<JobOut>(`${BASE}/entity/${entity}/mapper/execute`, {}),
@@ -565,10 +592,39 @@ export interface ChatResponse {
   // Used as the default Title in the publish dialog. Null only when the LLM
   // forgot to call present_view and the auto-present safety net kicked in.
   title: string | null
+  // VG-281: id of the session this turn was persisted to. Pass back on
+  // follow-up chatTurn calls to extend the same session. Null when
+  // persistence failed (DB error) — turn still works in-memory but
+  // won't appear in the history sidebar.
+  session_id: string | null
+  turn_id: string | null
   // Diagnostics — feed the "Show your work" tab; not user-facing chrome.
   query_yaml: string | null
   view_yaml: string | null
   sql: string | null
+}
+
+// VG-281 chat history types.
+export interface ChatSessionSummary {
+  id: string
+  title: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ChatTurnPersisted {
+  id: string
+  ord: number
+  role: 'user' | 'assistant'
+  content: string | null
+  response: ChatResponse | null    // null for user turns
+  saved_artifact_ids: { kind: string; name: string }[] | null
+  feedback: { rating: 'up' | 'down'; reason?: string } | null
+  created_at: string
+}
+
+export interface ChatSessionDetail extends ChatSessionSummary {
+  turns: ChatTurnPersisted[]
 }
 
 export interface QuerySummary extends LibraryFields {
