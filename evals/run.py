@@ -24,11 +24,22 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from evals.case import load_cases
-from evals.judge import judge
-from evals.report import build_report, to_scored_case, write_report
-from evals.runner import run_case
-from semantic.llm.provider import get_default_client
+# Load .env from the project root before importing anything that reads
+# env at import time. Mirrors api/main.py — running `python -m evals.run`
+# from any cwd should pick up the same OPENAI_API_KEY / VZ_LLM_PROVIDER
+# as the API server.
+try:
+    from dotenv import load_dotenv
+    _env_file = Path(__file__).resolve().parents[1] / ".env"
+    load_dotenv(dotenv_path=_env_file)
+except ImportError:
+    pass
+
+from evals.case import load_cases  # noqa: E402
+from evals.judge import judge  # noqa: E402
+from evals.report import build_report, to_scored_case, write_report  # noqa: E402
+from evals.runner import run_case  # noqa: E402
+from semantic.llm.provider import get_default_client  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
