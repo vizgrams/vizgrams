@@ -1,0 +1,17 @@
+id: dora_metrics_compound
+model: iagai
+prompt: "Show me DORA metrics"
+expectations:
+  query: |
+    Compound question — there are four DORA metrics. The orchestrator
+    must pick ONE focused metric and answer that, not try to run
+    multiple queries and summarise in text. Acceptable picks: change
+    lead time, deployment frequency, change failure rate, or MTTR
+    (whichever the model has data for). The terminal turn MUST have a
+    single query + chart — no compound table-of-tables or text-only
+    response.
+  chart: |
+    Whatever fits the chosen single metric. Most DORA metrics are
+    time-series → line. Deployment frequency by team is a bar. Whatever
+    is picked, the chart must match the data shape. NOT text-only.
+tags: [compound, single_view_rule]

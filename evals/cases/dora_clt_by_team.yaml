@@ -1,0 +1,15 @@
+id: dora_clt_by_team
+model: iagai
+prompt: "Show me dora clt by team"
+expectations:
+  query: |
+    Should reuse the saved ``dora_clt_by_team`` view if present — the
+    catalog has it. find_artifacts → run_saved_view is the correct
+    path. If building from scratch instead, root must be PullRequest
+    (or the model's equivalent) with a per-team grouping + an avg
+    change-lead-time measure.
+  chart: |
+    Saved view defines this; if reused, judge by the saved view's
+    chart spec. If built fresh, prefer bar (team x category, avg_clt
+    numeric) over kpi/table.
+tags: [reuse_path, named_view]

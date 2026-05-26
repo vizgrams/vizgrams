@@ -11,7 +11,7 @@ DC_OTEL := docker compose -f docker-compose.yml -f docker-compose.jaeger.yml
 .DEFAULT_GOAL := help
 .PHONY: help install lock docker-check env-check env-check-auth gen-cookie-secret gen-batch-secret \
         dev dev-api dev-batch dev-ui \
-        test test-ui lint \
+        test test-ui lint evals evals-one \
         build up down logs ps restart shell-api shell-batch \
         up-auth down-auth logs-auth \
         up-otel down-otel logs-otel \
@@ -101,6 +101,12 @@ test-cov: ## Run Python tests with coverage report
 
 test-ui: ## Run UI tests (vitest)
 	npm run test --prefix ui
+
+evals: ## Run LLM evals against the chat orchestrator (requires OPENAI_API_KEY)
+	poetry run python -m evals.run
+
+evals-one: ## Run a single eval case by id, e.g. `make evals-one CASE=dora_clt_by_team`
+	poetry run python -m evals.run --case-id $(CASE)
 
 lint: ## Lint Python (ruff) and TypeScript (eslint)
 	poetry run ruff check .

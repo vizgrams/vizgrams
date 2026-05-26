@@ -1,0 +1,15 @@
+id: prs_alice_authored
+model: iagai
+prompt: "How many PRs did alice author?"
+expectations:
+  query: |
+    Root: PullRequest. Single scalar — measure is count of
+    pull_request_key. Filter on the author's name / id — must be a
+    WHERE clause, not a group_by. The filter SHOULD use the
+    relationship (e.g. ``author.name == 'alice'`` or
+    ``identity.subject.display_name == 'alice'``) — never a raw author
+    id column the LLM guesses.
+  chart: |
+    Single scalar → kpi. NOT bar/line/table (one row, one number).
+    y_field = the count alias; x_field omitted.
+tags: [kpi, filter, single_scalar]

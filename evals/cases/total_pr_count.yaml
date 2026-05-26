@@ -1,0 +1,11 @@
+id: total_pr_count
+model: iagai
+prompt: "How many pull requests have there been in total?"
+expectations:
+  query: |
+    Root: PullRequest. Measure: count of pull_request_key. No filters,
+    no group_by — a single scalar over the whole table.
+  chart: |
+    Single scalar → kpi. y_field = the count alias. NOT table (one
+    row), NOT bar/line (no category / time axis).
+tags: [kpi, single_scalar]
