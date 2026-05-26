@@ -11,7 +11,7 @@ DC_OTEL := docker compose -f docker-compose.yml -f docker-compose.jaeger.yml
 .DEFAULT_GOAL := help
 .PHONY: help install lock docker-check env-check env-check-auth gen-cookie-secret gen-batch-secret \
         dev dev-api dev-batch dev-ui \
-        test test-ui lint \
+        test test-ui lint evals evals-one \
         build up down logs ps restart shell-api shell-batch \
         up-auth down-auth logs-auth \
         up-otel down-otel logs-otel \
