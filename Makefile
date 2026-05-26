@@ -102,6 +102,12 @@ test-cov: ## Run Python tests with coverage report
 test-ui: ## Run UI tests (vitest)
 	npm run test --prefix ui
 
+evals: ## Run LLM evals against the chat orchestrator (requires OPENAI_API_KEY)
+	poetry run python -m evals.run
+
+evals-one: ## Run a single eval case by id, e.g. `make evals-one CASE=dora_clt_by_team`
+	poetry run python -m evals.run --case-id $(CASE)
+
 lint: ## Lint Python (ruff) and TypeScript (eslint)
 	poetry run ruff check .
 	npm run lint --prefix ui

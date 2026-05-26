@@ -1,0 +1,14 @@
+id: recent_merges
+model: iagai
+prompt: "Show me the most recent 20 merged PRs"
+expectations:
+  query: |
+    Root: PullRequest. Detail query (no measures, just attributes).
+    Filter: state == 'merged'. Order by merged_at DESC. Limit 20.
+    Attributes should include something identifying (title, author,
+    merged_at) — not just the primary key.
+  chart: |
+    Multi-row, multi-column detail data → table. NOT a chart type
+    (no obvious x/y mapping; the value of the answer is the rows
+    themselves).
+tags: [table, detail, filter]

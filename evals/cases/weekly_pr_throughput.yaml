@@ -1,0 +1,16 @@
+id: weekly_pr_throughput
+model: iagai
+prompt: "Show me weekly PR throughput"
+expectations:
+  query: |
+    Root: PullRequest. Measure: count of pull_request_key.
+    Group by: week — must use a time-bucketing function on the
+    relevant timestamp (e.g. format_time(merged_at, "YYYY-WW") or a
+    saved week_key feature). Should NOT group by raw timestamp.
+    Order by week ASC so the chart reads left-to-right.
+  chart: |
+    Time series — line strongly preferred (continuous weekly cadence)
+    or bar acceptable (discrete buckets). NOT kpi (multi-row). NOT
+    table when a chart is feasible. x_field = the week column,
+    y_field = the count alias.
+tags: [time_series, line, novel]
