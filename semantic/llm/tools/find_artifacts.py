@@ -18,8 +18,10 @@ scratch.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from semantic.llm.tools.registry import Tool, ToolContext, ToolResult
+from semantic.yaml_adapter import YAMLAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -100,20 +102,73 @@ def _handler(args: dict, ctx: ToolContext) -> ToolResult:
             success=False,
         )
 
-    matches = [
-        {
+    matches = []
+    for h in hits:
+        m = {
             "kind": h.kind,
             "name": h.name,
             "description": h.description,
             # Round so the LLM doesn't fixate on noise in the 6th decimal.
             "distance": round(h.distance, 3),
         }
-        for h in hits
-    ]
+        if ctx.model_dir is not None:
+            if h.kind == "view":
+                m.update(_enrich_view(ctx.model_dir, h.name))
+            elif h.kind == "query":
+                m.update(_enrich_query(ctx.model_dir, h.name))
+        matches.append(m)
     return ToolResult(
         payload={"matches": matches, "count": len(matches)},
         success=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Shape enrichment — surface chart_type / root / measures so the LLM can
+# judge fit before invoking run_saved_view / run_saved_query. Without this,
+# the LLM reuses by name proximity alone and picks tables when the user
+# implied a chart, or PR-rooted queries for Person-rooted questions.
+# ---------------------------------------------------------------------------
+
+
+def _enrich_view(model_dir: Path, name: str) -> dict:
+    try:
+        v = YAMLAdapter.load_view(name, model_dir / "views")
+        if v is None:
+            return {}
+        out: dict = {"chart_type": _chart_type_label(v)}
+        q = YAMLAdapter.load_query(v.query, model_dir / "queries")
+        if q is not None:
+            out["root"] = getattr(q, "entity", None)
+            out["measures"] = sorted((getattr(q, "metrics", {}) or {}).keys())
+        return out
+    except Exception:  # noqa: BLE001 — enrichment is best-effort
+        return {}
+
+
+def _enrich_query(model_dir: Path, name: str) -> dict:
+    try:
+        q = YAMLAdapter.load_query(name, model_dir / "queries")
+        if q is None:
+            return {}
+        return {
+            "root": getattr(q, "entity", None),
+            "measures": sorted((getattr(q, "metrics", {}) or {}).keys()),
+            "has_params": bool(getattr(q, "parameters", None)),
+        }
+    except Exception:  # noqa: BLE001 — enrichment is best-effort
+        return {}
+
+
+def _chart_type_label(v) -> str:
+    """Flatten ``ViewDef.type`` + nested ``visualization.chart_type`` into one
+    label the LLM can read (``bar`` / ``line`` / ``kpi`` / ``table`` / ...)."""
+    vtype = getattr(v, "type", None)
+    if vtype == "chart":
+        return (getattr(v, "visualization", None) or {}).get("chart_type") or "chart"
+    if vtype == "metric":
+        return "kpi"
+    return vtype or ""
 
 
 def _summarize(result: ToolResult) -> str:
@@ -134,9 +189,15 @@ FIND_ARTIFACTS = Tool(
     description=(
         "Semantic search over the model's existing artifact catalog "
         "(queries, views, features, entities, applications). Call this "
-        "before authoring a new query — a near match means you can reuse "
-        "or adapt instead of rebuilding. Smaller distance = better match; "
-        "anything under ~0.3 is usually worth reusing directly."
+        "before authoring a new query so you can reuse what's already "
+        "there. Each view hit carries chart_type + root + measures; each "
+        "query hit carries root + measures + has_params. Smaller distance "
+        "= closer match by description, BUT a close-by-name hit is not "
+        "enough on its own — confirm chart_type matches what the user "
+        "wants (bar/line/kpi/table) and root matches the subject of the "
+        "question (e.g. Person for 'who…', PullRequest for 'PRs…'). If "
+        "no hit fits both, prefer build_and_run_query over forcing the "
+        "wrong saved artifact."
     ),
     parameters_schema=PARAMETERS_SCHEMA,
     handler=_handler,
