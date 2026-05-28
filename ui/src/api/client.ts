@@ -300,6 +300,24 @@ export function makeApi(model: string) {
         { description },
       ),
 
+    // VG-295 — propose-change workflow (model-scoped slice).
+    createProposal: (body: ProposalCreate) =>
+      post<Proposal>(`${BASE}/proposals`, body),
+    listProposals: (params: {
+      entity?: string
+      status?: ProposalStatus
+      artifact_kind?: ProposalKind
+      artifact_name?: string
+    } = {}) => {
+      const q = new URLSearchParams()
+      if (params.entity)        q.set('entity', params.entity)
+      if (params.status)        q.set('status', params.status)
+      if (params.artifact_kind) q.set('artifact_kind', params.artifact_kind)
+      if (params.artifact_name) q.set('artifact_name', params.artifact_name)
+      const qs = q.toString()
+      return get<Proposal[]>(`${BASE}/proposals${qs ? `?${qs}` : ''}`)
+    },
+
     executeInline: (query: object, limit = 200, offset = 0) =>
       post<QueryResult>(
         `${BASE}/query/execute-inline?limit=${limit}&offset=${offset}`,
@@ -585,6 +603,56 @@ export interface ComputedDescribeResponse {
   expr: string
 }
 
+// ---------------------------------------------------------------------------
+// Proposals (Epic 26 VG-294/295/296) — propose-change governance flow
+// ---------------------------------------------------------------------------
+
+export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'superseded'
+export type ProposalKind =
+  | 'attribute' | 'relation' | 'computed'
+  | 'mapper' | 'extractor' | 'sub_group'
+
+export interface Proposal {
+  id: string
+  model_id: string
+  entity_name: string | null
+  artifact_kind: ProposalKind
+  artifact_name: string
+  proposed_by: string
+  reason: string
+  before_yaml: string | null
+  after_yaml: string | null
+  status: ProposalStatus
+  notified_to: string[]
+  decision_actor: string | null
+  decision_at: string | null
+  decision_comment: string | null
+  superseded_by: string | null
+  created_at: string
+}
+
+export interface ProposalCreate {
+  artifact_kind: ProposalKind
+  artifact_name: string
+  reason: string
+  entity_name?: string | null
+  before_yaml?: string | null
+  after_yaml?: string | null
+}
+
+export interface NotificationOut {
+  id: string
+  kind: string
+  proposal_id: string
+  created_at: string
+  entity_name: string | null
+  artifact_kind: ProposalKind | null
+  artifact_name: string | null
+  proposed_by: string | null
+  reason: string | null
+  model_id: string | null
+}
+
 export interface ViewDetail {
   name: string
   type: string
@@ -824,6 +892,18 @@ export type MeResponse = {
   hard_logout_url: string
 }
 export const getMe = () => get<MeResponse>('/api/v1/me')
+
+// VG-295 — proposal decision endpoints (model-free; resolved by id).
+export const approveProposal = (id: string, comment?: string) =>
+  post<Proposal>(`/api/v1/proposals/${id}/approve`, { comment: comment ?? null })
+export const rejectProposal = (id: string, comment: string) =>
+  post<Proposal>(`/api/v1/proposals/${id}/reject`, { comment })
+
+// VG-295 — notification bell endpoints.
+export const listMyNotifications = () =>
+  get<NotificationOut[]>('/api/v1/me/notifications')
+export const countMyNotifications = () =>
+  get<{ count: number }>('/api/v1/me/notifications/count')
 
 export interface VizgramSummary {
   id: string

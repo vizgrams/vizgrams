@@ -23,8 +23,10 @@ import {
 
 import type {
   ActivityEvent, ActivityFeed, ChartSummary, EntityDetail, EntitySummary,
-  PipelineSummary,
+  PipelineSummary, Proposal, ProposalKind,
 } from '@/api/client'
+import { ProposalCard } from '@/components/proposals/ProposalCard'
+import { ProposeChangeForm } from '@/components/proposals/ProposeChangeForm'
 import { useModel } from '@/context/ModelContext'
 import { cn } from '@/lib/utils'
 
@@ -407,7 +409,14 @@ function SchemaTab({ entity }: { entity: EntitySummary }) {
         {detail.attributes.length === 0
           ? <EmptyRow label="No attributes." />
           : detail.attributes.map((a) => (
-              <ReadOnlyRow key={a.name} primary={a.name} secondary={a.type} />
+              <ReadOnlyRow
+                key={a.name}
+                primary={a.name}
+                secondary={a.type}
+                governed
+                governedKind="attribute"
+                entityName={entity.name}
+              />
             ))
         }
       </SchemaList>
@@ -420,6 +429,9 @@ function SchemaTab({ entity }: { entity: EntitySummary }) {
                 primary={r.name ?? r.target}
                 secondary={r.cardinality}
                 tertiary={`→ ${r.target}`}
+                governed
+                governedKind="relation"
+                entityName={entity.name}
               />
             ))
         }
@@ -543,28 +555,61 @@ function ComputedAddPanel({ entity }: { entity: string }) {
 
 function ReadOnlyRow({
   primary, secondary, tertiary, mono,
-}: { primary: string; secondary?: string; tertiary?: string; mono?: boolean }) {
+  governed, governedKind, entityName,
+}: {
+  primary: string
+  secondary?: string
+  tertiary?: string
+  mono?: boolean
+  // VG-296: governed rows open a propose-change form instead of a
+  // direct edit. Computed rows are excluded — they're authored
+  // directly via the ComputedAddPanel.
+  governed?: boolean
+  governedKind?: ProposalKind
+  entityName?: string
+}) {
+  const [proposeOpen, setProposeOpen] = useState(false)
   return (
-    <div className="group flex items-baseline justify-between gap-2 py-1.5 text-xs border-b last:border-b-0">
-      <div className="min-w-0">
-        <div className="font-mono">{primary}</div>
-        {tertiary && <div className="text-[10px] text-muted-foreground/60 mt-0.5">{tertiary}</div>}
-        {mono && secondary && (
-          <div className="font-mono text-[10px] text-muted-foreground/70 mt-0.5 break-all">{secondary}</div>
-        )}
+    <>
+      <div className="group flex items-baseline justify-between gap-2 py-1.5 text-xs border-b last:border-b-0">
+        <div className="min-w-0">
+          <div className="font-mono">{primary}</div>
+          {tertiary && <div className="text-[10px] text-muted-foreground/60 mt-0.5">{tertiary}</div>}
+          {mono && secondary && (
+            <div className="font-mono text-[10px] text-muted-foreground/70 mt-0.5 break-all">{secondary}</div>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {!mono && secondary && <span className="text-[10px] text-muted-foreground/70 mr-1">{secondary}</span>}
+          {governed && governedKind ? (
+            <button
+              onClick={() => setProposeOpen((o) => !o)}
+              title="Propose change"
+              className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground p-1"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+          ) : (
+            <button
+              disabled
+              title="Editing lands in a follow-up"
+              className="text-muted-foreground/30 p-1 cursor-not-allowed"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        {!mono && secondary && <span className="text-[10px] text-muted-foreground/70 mr-1">{secondary}</span>}
-        {/* Read-only — edit affordances are placeholders until VG-293 */}
-        <button
-          disabled
-          title="Editing lands in VG-293"
-          className="text-muted-foreground/30 p-1 cursor-not-allowed"
-        >
-          <Pencil className="h-3 w-3" />
-        </button>
-      </div>
-    </div>
+      {proposeOpen && governed && governedKind && (
+        <ProposeChangeForm
+          artifactKind={governedKind}
+          artifactName={primary}
+          entityName={entityName ?? null}
+          current={`${secondary ?? ''}${tertiary ? ` ${tertiary}` : ''}`.trim()}
+          onClose={() => setProposeOpen(false)}
+        />
+      )}
+    </>
   )
 }
 
@@ -794,27 +839,67 @@ const ACTION_ICON: Record<string, React.ReactNode> = {
 function ActivityTab({ entity }: { entity: EntitySummary }) {
   const { api } = useModel()
   const [feed, setFeed] = useState<ActivityFeed | null>(null)
+  const [pending, setPending] = useState<Proposal[]>([])
   const [loading, setLoading] = useState(true)
+  // Bump to refetch after a proposal is decided.
+  const [refreshTick, setRefreshTick] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    api.getEntityActivity(entity.name)
-      .then((result) => { if (!cancelled) setFeed(result) })
-      .catch(() => { if (!cancelled) setFeed(null) })
+    Promise.all([
+      api.getEntityActivity(entity.name).catch(() => ({ events: [], has_more: false })),
+      api.listProposals({ entity: entity.name, status: 'pending' }).catch(() => [] as Proposal[]),
+    ])
+      .then(([f, p]) => {
+        if (cancelled) return
+        setFeed(f)
+        setPending(p)
+      })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [api, entity.name])
+  }, [api, entity.name, refreshTick])
 
   if (loading) return <Loading />
-  if (!feed || feed.events.length === 0) return <EmptyState label={`No activity yet for ${entity.name}.`} />
-  const groups = groupActivity(feed.events)
+
+  const hasFeed = feed && feed.events.length > 0
+  const hasPending = pending.length > 0
+  if (!hasFeed && !hasPending) {
+    return <EmptyState label={`No activity yet for ${entity.name}.`} />
+  }
+  const groups = hasFeed ? groupActivity(feed!.events) : []
+
   return (
-    <div className="max-w-3xl space-y-3">
-      {groups.map((g, i) =>
-        g.kind === 'ontology'
-          ? <OntologyBumpCard key={i} version={g.version} events={g.events} />
-          : <ArtifactEventCard key={i} event={g.event} />
+    <div className="max-w-3xl space-y-5">
+      {hasPending && (
+        <section>
+          <h3 className="text-[10px] uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-2">
+            Pending changes · {pending.length} awaiting review
+          </h3>
+          <div className="space-y-3">
+            {pending.map((p) => (
+              <ProposalCard
+                key={p.id}
+                proposal={p}
+                onDecided={() => setRefreshTick((t) => t + 1)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+      {groups.length > 0 && (
+        <section>
+          {hasPending && (
+            <h3 className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-2">History</h3>
+          )}
+          <div className="space-y-3">
+            {groups.map((g, i) =>
+              g.kind === 'ontology'
+                ? <OntologyBumpCard key={i} version={g.version} events={g.events} />
+                : <ArtifactEventCard key={i} event={g.event} />
+            )}
+          </div>
+        </section>
       )}
     </div>
   )

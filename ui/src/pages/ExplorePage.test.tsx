@@ -29,6 +29,7 @@ type FakeApi = {
   listEntityCharts: (e: string) => Promise<ChartSummary[]>
   getEntityPipeline: (e: string) => Promise<PipelineSummary | null>
   getEntityActivity: (e: string) => Promise<ActivityFeed>
+  listProposals: (params?: object) => Promise<unknown[]>
 }
 
 let fakeApi: FakeApi
@@ -52,6 +53,7 @@ function makeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     listEntityCharts: vi.fn(async () => []),
     getEntityPipeline: vi.fn(async () => null),
     getEntityActivity: vi.fn(async () => ({ events: [], has_more: false })),
+    listProposals: vi.fn(async () => []),
     ...overrides,
   }
 }
@@ -171,7 +173,7 @@ describe('ExplorePage tabs', () => {
     expect(screen.getByText('merged_at')).toBeInTheDocument()
   })
 
-  it('Schema tab pencil icons are disabled (read-only in this phase)', async () => {
+  it('Schema tab attribute pencil opens the Propose change form (VG-296)', async () => {
     fakeApi = makeApi({
       getEntity: vi.fn(async (name) => ({
         ...entityDetail(name),
@@ -180,8 +182,10 @@ describe('ExplorePage tabs', () => {
     })
     renderAt('/explore?entity=Widget&tab=schema')
     await screen.findByText('state')
-    const pencil = screen.getByRole('button', { name: /Editing lands in/i })
-    expect(pencil).toBeDisabled()
+    // Attribute rows are governed → pencil exists and is enabled with
+    // "Propose change" tooltip (replaces the VG-291 read-only state).
+    const pencil = screen.getByRole('button', { name: /Propose change/i })
+    expect(pencil).toBeEnabled()
   })
 
   it('Pipeline tab renders lineage chips when pipeline exists', async () => {
