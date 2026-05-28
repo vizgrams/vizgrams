@@ -25,6 +25,7 @@ import type {
   ActivityEvent, ActivityFeed, ChartSummary, EntityDetail, EntitySummary,
   PipelineSummary, Proposal, ProposalKind,
 } from '@/api/client'
+import { ChartPreview } from '@/components/explore/ChartPreview'
 import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
 import { ProposalCard } from '@/components/proposals/ProposalCard'
 import { ProposeChangeForm } from '@/components/proposals/ProposeChangeForm'
@@ -368,11 +369,8 @@ function ChartCardEl({ card, large = false }: { card: ChartSummary; large?: bool
           {KIND_ICON[card.chart_type] ?? <BarChart3 className="h-3.5 w-3.5" />}
         </span>
       </div>
-      <div className={cn(
-        'mt-3 rounded bg-muted/40 border border-dashed flex items-center justify-center text-[10px] text-muted-foreground/60',
-        large ? 'h-32' : 'h-20',
-      )}>
-        {card.chart_type}
+      <div className="mt-3">
+        <ChartPreview viewName={card.name} height={large ? 128 : 80} />
       </div>
       <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground/60">
         <span className="font-mono">{card.chart_type}</span>

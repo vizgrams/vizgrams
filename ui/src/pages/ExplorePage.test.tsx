@@ -30,6 +30,7 @@ type FakeApi = {
   getEntityPipeline: (e: string) => Promise<PipelineSummary | null>
   getEntityActivity: (e: string) => Promise<ActivityFeed>
   listProposals: (params?: object) => Promise<unknown[]>
+  executeView: (name: string, limit?: number) => Promise<unknown>
 }
 
 let fakeApi: FakeApi
@@ -46,6 +47,14 @@ vi.mock('@/pages/explore/EntityListFrame', () => ({
   ),
 }))
 
+// ChartPreview hits api.executeView; stub it here so the chart cards
+// render a known marker instead of trying to lay out a real chart.
+vi.mock('@/components/explore/ChartPreview', () => ({
+  ChartPreview: ({ viewName }: { viewName: string }) => (
+    <div data-testid={`chart-preview-${viewName}`}>preview {viewName}</div>
+  ),
+}))
+
 function makeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   return {
     listEntities: vi.fn(async () => [WIDGET, GADGET]),
@@ -54,6 +63,7 @@ function makeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     getEntityPipeline: vi.fn(async () => null),
     getEntityActivity: vi.fn(async () => ({ events: [], has_more: false })),
     listProposals: vi.fn(async () => []),
+    executeView: vi.fn(async () => ({})),
     ...overrides,
   }
 }
