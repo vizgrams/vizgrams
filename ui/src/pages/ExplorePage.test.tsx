@@ -31,6 +31,7 @@ type FakeApi = {
   getEntityActivity: (e: string) => Promise<ActivityFeed>
   listProposals: (params?: object) => Promise<unknown[]>
   executeView: (name: string, limit?: number) => Promise<unknown>
+  getView: (name: string) => Promise<unknown>
 }
 
 let fakeApi: FakeApi
@@ -55,6 +56,17 @@ vi.mock('@/components/explore/ChartPreview', () => ({
   ),
 }))
 
+// ChartDetailDrawer pulls in ViewContent (and Recharts); stub it here so
+// the click-to-open behavior is observable without rendering real charts.
+vi.mock('@/components/explore/ChartDetailDrawer', () => ({
+  ChartDetailDrawer: ({ viewName, onClose }: { viewName: string; onClose: () => void }) => (
+    <div data-testid={`chart-detail-${viewName}`}>
+      detail {viewName}
+      <button onClick={onClose}>close-detail</button>
+    </div>
+  ),
+}))
+
 function makeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   return {
     listEntities: vi.fn(async () => [WIDGET, GADGET]),
@@ -64,6 +76,7 @@ function makeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     getEntityActivity: vi.fn(async () => ({ events: [], has_more: false })),
     listProposals: vi.fn(async () => []),
     executeView: vi.fn(async () => ({})),
+    getView: vi.fn(async () => ({})),
     ...overrides,
   }
 }
@@ -160,6 +173,20 @@ describe('ExplorePage tabs', () => {
     renderAt('/explore?entity=Widget&tab=charts')
     expect(await screen.findByText('pr_trend')).toBeInTheDocument()
     expect(screen.getByText('pr_count')).toBeInTheDocument()
+  })
+
+  it('Clicking a chart card opens the detail drawer (VG-302)', async () => {
+    const charts: ChartSummary[] = [
+      { name: 'pr_trend', type: 'chart', query: 'q1', chart_type: 'line' },
+    ]
+    fakeApi = makeApi({ listEntityCharts: vi.fn(async () => charts) })
+    renderAt('/explore?entity=Widget&tab=charts')
+    const cardLabel = await screen.findByText('pr_trend')
+    // Find the enclosing card button — both label and chart_type live inside.
+    const card = cardLabel.closest('button')
+    expect(card).not.toBeNull()
+    fireEvent.click(card!)
+    expect(await screen.findByTestId('chart-detail-pr_trend')).toBeInTheDocument()
   })
 
   it('Charts tab shows empty state when no charts', async () => {
