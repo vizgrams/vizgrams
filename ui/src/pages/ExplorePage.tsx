@@ -1,0 +1,842 @@
+// Copyright 2024-2026 Oliver Fenton
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * ExplorePage — entity-first catalog browser (Epic 26 VG-291).
+ *
+ * Read-only in this phase: editors (Schema, mapper sub-groups, extractor
+ * drawer) are deferred to VG-293+. The pencil affordances render but are
+ * disabled so the shape is visible.
+ *
+ * Routing: selected entity + active tab persist in the querystring
+ * (`/explore?entity=PullRequest&tab=charts`) so links share / refresh
+ * survive cleanly.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import {
+  Activity as ActivityIcon, ArrowUpRight, BarChart3, Database,
+  Download, GitCommit, Hash, History, Layers, LineChart,
+  Link2, Pencil, Plus, RotateCcw, Shuffle, Sparkles, Table2, Wrench, X,
+} from 'lucide-react'
+
+import type {
+  ActivityEvent, ActivityFeed, ChartSummary, EntityDetail, EntitySummary,
+  PipelineSummary,
+} from '@/api/client'
+import { useModel } from '@/context/ModelContext'
+import { cn } from '@/lib/utils'
+
+// ---------------------------------------------------------------------------
+// Page shell
+// ---------------------------------------------------------------------------
+
+type Tab = 'overview' | 'records' | 'charts' | 'schema' | 'pipeline' | 'activity'
+
+const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  { id: 'overview', label: 'Overview', icon: <ActivityIcon className="h-3.5 w-3.5" /> },
+  { id: 'records',  label: 'Records',  icon: <Table2 className="h-3.5 w-3.5" /> },
+  { id: 'charts',   label: 'Charts',   icon: <BarChart3 className="h-3.5 w-3.5" /> },
+  { id: 'schema',   label: 'Schema',   icon: <Database className="h-3.5 w-3.5" /> },
+  { id: 'pipeline', label: 'Pipeline', icon: <Shuffle className="h-3.5 w-3.5" /> },
+  { id: 'activity', label: 'Activity', icon: <History className="h-3.5 w-3.5" /> },
+]
+
+function isTab(value: string | null): value is Tab {
+  return TABS.some((t) => t.id === value)
+}
+
+export function ExplorePage() {
+  const { api } = useModel()
+  const [entities, setEntities] = useState<EntitySummary[]>([])
+  const [loadingEntities, setLoadingEntities] = useState(true)
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  const entityParam = searchParams.get('entity') ?? ''
+  const tabParam = searchParams.get('tab')
+  const tab: Tab = isTab(tabParam) ? tabParam : 'overview'
+
+  useEffect(() => {
+    let cancelled = false
+    setLoadingEntities(true)
+    api.listEntities()
+      .then((result) => { if (!cancelled) setEntities(result) })
+      .catch(() => { if (!cancelled) setEntities([]) })
+      .finally(() => { if (!cancelled) setLoadingEntities(false) })
+    return () => { cancelled = true }
+  }, [api])
+
+  const selected = useMemo<EntitySummary | null>(() => {
+    if (entityParam) {
+      return entities.find((e) => e.name === entityParam) ?? null
+    }
+    return entities[0] ?? null
+  }, [entities, entityParam])
+
+  // Sync URL whenever the entity changes — keep tab if same entity selected,
+  // reset to overview when entity changes.
+  const selectEntity = useCallback((name: string) => {
+    setSearchParams({ entity: name, tab: 'overview' })
+  }, [setSearchParams])
+
+  const selectTab = useCallback((next: Tab) => {
+    if (!selected) return
+    setSearchParams({ entity: selected.name, tab: next })
+  }, [selected, setSearchParams])
+
+  return (
+    <div className="flex h-full -mx-6 -my-6 overflow-hidden">
+      <EntitySidebar
+        entities={entities}
+        loading={loadingEntities}
+        selected={selected}
+        onSelect={selectEntity}
+      />
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        {selected ? (
+          <div className="flex-1 overflow-y-auto">
+            <EntityHeader entity={selected} />
+            <Tabs current={tab} onChange={selectTab} />
+            <div className="px-8 py-6">
+              {tab === 'overview' && <OverviewTab entity={selected} onSeeAll={() => selectTab('records')} />}
+              {tab === 'records'  && <RecordsTab  entity={selected} />}
+              {tab === 'charts'   && <ChartsTab   entity={selected} />}
+              {tab === 'schema'   && <SchemaTab   entity={selected} />}
+              {tab === 'pipeline' && <PipelineTab entity={selected} />}
+              {tab === 'activity' && <ActivityTab entity={selected} />}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center h-full">
+            {loadingEntities
+              ? <p className="text-xs text-muted-foreground">Loading…</p>
+              : <p className="text-sm text-muted-foreground">No entities in this model yet.</p>
+            }
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar
+// ---------------------------------------------------------------------------
+
+function EntitySidebar({
+  entities, loading, selected, onSelect,
+}: {
+  entities: EntitySummary[]
+  loading: boolean
+  selected: EntitySummary | null
+  onSelect: (name: string) => void
+}) {
+  return (
+    <aside className="w-52 shrink-0 border-r flex flex-col overflow-hidden bg-card">
+      <div className="px-4 pt-4 pb-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+        Entities
+      </div>
+      <div className="flex-1 overflow-y-auto pb-2">
+        {loading && entities.length === 0
+          ? <p className="px-4 py-6 text-xs text-muted-foreground text-center">Loading…</p>
+          : entities.length === 0
+          ? <p className="px-4 py-6 text-xs text-muted-foreground text-center">No entities</p>
+          : entities.map((e) => {
+              const active = selected?.name === e.name
+              return (
+                <button
+                  key={e.name}
+                  onClick={() => onSelect(e.name)}
+                  className={cn(
+                    'w-full text-left px-4 py-2 flex items-center justify-between transition-colors',
+                    active
+                      ? 'bg-primary/8 text-foreground'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  )}
+                >
+                  <span className="text-xs">{e.name}</span>
+                  {e.row_count != null && (
+                    <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                      {e.row_count.toLocaleString()}
+                    </span>
+                  )}
+                </button>
+              )
+            })
+        }
+      </div>
+    </aside>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Header + tabs
+// ---------------------------------------------------------------------------
+
+function EntityHeader({ entity }: { entity: EntitySummary }) {
+  return (
+    <div className="px-8 pt-6 pb-4 flex items-start justify-between gap-6 border-b">
+      <div className="min-w-0">
+        <h1 className="text-xl font-semibold tracking-tight">{entity.name}</h1>
+        <div className="mt-2 flex gap-4 text-[11px] text-muted-foreground/70 tabular-nums">
+          {entity.row_count != null && <span>{entity.row_count.toLocaleString()} records</span>}
+          {entity.row_count != null && <span>·</span>}
+          <span>{entity.attribute_count} attributes</span>
+          <span>·</span>
+          <span>{entity.relation_count} relations</span>
+          <span>·</span>
+          <span>{entity.feature_count} computed</span>
+        </div>
+      </div>
+      <button
+        disabled
+        title="Chart authoring lands in VG-293"
+        className="shrink-0 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border bg-card text-muted-foreground/50 cursor-not-allowed"
+      >
+        <Plus className="h-3.5 w-3.5" /> New chart
+      </button>
+    </div>
+  )
+}
+
+function Tabs({ current, onChange }: { current: Tab; onChange: (t: Tab) => void }) {
+  return (
+    <div className="px-8 border-b bg-card/50 sticky top-0 z-10">
+      <div className="flex gap-1">
+        {TABS.map((t) => {
+          const active = current === t.id
+          return (
+            <button
+              key={t.id}
+              onClick={() => onChange(t.id)}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-3 py-2.5 text-xs transition-colors border-b-2 -mb-px',
+                active ? 'border-foreground text-foreground'
+                       : 'border-transparent text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {t.icon}
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Overview — KPIs (chart_type='kpi') + featured charts (first 2 non-kpi)
+// ---------------------------------------------------------------------------
+
+function OverviewTab({ entity, onSeeAll }: { entity: EntitySummary; onSeeAll: () => void }) {
+  const { api } = useModel()
+  const [charts, setCharts] = useState<ChartSummary[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api.listEntityCharts(entity.name)
+      .then((result) => { if (!cancelled) setCharts(result) })
+      .catch(() => { if (!cancelled) setCharts([]) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [api, entity.name])
+
+  if (loading) return <Loading />
+  const kpis = charts.filter((c) => c.chart_type === 'kpi').slice(0, 3)
+  const featured = charts.filter((c) => c.chart_type !== 'kpi').slice(0, 2)
+
+  return (
+    <div className="space-y-6 max-w-5xl">
+      {kpis.length > 0 && (
+        <div className="grid grid-cols-3 gap-3">
+          {kpis.map((k) => <KpiCard key={k.name} chart={k} />)}
+        </div>
+      )}
+      {featured.length > 0 && (
+        <div className="grid grid-cols-2 gap-3">
+          {featured.map((c) => <ChartCardEl key={c.name} card={c} large />)}
+        </div>
+      )}
+      {charts.length === 0 && (
+        <EmptyState label={`No charts yet for ${entity.name}.`} />
+      )}
+      {charts.length > 0 && (
+        <button
+          onClick={onSeeAll}
+          className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+        >
+          See all records →
+        </button>
+      )}
+    </div>
+  )
+}
+
+function KpiCard({ chart }: { chart: ChartSummary }) {
+  return (
+    <div className="rounded border bg-card p-4">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">{chart.name}</div>
+      <div className="text-2xl font-semibold tabular-nums mt-1">—</div>
+      <div className="text-[10px] text-muted-foreground/60 mt-1 font-mono">{chart.query}</div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Records — embeds the existing EntityListFrame (rich record browser)
+// ---------------------------------------------------------------------------
+
+function RecordsTab({ entity }: { entity: EntitySummary }) {
+  // Lazy import keeps the bundle small + avoids circular deps when this
+  // page is unmounted. Falls back to a placeholder if the frame's data
+  // contract changes underneath us.
+  const [Frame, setFrame] = useState<React.ComponentType<{ entity: string; onNavigate: (f: unknown) => void }> | null>(null)
+  useEffect(() => {
+    import('@/pages/explore/EntityListFrame')
+      .then((m) => setFrame(() => m.EntityListFrame as never))
+      .catch(() => setFrame(null))
+  }, [])
+  if (!Frame) return <Loading />
+  return (
+    <div className="-mx-2">
+      <Frame entity={entity.name} onNavigate={() => { /* drilldown handled inside the frame for now */ }} />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Charts — every chart rooted on this entity
+// ---------------------------------------------------------------------------
+
+function ChartsTab({ entity }: { entity: EntitySummary }) {
+  const { api } = useModel()
+  const [charts, setCharts] = useState<ChartSummary[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api.listEntityCharts(entity.name)
+      .then((result) => { if (!cancelled) setCharts(result) })
+      .catch(() => { if (!cancelled) setCharts([]) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [api, entity.name])
+
+  if (loading) return <Loading />
+  if (charts.length === 0) return <EmptyState label={`No charts yet for ${entity.name}.`} />
+  return (
+    <div className="grid grid-cols-3 gap-3 max-w-5xl">
+      {charts.map((c) => <ChartCardEl key={c.name} card={c} />)}
+    </div>
+  )
+}
+
+const KIND_ICON: Record<string, React.ReactNode> = {
+  bar:   <BarChart3 className="h-3.5 w-3.5" />,
+  line:  <LineChart className="h-3.5 w-3.5" />,
+  kpi:   <Hash className="h-3.5 w-3.5" />,
+  table: <Table2 className="h-3.5 w-3.5" />,
+}
+
+function ChartCardEl({ card, large = false }: { card: ChartSummary; large?: boolean }) {
+  return (
+    <a
+      href={`/views/${encodeURIComponent(card.name)}`}
+      className={cn(
+        'group rounded border bg-card hover:border-foreground/30 transition-colors block',
+        large ? 'p-4' : 'p-3',
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className={cn('font-medium leading-snug', large ? 'text-sm' : 'text-xs')}>{card.name}</div>
+          <div className="text-[10px] text-muted-foreground/70 mt-0.5 font-mono truncate">{card.query}</div>
+        </div>
+        <span className="shrink-0 inline-flex items-center rounded border bg-muted/40 p-1 text-muted-foreground">
+          {KIND_ICON[card.chart_type] ?? <BarChart3 className="h-3.5 w-3.5" />}
+        </span>
+      </div>
+      <div className={cn(
+        'mt-3 rounded bg-muted/40 border border-dashed flex items-center justify-center text-[10px] text-muted-foreground/60',
+        large ? 'h-32' : 'h-20',
+      )}>
+        {card.chart_type}
+      </div>
+      <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground/60">
+        <span className="font-mono">{card.chart_type}</span>
+        <ArrowUpRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
+    </a>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Schema — read-only attributes / relations / computed features
+// ---------------------------------------------------------------------------
+
+function SchemaTab({ entity }: { entity: EntitySummary }) {
+  const { api } = useModel()
+  const [detail, setDetail] = useState<EntityDetail | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api.getEntity(entity.name)
+      .then((result) => { if (!cancelled) setDetail(result) })
+      .catch(() => { if (!cancelled) setDetail(null) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [api, entity.name])
+
+  if (loading) return <Loading />
+  if (!detail) return <EmptyState label="Could not load schema." />
+
+  return (
+    <div className="grid grid-cols-3 gap-6 max-w-5xl">
+      <SchemaList icon={<Hash className="h-3.5 w-3.5" />} title="Attributes">
+        {detail.attributes.length === 0
+          ? <EmptyRow label="No attributes." />
+          : detail.attributes.map((a) => (
+              <ReadOnlyRow key={a.name} primary={a.name} secondary={a.type} />
+            ))
+        }
+      </SchemaList>
+      <SchemaList icon={<Link2 className="h-3.5 w-3.5" />} title="Relations">
+        {detail.relations.length === 0
+          ? <EmptyRow label="No relations." />
+          : detail.relations.map((r) => (
+              <ReadOnlyRow
+                key={r.name ?? r.target}
+                primary={r.name ?? r.target}
+                secondary={r.cardinality}
+                tertiary={`→ ${r.target}`}
+              />
+            ))
+        }
+      </SchemaList>
+      <SchemaList icon={<Sparkles className="h-3.5 w-3.5" />} title="Computed">
+        {detail.features.length === 0
+          ? <EmptyRow label="No computed features." />
+          : detail.features.map((f) => (
+              <ReadOnlyRow key={f.feature_id} primary={f.name} secondary={f.expr} mono />
+            ))
+        }
+      </SchemaList>
+    </div>
+  )
+}
+
+function ReadOnlyRow({
+  primary, secondary, tertiary, mono,
+}: { primary: string; secondary?: string; tertiary?: string; mono?: boolean }) {
+  return (
+    <div className="group flex items-baseline justify-between gap-2 py-1.5 text-xs border-b last:border-b-0">
+      <div className="min-w-0">
+        <div className="font-mono">{primary}</div>
+        {tertiary && <div className="text-[10px] text-muted-foreground/60 mt-0.5">{tertiary}</div>}
+        {mono && secondary && (
+          <div className="font-mono text-[10px] text-muted-foreground/70 mt-0.5 break-all">{secondary}</div>
+        )}
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        {!mono && secondary && <span className="text-[10px] text-muted-foreground/70 mr-1">{secondary}</span>}
+        {/* Read-only — edit affordances are placeholders until VG-293 */}
+        <button
+          disabled
+          title="Editing lands in VG-293"
+          className="text-muted-foreground/30 p-1 cursor-not-allowed"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function SchemaList({
+  icon, title, children,
+}: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70 pb-2 mb-2 border-b">
+        {icon}
+        {title}
+      </div>
+      <div>{children}</div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline — lineage chips + read-only mapper sub-groups + drawer
+// ---------------------------------------------------------------------------
+
+function PipelineTab({ entity }: { entity: EntitySummary }) {
+  const { api } = useModel()
+  const [pipeline, setPipeline] = useState<PipelineSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [openExtractor, setOpenExtractor] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api.getEntityPipeline(entity.name)
+      .then((result) => { if (!cancelled) setPipeline(result) })
+      .catch(() => { if (!cancelled) setPipeline(null) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [api, entity.name])
+
+  if (loading) return <Loading />
+  if (!pipeline || !pipeline.mapper) return <EmptyState label={`No pipeline configured for ${entity.name}.`} />
+
+  const multi = pipeline.sources.length > 1
+  return (
+    <div className="space-y-6 max-w-5xl">
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-2">
+          Lineage
+          {multi && (
+            <span className="ml-2 text-muted-foreground/60 normal-case tracking-normal">
+              · {pipeline.sources.length} raw tables joined in the mapper
+            </span>
+          )}
+        </div>
+        <div className="rounded border bg-card p-4 overflow-x-auto">
+          <div className="flex items-center gap-3 min-w-max">
+            <div className="flex flex-col gap-2">
+              {pipeline.sources.map((src, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <LineageChip icon={<Wrench className="h-3 w-3" />} kind="Tool" name={src.tool ?? '—'} />
+                  <LineageArrow />
+                  <LineageChip
+                    icon={<Download className="h-3 w-3" />}
+                    kind="Extractor"
+                    name={src.extractor ?? '—'}
+                    onClick={src.extractor ? () => setOpenExtractor(src.extractor) : undefined}
+                  />
+                  <LineageArrow />
+                  <LineageChip icon={<Database className="h-3 w-3" />} kind="Raw" name={src.raw_table} mono />
+                </div>
+              ))}
+            </div>
+            {multi && <Converger count={pipeline.sources.length} />}
+            {!multi && <LineageArrow />}
+            <LineageChip icon={<Shuffle className="h-3 w-3" />} kind="Mapper" name={pipeline.mapper.name} highlight />
+            <LineageArrow />
+            <LineageChip icon={<Layers className="h-3 w-3" />} kind="Entity" name={entity.name} active />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-2">
+          Mapper sub-groups
+          {pipeline.mapper.groups.length > 1 && (
+            <span className="ml-2 text-muted-foreground/60 normal-case tracking-normal">
+              · this mapper writes {pipeline.mapper.groups.length} sets of rows into {entity.name}
+            </span>
+          )}
+        </div>
+        {pipeline.mapper.groups.length === 0
+          ? <EmptyState label="Single-target mapper — no sub-groups." />
+          : <div className="rounded border bg-card overflow-hidden">
+              {pipeline.mapper.groups.map((g, i) => (
+                <div
+                  key={g.name}
+                  className={cn(
+                    'flex items-center justify-between px-4 py-2.5 text-xs',
+                    i !== 0 && 'border-t',
+                  )}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Shuffle className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                    <span className="font-mono">{g.name}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+        }
+      </div>
+
+      {openExtractor && (
+        <ExtractorReadDrawer name={openExtractor} onClose={() => setOpenExtractor(null)} />
+      )}
+    </div>
+  )
+}
+
+function LineageChip({
+  icon, kind, name, mono, highlight, active, onClick,
+}: {
+  icon: React.ReactNode
+  kind: string
+  name: string
+  mono?: boolean
+  highlight?: boolean
+  active?: boolean
+  onClick?: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={!onClick}
+      className={cn(
+        'shrink-0 inline-flex flex-col items-start px-3 py-2 rounded border transition-colors text-left',
+        active     ? 'border-foreground/40 bg-primary/8'
+        : highlight ? 'border-foreground/20 bg-card'
+        :             'bg-card',
+        onClick && 'hover:bg-muted cursor-pointer',
+        !onClick && 'cursor-default',
+      )}
+    >
+      <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-muted-foreground/70">
+        {icon}
+        {kind}
+      </div>
+      <div className={cn('text-xs mt-0.5', mono && 'font-mono')}>{name}</div>
+    </button>
+  )
+}
+
+function LineageArrow() {
+  return <span className="shrink-0 text-muted-foreground/40 select-none">→</span>
+}
+
+function Converger({ count }: { count: number }) {
+  const height = count * 38
+  return (
+    <div className="shrink-0 flex items-center" style={{ height }}>
+      <svg width="24" height={height} viewBox={`0 0 24 ${height}`} className="text-muted-foreground/40">
+        {Array.from({ length: count }).map((_, i) => {
+          const y = (i + 0.5) * (height / count)
+          const midY = height / 2
+          return (
+            <path
+              key={i}
+              d={`M0 ${y} L12 ${y} L12 ${midY} L24 ${midY}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1"
+            />
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+// Read-only extractor drawer — just shows the name + a placeholder note
+// pointing at the future admin page. The full editor lands in VG-297.
+function ExtractorReadDrawer({ name, onClose }: { name: string; onClose: () => void }) {
+  return (
+    <>
+      <div onClick={onClose} className="fixed inset-0 bg-black/30 z-40" aria-hidden />
+      <div className="fixed top-0 right-0 bottom-0 w-[28rem] max-w-[95vw] bg-card border-l z-50 flex flex-col shadow-xl">
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3 border-b">
+          <div>
+            <div className="flex items-center gap-2">
+              <Download className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-base font-semibold tracking-tight">{name}</h2>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Extractor · shared infrastructure
+            </p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <p className="text-xs text-muted-foreground">
+            The full extractor editor lands in VG-297. Until then, manage
+            extractors from the Admin → Extractors page.
+          </p>
+          <a
+            href="/tools"
+            className="mt-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            Open extractor page <ArrowUpRight className="h-3 w-3" />
+          </a>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Activity — chronological feed with ontology-bump clustering
+// ---------------------------------------------------------------------------
+
+const ACTION_ICON: Record<string, React.ReactNode> = {
+  created:  <Plus className="h-3 w-3" />,
+  updated:  <Pencil className="h-3 w-3" />,
+  deleted:  <X className="h-3 w-3" />,
+  restored: <RotateCcw className="h-3 w-3" />,
+  ran:      <ActivityIcon className="h-3 w-3" />,
+}
+
+function ActivityTab({ entity }: { entity: EntitySummary }) {
+  const { api } = useModel()
+  const [feed, setFeed] = useState<ActivityFeed | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api.getEntityActivity(entity.name)
+      .then((result) => { if (!cancelled) setFeed(result) })
+      .catch(() => { if (!cancelled) setFeed(null) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [api, entity.name])
+
+  if (loading) return <Loading />
+  if (!feed || feed.events.length === 0) return <EmptyState label={`No activity yet for ${entity.name}.`} />
+  const groups = groupActivity(feed.events)
+  return (
+    <div className="max-w-3xl space-y-3">
+      {groups.map((g, i) =>
+        g.kind === 'ontology'
+          ? <OntologyBumpCard key={i} version={g.version} events={g.events} />
+          : <ArtifactEventCard key={i} event={g.event} />
+      )}
+    </div>
+  )
+}
+
+type ActivityGroup =
+  | { kind: 'ontology'; version: string; events: ActivityEvent[] }
+  | { kind: 'artifact'; event: ActivityEvent }
+
+export function groupActivity(events: ActivityEvent[]): ActivityGroup[] {
+  const out: ActivityGroup[] = []
+  for (const e of events) {
+    const last = out[out.length - 1]
+    if (e.ontology_version && last?.kind === 'ontology' && last.version === e.ontology_version) {
+      last.events.push(e)
+    } else if (e.ontology_version) {
+      out.push({ kind: 'ontology', version: e.ontology_version, events: [e] })
+    } else {
+      out.push({ kind: 'artifact', event: e })
+    }
+  }
+  return out
+}
+
+function OntologyBumpCard({ version, events }: { version: string; events: ActivityEvent[] }) {
+  const actor = events[0].actor ?? 'someone'
+  const when = events[0].created_at
+  return (
+    <div className="rounded border bg-card">
+      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5 border border-foreground/30 bg-muted/60 text-foreground/80">
+            <Database className="h-2.5 w-2.5" />
+            ontology
+            <span className="font-mono normal-case tracking-normal">{version}</span>
+          </span>
+          <span className="text-xs truncate">
+            <span className="font-medium">{actor}</span>{' '}
+            <span className="text-muted-foreground">
+              changed {events.length} {events.length === 1 ? 'thing' : 'things'}
+            </span>
+          </span>
+        </div>
+        <span className="text-[10px] text-muted-foreground/60 shrink-0">{formatWhen(when)}</span>
+      </div>
+      <ul>
+        {events.map((e, i) => (
+          <li
+            key={i}
+            className={cn(
+              'flex items-baseline justify-between gap-2 px-3 py-2 text-xs',
+              i !== 0 && 'border-t',
+            )}
+          >
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className="shrink-0 text-muted-foreground/60 inline-flex items-center">
+                {ACTION_ICON[e.action]}
+              </span>
+              <span className="text-muted-foreground">{e.action}</span>{' '}
+              <span className="text-muted-foreground/60">{e.object_kind}</span>{' '}
+              <span className="font-mono">{e.object_name}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function ArtifactEventCard({ event: e }: { event: ActivityEvent }) {
+  return (
+    <div className="flex items-start gap-3 rounded border bg-card px-3 py-2.5">
+      <span className="shrink-0 mt-0.5 rounded-full border bg-background p-1.5 text-muted-foreground">
+        {ACTION_ICON[e.action]}
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+          <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5 border border-border bg-card text-muted-foreground/70">
+            {e.object_kind}
+          </span>
+          <span className="text-xs">
+            {e.actor && <><span className="font-medium">{e.actor}</span>{' '}</>}
+            <span className="text-muted-foreground">{e.action}</span>{' '}
+            <span className="font-mono">{e.object_name}</span>
+            {e.note && <span className="text-muted-foreground/70"> · {e.note}</span>}
+          </span>
+        </div>
+        <div className="text-[10px] text-muted-foreground/60">{formatWhen(e.created_at)}</div>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        <button
+          disabled
+          title="Version view lands in a follow-up"
+          className="text-[10px] text-muted-foreground/30 inline-flex items-center gap-0.5 px-2 py-1 cursor-not-allowed"
+        >
+          <GitCommit className="h-3 w-3" /> view
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Shared bits
+// ---------------------------------------------------------------------------
+
+function Loading() {
+  return <p className="text-xs text-muted-foreground">Loading…</p>
+}
+
+function EmptyState({ label }: { label: string }) {
+  return (
+    <div className="rounded border border-dashed bg-card/40 px-6 py-12 text-center max-w-3xl">
+      <p className="text-sm text-muted-foreground">{label}</p>
+    </div>
+  )
+}
+
+function EmptyRow({ label }: { label: string }) {
+  return <p className="text-xs text-muted-foreground/60 py-1.5">{label}</p>
+}
+
+// Convert an ISO timestamp to a short relative label. Falls back to the
+// raw string if parsing fails so we never block the page on a bad date.
+export function formatWhen(iso: string): string {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return iso
+  const delta = Math.max(0, Date.now() - then) / 1000
+  if (delta < 60) return 'just now'
+  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`
+  if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`
+  if (delta < 604800) return `${Math.floor(delta / 86400)}d ago`
+  return new Date(iso).toLocaleDateString()
+}
