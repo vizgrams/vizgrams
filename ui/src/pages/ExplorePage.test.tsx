@@ -168,6 +168,47 @@ describe('ExplorePage tabs', () => {
     expect(await screen.findByText(/No charts yet for Widget/)).toBeInTheDocument()
   })
 
+  it('Overview KPI cards execute their view and render the scalar (VG-301)', async () => {
+    const charts: ChartSummary[] = [
+      { name: 'open_prs', type: 'metric', query: 'q_open', chart_type: 'kpi' },
+    ]
+    fakeApi = makeApi({
+      listEntityCharts: vi.fn(async () => charts),
+      executeView: vi.fn(async (name: string) => ({
+        name, type: 'metric',
+        measure: 'n',
+        columns: ['n'],
+        rows: [[42]],
+        visualization: { suffix: 'open' },
+        formats: { n: { type: 'number', pattern: null, unit: null } },
+        params: [],
+      })),
+    })
+    renderAt('/explore?entity=Widget&tab=overview')
+    // Wait for the KPI to resolve.
+    expect(await screen.findByText('42')).toBeInTheDocument()
+    expect(screen.getByText('open')).toBeInTheDocument()
+    expect(fakeApi.executeView).toHaveBeenCalledWith('open_prs', 1)
+  })
+
+  it('Overview KPI cards show em-dash when no value comes back (VG-301)', async () => {
+    const charts: ChartSummary[] = [
+      { name: 'empty_kpi', type: 'metric', query: 'q', chart_type: 'kpi' },
+    ]
+    fakeApi = makeApi({
+      listEntityCharts: vi.fn(async () => charts),
+      executeView: vi.fn(async () => ({
+        name: 'empty_kpi', type: 'metric',
+        measure: 'n', columns: ['n'], rows: [],
+        visualization: {}, formats: {}, params: [],
+      })),
+    })
+    renderAt('/explore?entity=Widget&tab=overview')
+    // Two em-dashes possible (one in label area, one as KPI value); we just
+    // need to confirm the KPI didn't crash and rendered the empty marker.
+    await waitFor(() => expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1))
+  })
+
   it('Schema tab fetches detail and shows attributes', async () => {
     fakeApi = makeApi({
       getEntity: vi.fn(async (name) => ({
