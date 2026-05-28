@@ -122,6 +122,437 @@ def get_entity(model_dir: Path, entity_name: str) -> dict:
     }
 
 
+def list_charts_for_entity(model_dir: Path, entity_name: str) -> list[dict]:
+    """Return every view whose underlying query is rooted on ``entity_name``.
+
+    The /explore Charts tab uses this — it answers "what charts exist *about*
+    this entity?" without dragging the entire /views catalog into the page.
+
+    Output mirrors view_service.list_views() (same cert + owner fields) plus
+    a flattened ``chart_type`` so the UI can show the type icon directly
+    without parsing ``visualization.chart_type``.
+    """
+    queries_dir = model_dir / "queries"
+    views_dir = model_dir / "views"
+    queries_by_name = {q.name: q for q in YAMLAdapter.load_queries(queries_dir)}
+    views = YAMLAdapter.load_views(views_dir)
+
+    from api.services.certification_service import list_cert_payloads
+    from api.services.ownership_service import list_owner_payloads
+    certs = list_cert_payloads(model_dir, "view")
+    owners = list_owner_payloads(model_dir, "view")
+
+    results = []
+    for v in views:
+        q = queries_by_name.get(v.query)
+        if q is None or getattr(q, "entity", None) != entity_name:
+            continue
+        results.append({
+            "name": v.name,
+            "type": v.type,
+            "chart_type": _chart_type_label(v),
+            "query": v.query,
+            **certs.get(v.name, _chart_cert_default()),
+            **owners.get(v.name, _chart_owner_default()),
+        })
+    return results
+
+
+def _chart_type_label(view) -> str:
+    """Flatten ``ViewDef.type`` + nested ``visualization.chart_type`` into a
+    single label (``bar`` / ``line`` / ``kpi`` / ``table`` / ``chart`` / ...).
+
+    Same shape we surface from semantic.llm.tools.find_artifacts — kept
+    inline here to avoid coupling api/services to that module."""
+    vtype = getattr(view, "type", None)
+    if vtype == "chart":
+        return (getattr(view, "visualization", None) or {}).get("chart_type") or "chart"
+    if vtype == "metric":
+        return "kpi"
+    return vtype or ""
+
+
+def _chart_cert_default() -> dict:
+    return {
+        "is_certified": False,
+        "certified_by": None,
+        "certified_by_display": None,
+        "certified_at": None,
+    }
+
+
+def _chart_owner_default() -> dict:
+    return {
+        "created_by": None,
+        "created_by_display": None,
+        "created_via": None,
+        "created_at": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Entity pipeline (Epic 26 VG-290)
+# ---------------------------------------------------------------------------
+
+
+def get_pipeline_for_entity(model_dir: Path, entity_name: str) -> dict | None:
+    """Lineage graph for the /explore Pipeline tab.
+
+    Returns ``{entity, sources, mapper}`` where:
+    - ``sources`` is the list of raw tables joined in the mapper, each
+      traced back to the extractor + tool that produced it
+    - ``mapper`` is the single mapper writing to this entity, with its
+      sub-groups (``RowGroup.from_alias`` values) when present
+
+    Returns ``None`` if no mapper targets this entity (typical for
+    junction/derived entities that are populated by other means).
+    """
+    mapper = _find_mapper_targeting(model_dir, entity_name)
+    if mapper is None:
+        return None
+
+    # Sub-groups: each TargetDef matching this entity may carry RowGroup
+    # entries — `from_alias` is what differentiates them downstream.
+    groups: list[dict] = []
+    for tgt in mapper.targets:
+        if tgt.entity_name != entity_name:
+            continue
+        for rg in tgt.rows:
+            groups.append({"name": rg.from_alias})
+
+    # Sources: every SourceDef in the mapper, with the extractor + tool
+    # that wrote each raw table. Unknown raw tables (no producing
+    # extractor in the catalog) still surface with tool/extractor null
+    # so the UI can show the gap rather than silently dropping the row.
+    extractors_by_table = _build_extractor_table_index(model_dir)
+    sources: list[dict] = []
+    for src in mapper.sources:
+        if not src.table:
+            # `union` sources or pure static blocks don't map to a single
+            # raw table; skip for the lineage view (could surface as
+            # "union: [t1, t2]" later if needed).
+            continue
+        ext_info = extractors_by_table.get(src.table, {"name": None, "tool": None})
+        sources.append({
+            "tool": ext_info["tool"],
+            "extractor": ext_info["name"],
+            "raw_table": src.table,
+        })
+
+    return {
+        "entity": entity_name,
+        "sources": sources,
+        "mapper": {"name": mapper.name, "groups": groups},
+    }
+
+
+def _find_mapper_targeting(model_dir: Path, entity_name: str):
+    """First mapper whose targets contain ``entity_name`` (current convention:
+    exactly one mapper per entity, so first-found == only-found)."""
+    from semantic.mapper import parse_mapper_dict
+    for name in metadata_db.list_artifact_names(model_dir, "mapper"):
+        content = metadata_db.get_current_content(model_dir, "mapper", name)
+        if not content:
+            continue
+        try:
+            mapper = parse_mapper_dict(yaml.safe_load(content))
+        except Exception:
+            continue
+        if any(t.entity_name == entity_name for t in mapper.targets):
+            return mapper
+    return None
+
+
+def _build_extractor_table_index(model_dir: Path) -> dict[str, dict]:
+    """Map raw table name → ``{name: extractor_name, tool: tool_name}``.
+
+    Built by walking every extractor's tasks and indexing their outputs.
+    Last writer wins if two extractors claim the same table (shouldn't
+    happen in practice — extractors are 1:1 with tools and tables)."""
+    from engine.extractor import parse_yaml_config_from_content
+    idx: dict[str, dict] = {}
+    for name in metadata_db.list_artifact_names(model_dir, "extractor"):
+        content = metadata_db.get_current_content(model_dir, "extractor", name)
+        if not content:
+            continue
+        try:
+            tasks = parse_yaml_config_from_content(content)
+        except Exception:
+            continue
+        for task in tasks:
+            for output in task.outputs:
+                idx[output.table] = {"name": name, "tool": task.tool}
+    return idx
+
+
+# ---------------------------------------------------------------------------
+# Entity activity feed (Epic 26 VG-290)
+#
+# The /explore Activity tab is a single chronological timeline aggregating:
+# - This entity's own version history, projected into per-row changes
+#   (attribute X added, relation Y updated, ...). Multiple changes from
+#   the same entity-version bump share an ``ontology_version`` label so
+#   the UI can cluster them.
+# - Independent artifact version bumps for features / views / mappers
+#   that *touch* this entity.
+#
+# Pagination is offset-based — Activity loads top N and asks for more
+# on scroll. Cheap enough to compute eagerly for now; we can paginate
+# at the SQL level if catalog size warrants it later.
+# ---------------------------------------------------------------------------
+
+
+def get_activity_for_entity(
+    model_dir: Path,
+    entity_name: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Aggregator for the /explore Activity tab."""
+    events: list[dict] = []
+    events.extend(_entity_version_events(model_dir, entity_name))
+    events.extend(_feature_events_for_entity(model_dir, entity_name))
+    events.extend(_chart_events_for_entity(model_dir, entity_name))
+    events.extend(_mapper_events_for_entity(model_dir, entity_name))
+    # Stable sort — newest first; created_at is ISO so lex sort works.
+    events.sort(key=lambda e: e["created_at"], reverse=True)
+    window = events[offset : offset + limit]
+    return {"events": window, "has_more": offset + limit < len(events)}
+
+
+def _entity_version_events(model_dir: Path, entity_name: str) -> list[dict]:
+    """One event per row-level change projected from the entity's version
+    history. Multiple changes from the same version bump share
+    ``ontology_version`` so the UI can group them."""
+    entity_key = _entity_db_key(model_dir, entity_name)
+    versions = metadata_db.list_versions(model_dir, "entity", entity_key)
+    if not versions:
+        return []
+    # versions is newest-first; for each version, compare with the version
+    # just before it (which is at index i+1).
+    events: list[dict] = []
+    for i, version in enumerate(versions):
+        prev = versions[i + 1] if i + 1 < len(versions) else None
+        next_record = metadata_db.get_version(model_dir, "entity", entity_key, version["id"])
+        next_content = (next_record or {}).get("content") or ""
+        prev_content = ""
+        if prev is not None:
+            prev_record = metadata_db.get_version(model_dir, "entity", entity_key, prev["id"])
+            prev_content = (prev_record or {}).get("content") or ""
+        label = (
+            f"v{prev['version_num']} → v{version['version_num']}"
+            if prev is not None
+            else f"v{version['version_num']}"
+        )
+        changes = _diff_entity_versions(prev_content, next_content)
+        if not changes:
+            # Metadata-only or no-op edit — surface one event so the
+            # timeline isn't gappy.
+            events.append({
+                "actor": version.get("created_by"),
+                "action": "updated" if prev is not None else "created",
+                "object_kind": "entity",
+                "object_name": entity_name,
+                "created_at": version["created_at"],
+                "note": None,
+                "ontology_version": label,
+            })
+            continue
+        for change in changes:
+            events.append({
+                "actor": version.get("created_by"),
+                "action": change["action"],
+                "object_kind": change["kind"],
+                "object_name": change["name"],
+                "created_at": version["created_at"],
+                "note": None,
+                "ontology_version": label,
+            })
+    return events
+
+
+def _diff_entity_versions(prev_yaml: str, next_yaml: str) -> list[dict]:
+    """Project a YAML-level diff into row-level changes.
+
+    Returns a list of ``{action, kind, name}`` dicts. ``action`` ∈
+    {``created``, ``updated``, ``deleted``}. ``kind`` ∈ {``attribute``,
+    ``relation``}. We treat ``identity`` and ``attributes`` as one
+    namespace (the user-facing view doesn't distinguish primary-key
+    attributes from regular ones in the Schema tab)."""
+    try:
+        prev = yaml.safe_load(prev_yaml) if prev_yaml else None
+        nxt = yaml.safe_load(next_yaml) if next_yaml else None
+    except yaml.YAMLError:
+        return []
+    prev = prev or {}
+    nxt = nxt or {}
+    changes: list[dict] = []
+    changes.extend(_diff_dict_section(prev, nxt, ("identity", "attributes"), "attribute"))
+    changes.extend(_diff_dict_section(prev, nxt, ("relations",), "relation"))
+    return changes
+
+
+def _diff_dict_section(
+    prev: dict, nxt: dict, sections: tuple[str, ...], kind: str,
+) -> list[dict]:
+    """Merge dict-of-dicts sections (identity + attributes share a namespace)
+    and emit one event per added/removed/changed row."""
+    def collect(d: dict) -> dict:
+        return {
+            name: defn
+            for section in sections
+            for name, defn in (d.get(section) or {}).items()
+        }
+    prev_rows = collect(prev)
+    next_rows = collect(nxt)
+    changes: list[dict] = []
+    for name in sorted(next_rows.keys() - prev_rows.keys()):
+        changes.append({"action": "created", "kind": kind, "name": name})
+    for name in sorted(prev_rows.keys() - next_rows.keys()):
+        changes.append({"action": "deleted", "kind": kind, "name": name})
+    for name in sorted(prev_rows.keys() & next_rows.keys()):
+        if prev_rows[name] != next_rows[name]:
+            changes.append({"action": "updated", "kind": kind, "name": name})
+    return changes
+
+
+def _feature_events_for_entity(model_dir: Path, entity_name: str) -> list[dict]:
+    """Version bumps of features scoped to this entity (``entity_type ==
+    entity_name`` in the feature YAML). One event per version; first
+    version is ``created``, subsequent are ``updated``."""
+    events: list[dict] = []
+    for name in metadata_db.list_artifact_names(model_dir, "feature"):
+        content = metadata_db.get_current_content(model_dir, "feature", name)
+        if not content:
+            continue
+        try:
+            raw = yaml.safe_load(content) or {}
+        except yaml.YAMLError:
+            continue
+        if raw.get("entity_type") != entity_name:
+            continue
+        events.extend(_artifact_version_events(model_dir, "feature", name, "computed"))
+    return events
+
+
+def _chart_events_for_entity(model_dir: Path, entity_name: str) -> list[dict]:
+    """Version bumps of views (charts) whose underlying query is rooted on
+    this entity. Reuses the same root-entity filter as
+    list_charts_for_entity, walking version history per matching view."""
+    queries_by_name = {q.name: q for q in YAMLAdapter.load_queries(model_dir / "queries")}
+    events: list[dict] = []
+    for name in metadata_db.list_artifact_names(model_dir, "view"):
+        content = metadata_db.get_current_content(model_dir, "view", name)
+        if not content:
+            continue
+        try:
+            view_dict = yaml.safe_load(content) or {}
+        except yaml.YAMLError:
+            continue
+        query_name = view_dict.get("query")
+        q = queries_by_name.get(query_name) if query_name else None
+        if q is None or getattr(q, "entity", None) != entity_name:
+            continue
+        events.extend(_artifact_version_events(model_dir, "view", name, "chart"))
+    return events
+
+
+def _mapper_events_for_entity(model_dir: Path, entity_name: str) -> list[dict]:
+    """Version bumps of mappers whose targets include this entity."""
+    from semantic.mapper import parse_mapper_dict
+    events: list[dict] = []
+    for name in metadata_db.list_artifact_names(model_dir, "mapper"):
+        content = metadata_db.get_current_content(model_dir, "mapper", name)
+        if not content:
+            continue
+        try:
+            mapper = parse_mapper_dict(yaml.safe_load(content) or {})
+        except Exception:
+            continue
+        if not any(t.entity_name == entity_name for t in mapper.targets):
+            continue
+        events.extend(_artifact_version_events(model_dir, "mapper", name, "mapper"))
+    return events
+
+
+def resolve_row_owner(
+    model_dir: Path, entity_name: str, row_kind: str, row_name: str,
+) -> str | None:
+    """Resolve last-touched-by for a single ontology row.
+
+    The propose-change flow (VG-295) needs to know which user to notify
+    when a Member proposes changing one row inside an entity's ontology.
+    The answer is the user who most recently *added or modified* that
+    specific row — derived by walking the entity's own version history
+    newest-first and stopping at the first diff that touches the row.
+
+    ``row_kind`` is one of ``attribute`` / ``relation`` / ``computed``.
+    Computed features are independently-versioned artifacts, so we
+    delegate to the existing ownership service for that case rather
+    than diffing the entity YAML.
+
+    Returns ``None`` when no version touches the row (e.g. it was
+    seeded outside the version timeline, or doesn't exist).
+    """
+    if row_kind == "computed":
+        from api.services.ownership_service import get_owner_payload
+        try:
+            owner = get_owner_payload(model_dir, "feature", row_name)
+        except Exception:  # noqa: BLE001 — degrade silently when missing
+            return None
+        return owner.get("created_by")
+
+    if row_kind not in ("attribute", "relation"):
+        return None
+
+    entity_key = _entity_db_key(model_dir, entity_name)
+    versions = metadata_db.list_versions(model_dir, "entity", entity_key)
+    if not versions:
+        return None
+
+    # versions newest-first → first hit wins (last-touched-by semantics).
+    for i, version in enumerate(versions):
+        prev = versions[i + 1] if i + 1 < len(versions) else None
+        next_record = metadata_db.get_version(model_dir, "entity", entity_key, version["id"])
+        next_content = (next_record or {}).get("content") or ""
+        prev_content = ""
+        if prev is not None:
+            prev_record = metadata_db.get_version(model_dir, "entity", entity_key, prev["id"])
+            prev_content = (prev_record or {}).get("content") or ""
+        for change in _diff_entity_versions(prev_content, next_content):
+            if change["kind"] == row_kind and change["name"] == row_name:
+                return version.get("created_by")
+    return None
+
+
+def _artifact_version_events(
+    model_dir: Path, artifact_type: str, name: str, object_kind: str,
+) -> list[dict]:
+    """Convert artifact version history into activity events. Independently-
+    versioned artifacts (charts/features/mappers) leave ``ontology_version``
+    null — only the entity's own timeline produces those projections."""
+    versions = metadata_db.list_versions(model_dir, artifact_type, name)
+    if not versions:
+        return []
+    events: list[dict] = []
+    # versions is newest-first. The oldest entry (last in the list) is the
+    # creation; everything else is an update.
+    last_index = len(versions) - 1
+    for i, v in enumerate(versions):
+        is_creation = (i == last_index)
+        note = None if is_creation else f"v{v['version_num'] - 1} → v{v['version_num']}"
+        events.append({
+            "actor": v.get("created_by"),
+            "action": "created" if is_creation else "updated",
+            "object_kind": object_kind,
+            "object_name": name,
+            "created_at": v["created_at"],
+            "note": note,
+            "ontology_version": None,
+        })
+    return events
+
+
 def validate_entity(model_dir: Path, entity_name: str) -> dict:
     """Validate an entity YAML file using the ontology validator."""
     import tempfile

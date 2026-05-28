@@ -299,11 +299,17 @@ def list_versions(
     name: str,
     db_path: Path | None = None,
 ) -> list[dict]:
-    """Return version metadata (no content) newest-first."""
+    """Return version metadata (no content) newest-first.
+
+    Includes ``created_by`` / ``created_via`` so callers building activity
+    feeds (Epic 26 VG-290) can show who landed each version without an
+    extra query per row.
+    """
     model_id = Path(model_dir).name
     with _connect(model_dir, db_path) as conn:
         rows = conn.execute(
-            """SELECT id, version_num, checksum, message, created_at, is_current
+            """SELECT id, version_num, checksum, message, created_at,
+                      is_current, created_by, created_via
                FROM artifact_versions
                WHERE model_id=? AND type=? AND name=?
                ORDER BY version_num DESC""",
