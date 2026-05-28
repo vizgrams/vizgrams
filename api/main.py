@@ -192,6 +192,7 @@ from api.routers import (
     mappers,
     me,
     models,
+    proposals,
     queries,
     service_accounts,
     tool_config,
@@ -262,6 +263,10 @@ app.include_router(jobs.router, prefix=PREFIX)
 app.include_router(input_data.router, prefix=PREFIX)
 app.include_router(vizgrams.router, prefix=PREFIX)
 app.include_router(service_accounts.router, prefix=PREFIX)
+# Epic 26 VG-295 — propose-change workflow + notification bell
+app.include_router(proposals.model_router, prefix=PREFIX)
+app.include_router(proposals.decision_router, prefix=PREFIX)
+app.include_router(proposals.me_router, prefix=PREFIX)
 
 # ---------------------------------------------------------------------------
 # OTel instrumentation — must run after app + routers are fully configured
