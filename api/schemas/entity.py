@@ -164,3 +164,17 @@ class ActivityEvent(BaseModel):
 class ActivityFeed(BaseModel):
     events: list[ActivityEvent]
     has_more: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Computed Describe-it (Epic 26 VG-293) — LLM helper for the Schema tab
+# ---------------------------------------------------------------------------
+
+
+class ComputedDescribeRequest(BaseModel):
+    description: str  # natural-language brief, e.g. "lead time in hours"
+
+
+class ComputedDescribeResponse(BaseModel):
+    name: str    # snake_case identifier
+    expr: str    # vizgrams expression DSL string

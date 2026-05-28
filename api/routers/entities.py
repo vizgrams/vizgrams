@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.batch_client import BatchServiceError, submit_materialize_job
 from api.dependencies import (
     author_from_principal,
+    require_member,
     require_user_or_service_account,
     resolve_entity,
     resolve_model_dir,
@@ -15,13 +16,15 @@ from api.schemas.common import ValidationResult, YAMLContent
 from api.schemas.entity import (
     ActivityFeed,
     ChartSummary,
+    ComputedDescribeRequest,
+    ComputedDescribeResponse,
     EntityCreate,
     EntityDetail,
     EntitySummary,
     PipelineSummary,
 )
 from api.schemas.job import JobOut
-from api.services import entity_service, feature_service
+from api.services import computed_describe_service, entity_service, feature_service
 from api.services.entity_service import EntityValidationError
 from api.services.feature_service import FeatureValidationError
 from api.version_routes import make_version_routes
@@ -185,6 +188,37 @@ def get_entity_activity(
     version diffs) with version bumps of charts / computed features /
     mappers that touch this entity. Pagination is offset-based."""
     return entity_service.get_activity_for_entity(model_dir, entity, limit=limit, offset=offset)
+
+
+@router.post("/{entity}/computed/describe", response_model=ComputedDescribeResponse)
+def describe_computed_for_entity(
+    body: ComputedDescribeRequest,
+    entity: str = Depends(resolve_entity),
+    model_dir: str = Depends(resolve_model_dir),
+    _email: str = Depends(require_member),
+):
+    """LLM helper for the /explore Schema tab (Epic 26 VG-293).
+
+    Takes a natural-language description ("lead time in hours from
+    created to merged") and returns a snake_case name + expression DSL
+    string the UI pre-fills into the Add Computed form. Member-gated
+    (any authenticated user) — no model_dir-level RBAC because the
+    request only reads the entity's public schema."""
+    try:
+        entity_detail = entity_service.get_entity(model_dir, entity)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Entity '{entity}' not found.") from None
+    try:
+        return computed_describe_service.describe_computed(
+            entity_name=entity,
+            entity_schema=entity_detail,
+            description=body.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        # No API key wired, etc — surface as 503 the same way /chat does.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/{entity}/feature-values")

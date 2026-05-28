@@ -293,6 +293,13 @@ export function makeApi(model: string) {
         `${BASE}/entity/${entity}/activity?limit=${limit}&offset=${offset}`,
       ),
 
+    // VG-293 — LLM helper: natural-language description → {name, expr}.
+    describeComputed: (entity: string, description: string) =>
+      post<ComputedDescribeResponse>(
+        `${BASE}/entity/${entity}/computed/describe`,
+        { description },
+      ),
+
     executeInline: (query: object, limit = 200, offset = 0) =>
       post<QueryResult>(
         `${BASE}/query/execute-inline?limit=${limit}&offset=${offset}`,
@@ -570,6 +577,12 @@ export interface ActivityEvent {
 export interface ActivityFeed {
   events: ActivityEvent[]
   has_more: boolean
+}
+
+// VG-293 — Describe-it LLM helper for computed features.
+export interface ComputedDescribeResponse {
+  name: string
+  expr: string
 }
 
 export interface ViewDetail {
