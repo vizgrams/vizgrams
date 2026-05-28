@@ -136,6 +136,7 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
           )}
           <NavItem to="/views" matchPrefix="/views" icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Views</NavItem>
           <NavItem to="/entities" matchPrefix="/entities" icon={<Layers className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Entity Explorer</NavItem>
+          <NavItem to="/explore" matchPrefix="/explore" icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Explore</NavItem>
           {apps.map((a) => (
             <NavItem
               key={a.name}
