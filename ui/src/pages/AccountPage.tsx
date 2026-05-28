@@ -7,7 +7,7 @@ import { getMe, type MeResponse, type PlatformRole } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
-// Role config — only shown for admin and creator
+// Role config — only shown for admin and member (VG-292: creator collapsed into member).
 // ---------------------------------------------------------------------------
 
 const ROLE_CONFIG: Record<Exclude<PlatformRole, 'viewer'>, { label: string; icon: React.ElementType; className: string }> = {
@@ -16,8 +16,8 @@ const ROLE_CONFIG: Record<Exclude<PlatformRole, 'viewer'>, { label: string; icon
     icon: Shield,
     className: 'text-amber-700 bg-amber-50 border-amber-200',
   },
-  creator: {
-    label: 'Creator',
+  member: {
+    label: 'Member',
     icon: Pencil,
     className: 'text-blue-700 bg-blue-50 border-blue-200',
   },

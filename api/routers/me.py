@@ -6,7 +6,7 @@ import os
 from fastapi import APIRouter, Depends, Request
 
 from api.dependencies import optional_user
-from core.rbac import is_creator, is_system_admin
+from core.rbac import is_system_admin
 
 router = APIRouter(prefix="/me", tags=["auth"])
 
@@ -33,8 +33,11 @@ def get_me(request: Request, user_id: str | None = Depends(optional_user)):
         display_name = email.split("@")[0]
 
     admin = is_system_admin(email) if email else False
-    creator = is_creator(email) if email else False
-    role = "admin" if admin else "creator" if creator else "viewer"
+    # Epic 26 VG-292: two-role model — admin (env-listed) or member
+    # (any authenticated user). Unauthenticated requests still get
+    # "viewer" as a stand-in so the UI can distinguish them; "creator"
+    # is no longer a distinct role.
+    role = "admin" if admin else "member" if email else "viewer"
     # VZ_HARD_LOGOUT_URL is the IdP-level logout URL (e.g. Auth0 /v2/logout).
     # The UI uses it to construct /oauth2/sign_out?rd=<encoded> for "sign out
     # of all devices". Empty in local dev — cookie-only sign-out is used instead.
@@ -49,7 +52,6 @@ def get_me(request: Request, user_id: str | None = Depends(optional_user)):
         "display_name": display_name,
         "provider": provider,
         "is_system_admin": admin,
-        "is_creator": creator,
         "role": role,
         "hard_logout_url": hard_logout_url,
     }

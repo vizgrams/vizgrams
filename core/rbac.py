@@ -1,31 +1,31 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
-"""Role-based access control for model-level permissions.
+"""Role-based access control for vizgrams.
 
-Two tiers of access:
+Two tiers (collapsed from three in Epic 26 VG-292 — viewer and creator
+merged into ``member``):
 
-  System-level  — controlled via environment variables.  Three platform roles:
+  System-level  — controlled via environment variables.  Two platform roles:
 
     System Admin — ``VZ_SYSTEM_ADMINS`` (comma-separated emails / domain
                    wildcards).  Full platform access.  ``DEV_USER`` is always
                    treated as a system admin so local development is
-                   frictionless.  System admins implicitly satisfy all lower
-                   roles (Creator, Viewer).
+                   frictionless.
 
-    Creator      — ``VZ_CREATORS`` (same format as VZ_SYSTEM_ADMINS).  Can
-                   publish vizgrams and use the query/view builder.  Cannot
-                   manage model ontology or platform config.
-
-    Viewer       — any authenticated user not in the above.  Can browse the
-                   feed and run queries; cannot publish.
+    Member       — any authenticated user.  Can browse the feed, run
+                   queries, author charts + computed features, and use
+                   chat.  Governance-sensitive surfaces (ontology rows,
+                   mappers, extractors) use the propose-change flow
+                   (Epic 26 VG-294+) for members; admins write directly.
 
   Model-level   — controlled via the ``access:`` block in each model's
-                  ``config.yaml``.  Entries are evaluated in order; the first
-                  match wins.  Supports exact email, domain wildcard
-                  (``*@domain.com``), and catch-all (``*``).
+                  ``config.yaml`` or DB-driven access rules.  Entries are
+                  evaluated in order; the first match wins.  Supports
+                  exact email, domain wildcard (``*@domain.com``), and
+                  catch-all (``*``).
 
-Role hierarchy (higher includes all permissions of lower):
+Model role hierarchy (higher includes all permissions of lower):
 
   VIEWER    — view model, run queries, run Applications, view job history
   OPERATOR  — VIEWER + trigger extractions, cancel jobs
@@ -34,8 +34,8 @@ Role hierarchy (higher includes all permissions of lower):
 When a model has no ``access:`` block, all authenticated users get ADMIN
 access (open by default — opt in to restrictions by adding the block).
 
-When a user matches no entry in the access list, they have no access and the
-model is hidden from their model listing.
+When a user matches no entry in the access list, they have no access and
+the model is hidden from their model listing.
 """
 
 from __future__ import annotations
@@ -81,19 +81,14 @@ def is_system_admin(email: str) -> bool:
     return any(_matches(email, p) for p in patterns)
 
 
-def is_creator(email: str) -> bool:
-    """Return True if *email* has Creator platform role or higher.
+def is_member(email: str | None) -> bool:
+    """Return True if *email* is an authenticated user.
 
-    System admins implicitly satisfy Creator.  Checked against:
-    - ``VZ_SYSTEM_ADMINS`` / ``DEV_USER`` (system admin implies creator)
-    - ``VZ_CREATORS`` env var: comma-separated emails or domain wildcards
-      e.g. ``alice@example.com,*@startup.io``
+    Replaces the old ``is_creator``: any authenticated user is now a
+    Member with chart + computed authoring rights. Admins (above) still
+    have the extra governance powers.
     """
-    if is_system_admin(email):
-        return True
-    raw = os.environ.get("VZ_CREATORS", "")
-    patterns = [p.strip() for p in raw.split(",") if p.strip()]
-    return any(_matches(email, p) for p in patterns)
+    return bool(email)
 
 
 def get_model_role(model_dir: Path, email: str) -> ModelRole | None:

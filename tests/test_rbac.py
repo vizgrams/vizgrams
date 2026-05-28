@@ -5,7 +5,7 @@
 
 import yaml
 
-from core.rbac import ModelRole, _matches, get_model_role, is_creator, is_system_admin
+from core.rbac import ModelRole, _matches, get_model_role, is_member, is_system_admin
 
 # ---------------------------------------------------------------------------
 # _matches
@@ -235,52 +235,28 @@ class TestGetModelRole:
 
 
 # ---------------------------------------------------------------------------
-# is_creator
+# is_member (Epic 26 VG-292 — replaces is_creator)
+#
+# Any authenticated user is a member. The old VZ_CREATORS env var is
+# ignored — membership is no longer gated by an explicit allowlist.
 # ---------------------------------------------------------------------------
 
-class TestIsCreator:
-    def test_system_admin_is_creator(self, monkeypatch):
-        monkeypatch.setenv("VZ_SYSTEM_ADMINS", "admin@example.com")
-        monkeypatch.delenv("DEV_USER", raising=False)
-        monkeypatch.delenv("VZ_CREATORS", raising=False)
-        assert is_creator("admin@example.com")
+class TestIsMember:
+    def test_authenticated_user_is_member(self):
+        assert is_member("alice@example.com") is True
 
-    def test_dev_user_is_creator(self, monkeypatch):
-        monkeypatch.setenv("DEV_USER", "dev@local.com")
-        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
-        monkeypatch.delenv("VZ_CREATORS", raising=False)
-        assert is_creator("dev@local.com")
+    def test_unauthenticated_request_is_not_member(self):
+        assert is_member(None) is False
 
-    def test_explicit_creator_email(self, monkeypatch):
-        monkeypatch.delenv("DEV_USER", raising=False)
-        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
+    def test_empty_string_is_not_member(self):
+        """Empty string is treated like no email — defensive against
+        upstream auth setting a blank header instead of omitting it."""
+        assert is_member("") is False
+
+    def test_vz_creators_env_no_longer_gates_membership(self, monkeypatch):
+        """Setting VZ_CREATORS used to grant creator role. After the
+        collapse it has no effect — any signed-in user is a member."""
         monkeypatch.setenv("VZ_CREATORS", "alice@example.com")
-        assert is_creator("alice@example.com")
-        assert not is_creator("bob@example.com")
-
-    def test_creator_domain_wildcard(self, monkeypatch):
-        monkeypatch.delenv("DEV_USER", raising=False)
-        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
-        monkeypatch.setenv("VZ_CREATORS", "*@startup.io")
-        assert is_creator("anyone@startup.io")
-        assert not is_creator("user@other.com")
-
-    def test_multiple_creator_patterns(self, monkeypatch):
-        monkeypatch.delenv("DEV_USER", raising=False)
-        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
-        monkeypatch.setenv("VZ_CREATORS", "alice@x.com,*@startup.io")
-        assert is_creator("alice@x.com")
-        assert is_creator("bob@startup.io")
-        assert not is_creator("eve@other.com")
-
-    def test_not_creator_when_unset(self, monkeypatch):
-        monkeypatch.delenv("DEV_USER", raising=False)
-        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
-        monkeypatch.delenv("VZ_CREATORS", raising=False)
-        assert not is_creator("user@example.com")
-
-    def test_creator_catch_all(self, monkeypatch):
-        monkeypatch.delenv("DEV_USER", raising=False)
-        monkeypatch.delenv("VZ_SYSTEM_ADMINS", raising=False)
-        monkeypatch.setenv("VZ_CREATORS", "*")
-        assert is_creator("anyone@anywhere.com")
+        # Both users are members because both are authenticated.
+        assert is_member("alice@example.com") is True
+        assert is_member("bob@example.com") is True

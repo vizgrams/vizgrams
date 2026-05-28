@@ -160,10 +160,11 @@ def test_certify_feature_404_when_missing(client):
 # ---------------------------------------------------------------------------
 
 
-def test_certify_rejects_non_creators(tmp_path, monkeypatch):
-    # Clear bypasses so the gate is exercised by the X-Auth-Request-Email header.
+def test_certify_rejects_unauthenticated_requests(tmp_path, monkeypatch):
+    """After VG-292, certification is gated on authentication only — any
+    authenticated user can certify. Unauthenticated requests (no email
+    header, no DEV_USER bypass) still get 403."""
     monkeypatch.delenv("DEV_USER", raising=False)
-    monkeypatch.setenv("VZ_CREATORS", "")
     monkeypatch.setenv("VZ_SYSTEM_ADMINS", "")
     monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
 
@@ -175,10 +176,8 @@ def test_certify_rejects_non_creators(tmp_path, monkeypatch):
     app.dependency_overrides[resolve_model_dir] = lambda model: model_dir  # noqa: ARG005
     try:
         with TestClient(app) as c:
-            resp = c.post(
-                "/api/v1/model/demo/view/v1/certify",
-                headers={"X-Auth-Request-Email": "viewer@example.com"},
-            )
-        assert resp.status_code == 403
+            # No X-Auth-Request-Email — request is unauthenticated.
+            resp = c.post("/api/v1/model/demo/view/v1/certify")
+        assert resp.status_code in (401, 403)
     finally:
         app.dependency_overrides.clear()

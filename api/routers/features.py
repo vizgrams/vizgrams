@@ -9,7 +9,7 @@ from api.dependencies import (
     author_from_principal,
     get_current_user,
     get_job_service,
-    require_creator,
+    require_member,
     require_user_or_service_account,
     resolve_entity,
     resolve_model_dir,
@@ -146,7 +146,7 @@ def certify_feature(
     feature_id: str,
     model_dir: str = Depends(resolve_model_dir),
     user_id: str = Depends(get_current_user),
-    _=Depends(require_creator),
+    _=Depends(require_member),
 ):
     if metadata_db.get_current_content(model_dir, "feature", feature_id) is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
@@ -159,7 +159,7 @@ def certify_feature(
 def uncertify_feature(
     feature_id: str,
     model_dir: str = Depends(resolve_model_dir),
-    _=Depends(require_creator),
+    _=Depends(require_member),
 ):
     if metadata_db.get_current_content(model_dir, "feature", feature_id) is None:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")

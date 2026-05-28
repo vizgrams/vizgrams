@@ -797,14 +797,16 @@ export interface ModelConfig {
 export const getModelConfig = (name: string) => get<ModelConfig>(`/api/v1/model/${name}/config`)
 export const updateModelConfig = (name: string, data: { tools: Record<string, Record<string, unknown>> }) =>
   put<ModelConfig>(`/api/v1/model/${name}/config`, data)
-export type PlatformRole = 'admin' | 'creator' | 'viewer'
+// Epic 26 VG-292: collapsed from three roles ('admin' | 'creator' |
+// 'viewer') to two. Unauthenticated requests still get 'viewer' as a
+// stand-in so the UI can distinguish them; 'creator' is gone.
+export type PlatformRole = 'admin' | 'member' | 'viewer'
 export type MeResponse = {
   user_id: string | null                 // VG-260: UUID for "things I own" filter
   email: string | null
   display_name: string | null
   provider: string
   is_system_admin: boolean
-  is_creator: boolean
   role: PlatformRole
   hard_logout_url: string
 }
