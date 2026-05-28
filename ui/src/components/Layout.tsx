@@ -11,6 +11,7 @@ import {
   Clock, Settings, User, Rss, Bookmark, Box,
 } from 'lucide-react'
 import type { ApplicationSummary } from '@/api/client'
+import { NotificationBell } from '@/components/proposals/NotificationBell'
 import { useModel } from '@/context/ModelContext'
 import { useRole } from '@/context/RoleContext'
 import { cn } from '@/lib/utils'
@@ -155,6 +156,8 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {/* Bottom utilities */}
       <div className={cn('border-t border-white/10 py-2 space-y-0.5', collapsed ? 'px-1.5' : 'px-2')}>
+        {/* VG-296: notification bell for pending proposals + decisions */}
+        <NotificationBell collapsed={collapsed} dark />
         <NavItem disabled icon={<Settings className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Settings</NavItem>
         {userEmail ? (
           <Link
