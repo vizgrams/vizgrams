@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Activity as ActivityIcon, ArrowUpRight, BarChart3, Database,
   Download, GitCommit, Hash, History, Layers, LineChart,
@@ -175,6 +175,10 @@ function EntitySidebar({
 // ---------------------------------------------------------------------------
 
 function EntityHeader({ entity }: { entity: EntitySummary }) {
+  // `+ New chart` jumps to the existing /views page — chart authoring
+  // is its own surface today. The deeper integration (inline chart
+  // editor inside /explore) is deferred to a follow-up.
+  const navigate = useNavigate()
   return (
     <div className="px-8 pt-6 pb-4 flex items-start justify-between gap-6 border-b">
       <div className="min-w-0">
@@ -190,9 +194,9 @@ function EntityHeader({ entity }: { entity: EntitySummary }) {
         </div>
       </div>
       <button
-        disabled
-        title="Chart authoring lands in VG-293"
-        className="shrink-0 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border bg-card text-muted-foreground/50 cursor-not-allowed"
+        onClick={() => navigate(`/views?root=${encodeURIComponent(entity.name)}`)}
+        title={`Author a new chart rooted on ${entity.name}`}
+        className="shrink-0 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border bg-card hover:bg-muted transition-colors"
       >
         <Plus className="h-3.5 w-3.5" /> New chart
       </button>
@@ -427,7 +431,112 @@ function SchemaTab({ entity }: { entity: EntitySummary }) {
               <ReadOnlyRow key={f.feature_id} primary={f.name} secondary={f.expr} mono />
             ))
         }
+        {/* VG-293 — Add computed via LLM Describe-it */}
+        <ComputedAddPanel entity={entity.name} />
       </SchemaList>
+    </div>
+  )
+}
+
+// Compact open/close + form for Add Computed. Save is wired in a later
+// ticket (VG-293 follow-up); the Describe-it round-trip is the live
+// piece this PR ships.
+function ComputedAddPanel({ entity }: { entity: string }) {
+  const { api } = useModel()
+  const [open, setOpen] = useState(false)
+  const [prompt, setPrompt] = useState('')
+  const [name, setName] = useState('')
+  const [expr, setExpr] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function generate() {
+    if (!prompt.trim()) return
+    setGenerating(true)
+    setError(null)
+    try {
+      const r = await api.describeComputed(entity, prompt)
+      setName(r.name)
+      setExpr(r.expr)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Generation failed')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-3 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        <Plus className="h-3 w-3" /> Add computed
+      </button>
+    )
+  }
+  return (
+    <div className="mt-3 rounded border bg-card p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium">Add computed feature</div>
+        <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="rounded border bg-muted/30 p-2.5 space-y-2">
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+          <Sparkles className="h-3 w-3" />
+          Describe it
+        </div>
+        <input
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="e.g. lead time in hours from created to merged"
+          className="w-full text-xs bg-background border rounded px-2 py-1.5 placeholder:text-muted-foreground/50"
+        />
+        <button
+          onClick={generate}
+          disabled={generating || !prompt.trim()}
+          className="text-xs px-2.5 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+        >
+          <Sparkles className="h-3 w-3" />
+          {generating ? 'Generating…' : 'Generate'}
+        </button>
+        {error && <p className="text-[11px] text-red-600">{error}</p>}
+      </div>
+
+      <div className="space-y-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="name (snake_case)"
+          className="w-full text-xs bg-background border rounded px-2 py-1.5 font-mono"
+        />
+        <textarea
+          value={expr}
+          onChange={(e) => setExpr(e.target.value)}
+          placeholder="expression"
+          rows={2}
+          className="w-full text-xs bg-background border rounded px-2 py-1.5 font-mono resize-y"
+        />
+      </div>
+
+      <div className="flex justify-end gap-2 pt-1">
+        <button
+          onClick={() => setOpen(false)}
+          className="text-xs text-muted-foreground hover:text-foreground px-2 py-1"
+        >
+          Cancel
+        </button>
+        <button
+          disabled
+          title="Save lands in a follow-up — Describe-it is live this phase"
+          className="text-xs px-3 py-1 rounded border bg-foreground/30 text-background/70 cursor-not-allowed"
+        >
+          Save
+        </button>
+      </div>
     </div>
   )
 }
