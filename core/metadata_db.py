@@ -74,6 +74,34 @@ CREATE TABLE IF NOT EXISTS artifact_certifications (
     certified_at  TEXT NOT NULL,
     PRIMARY KEY (model_id, type, name)
 );
+
+-- Epic 26 VG-294: change-proposal queue. Members propose changes to
+-- governed surfaces (ontology rows, mappers, extractors); owners +
+-- admins approve / reject. Conflict policy: two pending proposals on
+-- the same artifact both stay open; approving one marks the other
+-- `superseded` with a link to the winner.
+CREATE TABLE IF NOT EXISTS proposals (
+    id                TEXT    PRIMARY KEY,
+    model_id          TEXT    NOT NULL,
+    entity_name       TEXT,                -- null for cross-entity (extractor) proposals
+    artifact_kind     TEXT    NOT NULL,    -- attribute|relation|computed|mapper|extractor|sub_group
+    artifact_name     TEXT    NOT NULL,
+    proposed_by       TEXT    NOT NULL,
+    reason            TEXT    NOT NULL,
+    before_yaml       TEXT,
+    after_yaml        TEXT,
+    status            TEXT    NOT NULL,    -- pending|approved|rejected|superseded
+    notified_to       TEXT    NOT NULL,    -- JSON array of user identifiers
+    decision_actor    TEXT,
+    decision_at       TEXT,
+    decision_comment  TEXT,
+    superseded_by     TEXT,                -- id of the winning proposal that closed this
+    created_at        TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_proposals_entity
+    ON proposals (model_id, entity_name, status);
+CREATE INDEX IF NOT EXISTS ix_proposals_artifact
+    ON proposals (model_id, artifact_kind, artifact_name, status);
 """
 
 
