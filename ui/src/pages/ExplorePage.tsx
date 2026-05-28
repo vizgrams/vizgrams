@@ -457,6 +457,9 @@ function SchemaTab({ entity }: { entity: EntitySummary }) {
   const { api } = useModel()
   const [detail, setDetail] = useState<EntityDetail | null>(null)
   const [loading, setLoading] = useState(true)
+  // VG-305: bumped after a successful Add Computed save so the schema
+  // refetches and the new feature appears in the list.
+  const [refreshTick, setRefreshTick] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -466,7 +469,7 @@ function SchemaTab({ entity }: { entity: EntitySummary }) {
       .catch(() => { if (!cancelled) setDetail(null) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [api, entity.name])
+  }, [api, entity.name, refreshTick])
 
   if (loading) return <Loading />
   if (!detail) return <EmptyState label="Could not load schema." />
@@ -511,23 +514,25 @@ function SchemaTab({ entity }: { entity: EntitySummary }) {
               <ReadOnlyRow key={f.feature_id} primary={f.name} secondary={f.expr} mono />
             ))
         }
-        {/* VG-293 — Add computed via LLM Describe-it */}
-        <ComputedAddPanel entity={entity.name} />
+        {/* VG-293 Describe-it + VG-305 save → refresh schema on success */}
+        <ComputedAddPanel entity={entity.name} onSaved={() => setRefreshTick((t) => t + 1)} />
       </SchemaList>
     </div>
   )
 }
 
-// Compact open/close + form for Add Computed. Save is wired in a later
-// ticket (VG-293 follow-up); the Describe-it round-trip is the live
-// piece this PR ships.
-function ComputedAddPanel({ entity }: { entity: string }) {
+// Compact open/close + form for Add Computed. Describe-it (VG-293)
+// generates name + expr from a natural-language prompt; Save (VG-305)
+// constructs the feature YAML and PUTs it via saveFeatureYaml.
+function ComputedAddPanel({ entity, onSaved }: { entity: string; onSaved?: () => void }) {
   const { api } = useModel()
   const [open, setOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [name, setName] = useState('')
   const [expr, setExpr] = useState('')
+  const [dataType, setDataType] = useState<'FLOAT' | 'INTEGER' | 'STRING'>('FLOAT')
   const [generating, setGenerating] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function generate() {
@@ -545,6 +550,47 @@ function ComputedAddPanel({ entity }: { entity: string }) {
     }
   }
 
+  function reset() {
+    setOpen(false)
+    setPrompt(''); setName(''); setExpr('')
+    setDataType('FLOAT')
+    setError(null)
+  }
+
+  async function save() {
+    setError(null)
+    if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+      setError('Name must be lowercase letters / digits / underscores, starting with a letter.')
+      return
+    }
+    if (!expr.trim()) {
+      setError('Expression is required.')
+      return
+    }
+    setSaving(true)
+    try {
+      const entitySnake = entity.replace(/(?<=[a-z0-9])([A-Z])/g, '_$1').toLowerCase()
+      const featureId = `${entitySnake}.${name}`
+      const yaml = [
+        `feature_id: ${featureId}`,
+        `name: ${name}`,
+        `entity_type: ${entity}`,
+        `entity_key: ${entitySnake}_key`,
+        `data_type: ${dataType}`,
+        'materialization_mode: dynamic',
+        `expr: ${JSON.stringify(expr)}`,
+        '',
+      ].join('\n')
+      await api.saveFeatureYaml(featureId, yaml)
+      onSaved?.()
+      reset()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (!open) {
     return (
       <button
@@ -559,7 +605,7 @@ function ComputedAddPanel({ entity }: { entity: string }) {
     <div className="mt-3 rounded border bg-card p-3 space-y-3">
       <div className="flex items-center justify-between">
         <div className="text-xs font-medium">Add computed feature</div>
-        <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
+        <button onClick={reset} className="text-muted-foreground hover:text-foreground">
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -583,7 +629,6 @@ function ComputedAddPanel({ entity }: { entity: string }) {
           <Sparkles className="h-3 w-3" />
           {generating ? 'Generating…' : 'Generate'}
         </button>
-        {error && <p className="text-[11px] text-red-600">{error}</p>}
       </div>
 
       <div className="space-y-2">
@@ -600,21 +645,35 @@ function ComputedAddPanel({ entity }: { entity: string }) {
           rows={2}
           className="w-full text-xs bg-background border rounded px-2 py-1.5 font-mono resize-y"
         />
+        <div className="flex items-center gap-1.5">
+          <label className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Type</label>
+          <select
+            value={dataType}
+            onChange={(e) => setDataType(e.target.value as 'FLOAT' | 'INTEGER' | 'STRING')}
+            className="text-xs bg-background border rounded px-2 py-1 font-mono"
+          >
+            <option value="FLOAT">FLOAT</option>
+            <option value="INTEGER">INTEGER</option>
+            <option value="STRING">STRING</option>
+          </select>
+        </div>
       </div>
+
+      {error && <p className="text-[11px] text-red-600">{error}</p>}
 
       <div className="flex justify-end gap-2 pt-1">
         <button
-          onClick={() => setOpen(false)}
+          onClick={reset}
           className="text-xs text-muted-foreground hover:text-foreground px-2 py-1"
         >
           Cancel
         </button>
         <button
-          disabled
-          title="Save lands in a follow-up — Describe-it is live this phase"
-          className="text-xs px-3 py-1 rounded border bg-foreground/30 text-background/70 cursor-not-allowed"
+          onClick={save}
+          disabled={saving}
+          className="text-xs px-3 py-1 rounded border bg-foreground text-background hover:bg-foreground/90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Save
+          {saving ? 'Saving…' : 'Save'}
         </button>
       </div>
     </div>

@@ -34,6 +34,8 @@ type FakeApi = {
   getView: (name: string) => Promise<unknown>
   listQueries: () => Promise<unknown[]>
   saveView: (name: string, content: string) => Promise<unknown>
+  saveFeatureYaml: (featureId: string, content: string) => Promise<unknown>
+  describeComputed: (entity: string, description: string) => Promise<{ name: string; expr: string }>
 }
 
 let fakeApi: FakeApi
@@ -90,6 +92,8 @@ function makeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     getView: vi.fn(async () => ({})),
     listQueries: vi.fn(async () => []),
     saveView: vi.fn(async () => ({})),
+    saveFeatureYaml: vi.fn(async () => ({})),
+    describeComputed: vi.fn(async () => ({ name: 'lead_time_hours', expr: '1.0' })),
     ...overrides,
   }
 }
@@ -277,6 +281,41 @@ describe('ExplorePage tabs', () => {
     // "Propose change" tooltip (replaces the VG-291 read-only state).
     const pencil = screen.getByRole('button', { name: /Propose change/i })
     expect(pencil).toBeEnabled()
+  })
+
+  it('Add Computed → Save constructs feature YAML and PUTs it (VG-305)', async () => {
+    const saveFeatureYaml = vi.fn().mockResolvedValue({})
+    fakeApi = makeApi({ saveFeatureYaml })
+    renderAt('/explore?entity=Widget&tab=schema')
+    fireEvent.click(await screen.findByRole('button', { name: /Add computed/i }))
+    // Fill the form (Describe-it is skipped — direct entry path).
+    fireEvent.change(screen.getByPlaceholderText(/name \(snake_case\)/i),
+                     { target: { value: 'open_count' } })
+    fireEvent.change(screen.getByPlaceholderText(/^expression$/i),
+                     { target: { value: 'count(*)' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(saveFeatureYaml).toHaveBeenCalledTimes(1))
+    const [featureId, yaml] = saveFeatureYaml.mock.calls[0]
+    expect(featureId).toBe('widget.open_count')
+    expect(yaml).toContain('feature_id: widget.open_count')
+    expect(yaml).toContain('entity_type: Widget')
+    expect(yaml).toContain('entity_key: widget_key')
+    expect(yaml).toContain('data_type: FLOAT')
+    expect(yaml).toContain('expr: "count(*)"')
+  })
+
+  it('Add Computed → Save rejects invalid names inline (VG-305)', async () => {
+    const saveFeatureYaml = vi.fn()
+    fakeApi = makeApi({ saveFeatureYaml })
+    renderAt('/explore?entity=Widget&tab=schema')
+    fireEvent.click(await screen.findByRole('button', { name: /Add computed/i }))
+    fireEvent.change(screen.getByPlaceholderText(/name \(snake_case\)/i),
+                     { target: { value: 'BadName' } })
+    fireEvent.change(screen.getByPlaceholderText(/^expression$/i),
+                     { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    expect(await screen.findByText(/lowercase letters/i)).toBeInTheDocument()
+    expect(saveFeatureYaml).not.toHaveBeenCalled()
   })
 
   it('Pipeline tab renders lineage chips when pipeline exists', async () => {
