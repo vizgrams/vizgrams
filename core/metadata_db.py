@@ -102,6 +102,23 @@ CREATE INDEX IF NOT EXISTS ix_proposals_entity
     ON proposals (model_id, entity_name, status);
 CREATE INDEX IF NOT EXISTS ix_proposals_artifact
     ON proposals (model_id, artifact_kind, artifact_name, status);
+
+-- Epic 26 VG-295: in-app notifications. One row per (user_id,
+-- proposal) when a proposal is created — resolved when the proposal
+-- transitions out of pending. Used to power the notification bell
+-- in the top bar.
+CREATE TABLE IF NOT EXISTS notifications (
+    id          TEXT    PRIMARY KEY,
+    user_id     TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,     -- 'proposal_pending' for VG-295
+    proposal_id TEXT    NOT NULL,     -- FK in spirit; soft-resolved
+    created_at  TEXT    NOT NULL,
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_notifications_user
+    ON notifications (user_id, resolved_at);
+CREATE INDEX IF NOT EXISTS ix_notifications_proposal
+    ON notifications (proposal_id);
 """
 
 
