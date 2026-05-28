@@ -27,6 +27,7 @@ import type {
 } from '@/api/client'
 import { ChartDetailDrawer } from '@/components/explore/ChartDetailDrawer'
 import { ChartPreview } from '@/components/explore/ChartPreview'
+import { RecordDetailDrawer } from '@/components/explore/RecordDetailDrawer'
 import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
 import { ProposalCard } from '@/components/proposals/ProposalCard'
 import { ProposeChangeForm } from '@/components/proposals/ProposeChangeForm'
@@ -330,11 +331,22 @@ function KpiCard({ chart }: { chart: ChartSummary }) {
 // Records — embeds the existing EntityListFrame (rich record browser)
 // ---------------------------------------------------------------------------
 
+// VG-303 — DrillFrame contract from EntityListFrame. Mirrors
+// components/view/drilldown.ts but reproduced here to avoid coupling
+// the lazy import to that module's full type.
+type DrillTarget =
+  | { kind: 'entity-detail'; entity: string; id: string }
+  | { kind: 'entity-list'; entity: string }
+  | { kind: string; [k: string]: unknown }
+
 function RecordsTab({ entity }: { entity: EntitySummary }) {
   // Lazy import keeps the bundle small + avoids circular deps when this
   // page is unmounted. Falls back to a placeholder if the frame's data
   // contract changes underneath us.
   const [Frame, setFrame] = useState<React.ComponentType<{ entity: string; onNavigate: (f: unknown) => void }> | null>(null)
+  // VG-303: row click → record detail drawer.
+  const [openRecord, setOpenRecord] = useState<{ entity: string; id: string } | null>(null)
+
   useEffect(() => {
     import('@/pages/explore/EntityListFrame')
       .then((m) => setFrame(() => m.EntityListFrame as never))
@@ -343,7 +355,22 @@ function RecordsTab({ entity }: { entity: EntitySummary }) {
   if (!Frame) return <Loading />
   return (
     <div className="-mx-2">
-      <Frame entity={entity.name} onNavigate={() => { /* drilldown handled inside the frame for now */ }} />
+      <Frame
+        entity={entity.name}
+        onNavigate={(f: unknown) => {
+          const frame = f as DrillTarget
+          if (frame.kind === 'entity-detail') {
+            setOpenRecord({ entity: frame.entity as string, id: frame.id as string })
+          }
+        }}
+      />
+      {openRecord && (
+        <RecordDetailDrawer
+          entity={openRecord.entity}
+          id={openRecord.id}
+          onClose={() => setOpenRecord(null)}
+        />
+      )}
     </div>
   )
 }
