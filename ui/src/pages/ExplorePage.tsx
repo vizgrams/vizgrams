@@ -29,12 +29,11 @@ import { ChartDetailDrawer } from '@/components/explore/ChartDetailDrawer'
 import { ChartPreview } from '@/components/explore/ChartPreview'
 import { NewChartDrawer } from '@/components/explore/NewChartDrawer'
 import { RecordDetailDrawer } from '@/components/explore/RecordDetailDrawer'
-import { formatValue } from '@/lib/utils'
 import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
 import { ProposalCard } from '@/components/proposals/ProposalCard'
 import { ProposeChangeForm } from '@/components/proposals/ProposeChangeForm'
 import { useModel } from '@/context/ModelContext'
-import { cn } from '@/lib/utils'
+import { cn, formatValue } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
 // Page shell
