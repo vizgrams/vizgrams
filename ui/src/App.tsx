@@ -1,22 +1,15 @@
 // Copyright 2024-2026 Oliver Fenton
 // SPDX-License-Identifier: Apache-2.0
 
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { ShieldOff } from 'lucide-react'
 import { ModelProvider } from '@/context/ModelContext'
 import { RoleProvider } from '@/context/RoleContext'
 import { useRole } from '@/context/RoleContext'
 import type { PlatformRole } from '@/api/client'
 import { Layout } from '@/components/Layout'
-import { EntitiesPage } from '@/pages/EntitiesPage'
-import { OntologyPage } from '@/pages/OntologyPage'
 import { JobLogPage } from '@/pages/JobLogPage'
 import { ToolsPage } from '@/pages/ToolsPage'
-import { MappersPage } from '@/pages/MappersPage'
-import { GraphPage } from '@/pages/GraphPage'
-import { QueriesPage } from '@/pages/QueriesPage'
-import { FeaturesPage } from '@/pages/FeaturesPage'
-import { ViewsPage } from '@/pages/ViewsPage'
 import { AppPage } from '@/pages/AppPage'
 import ChatPage from '@/pages/ChatPage'
 import { AccountPage } from '@/pages/AccountPage'
@@ -24,6 +17,16 @@ import { FeedPage } from '@/pages/FeedPage'
 import { SavedPage } from '@/pages/SavedPage'
 import { ExplorePage } from '@/pages/ExplorePage'
 import { ModelsPage } from '@/pages/admin/ModelsPage'
+
+// ---------------------------------------------------------------------------
+// VG-298 — legacy routes redirect to /explore. Page files are retained for
+// one release (soak period) so an emergency revert is just a route swap.
+// ---------------------------------------------------------------------------
+
+function EntityRedirect() {
+  const { entity } = useParams()
+  return <Navigate to={entity ? `/explore?entity=${encodeURIComponent(entity)}` : '/explore'} replace />
+}
 
 // ---------------------------------------------------------------------------
 // Route guard — renders children only if the user meets minRole, else 403.
@@ -72,25 +75,25 @@ export default function App() {
             <Route path="/saved" element={<SavedPage />} />
             <Route path="/explore" element={<ExplorePage />} />
             <Route path="/chat" element={<ProtectedRoute minRole="member"><ChatPage /></ProtectedRoute>} />
-            <Route path="/views" element={<ViewsPage />} />
-            <Route path="/views/:name" element={<ViewsPage />} />
-            <Route path="/entities" element={<EntitiesPage />} />
-            <Route path="/entities/:entity" element={<EntitiesPage />} />
-            <Route path="/entities/:entity/:id" element={<EntitiesPage />} />
             <Route path="/apps/:name" element={<AppPage />} />
             <Route path="/account" element={<AccountPage />} />
-
-            {/* Authoring — any signed-in member */}
-            <Route path="/features" element={<ProtectedRoute minRole="member"><FeaturesPage /></ProtectedRoute>} />
-            <Route path="/queries" element={<ProtectedRoute minRole="member"><QueriesPage /></ProtectedRoute>} />
-            <Route path="/graph" element={<ProtectedRoute minRole="member"><GraphPage /></ProtectedRoute>} />
 
             {/* Admin — admin only */}
             <Route path="/admin/models" element={<ProtectedRoute minRole="admin"><ModelsPage /></ProtectedRoute>} />
             <Route path="/tools" element={<ProtectedRoute minRole="admin"><ToolsPage /></ProtectedRoute>} />
-            <Route path="/mappers" element={<ProtectedRoute minRole="admin"><MappersPage /></ProtectedRoute>} />
-            <Route path="/ontology" element={<ProtectedRoute minRole="admin"><OntologyPage /></ProtectedRoute>} />
             <Route path="/jobs" element={<ProtectedRoute minRole="admin"><JobLogPage /></ProtectedRoute>} />
+
+            {/* VG-298 — legacy routes redirect to /explore */}
+            <Route path="/views" element={<Navigate to="/explore" replace />} />
+            <Route path="/views/:name" element={<Navigate to="/explore" replace />} />
+            <Route path="/entities" element={<Navigate to="/explore" replace />} />
+            <Route path="/entities/:entity" element={<EntityRedirect />} />
+            <Route path="/entities/:entity/:id" element={<EntityRedirect />} />
+            <Route path="/queries" element={<Navigate to="/explore" replace />} />
+            <Route path="/features" element={<Navigate to="/explore" replace />} />
+            <Route path="/graph" element={<Navigate to="/explore" replace />} />
+            <Route path="/mappers" element={<Navigate to="/explore" replace />} />
+            <Route path="/ontology" element={<Navigate to="/explore" replace />} />
           </Routes>
         </Layout>
       </ModelProvider>
