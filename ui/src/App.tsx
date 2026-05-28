@@ -22,6 +22,7 @@ import ChatPage from '@/pages/ChatPage'
 import { AccountPage } from '@/pages/AccountPage'
 import { FeedPage } from '@/pages/FeedPage'
 import { SavedPage } from '@/pages/SavedPage'
+import { ExplorePage } from '@/pages/ExplorePage'
 import { ModelsPage } from '@/pages/admin/ModelsPage'
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,7 @@ export default function App() {
             {/* User — open to all */}
             <Route path="/feed" element={<FeedPage />} />
             <Route path="/saved" element={<SavedPage />} />
+            <Route path="/explore" element={<ExplorePage />} />
             <Route path="/chat" element={<ProtectedRoute minRole="creator"><ChatPage /></ProtectedRoute>} />
             <Route path="/views" element={<ViewsPage />} />
             <Route path="/views/:name" element={<ViewsPage />} />

@@ -281,6 +281,18 @@ export function makeApi(model: string) {
     getEntity: (entity: string) =>
       get<EntityDetail>(`${BASE}/entity/${entity}`),
 
+    // Epic 26 VG-290 — entity-scoped surfaces feeding the /explore tabs.
+    listEntityCharts: (entity: string) =>
+      get<ChartSummary[]>(`${BASE}/entity/${entity}/charts`),
+
+    getEntityPipeline: (entity: string) =>
+      get<PipelineSummary | null>(`${BASE}/entity/${entity}/pipeline`),
+
+    getEntityActivity: (entity: string, limit = 50, offset = 0) =>
+      get<ActivityFeed>(
+        `${BASE}/entity/${entity}/activity?limit=${limit}&offset=${offset}`,
+      ),
+
     executeInline: (query: object, limit = 200, offset = 0) =>
       post<QueryResult>(
         `${BASE}/query/execute-inline?limit=${limit}&offset=${offset}`,
@@ -504,6 +516,60 @@ export interface ViewSummary extends LibraryFields {
   name: string
   type: string
   query: string
+}
+
+// ---------------------------------------------------------------------------
+// Entity-scoped surfaces (Epic 26 VG-290) — fed by /entity/{e}/charts,
+// /pipeline, /activity. Power the /explore tabs.
+// ---------------------------------------------------------------------------
+
+export interface ChartSummary extends ViewSummary {
+  // Flattened from ViewDef.type + visualization.chart_type so the UI
+  // doesn't have to parse the visualization blob.
+  chart_type: string  // bar | line | kpi | table | scatter | ...
+}
+
+export interface PipelineSource {
+  tool: string | null
+  extractor: string | null
+  raw_table: string
+}
+
+export interface PipelineMapperGroup {
+  name: string
+}
+
+export interface PipelineMapper {
+  name: string
+  groups: PipelineMapperGroup[]
+}
+
+export interface PipelineSummary {
+  entity: string
+  sources: PipelineSource[]
+  mapper: PipelineMapper | null
+}
+
+export type ActivityAction = 'created' | 'updated' | 'deleted' | 'restored' | 'ran'
+export type ActivityObjectKind =
+  | 'chart' | 'computed' | 'attribute' | 'relation' | 'mapper' | 'entity'
+
+export interface ActivityEvent {
+  actor: string | null
+  action: ActivityAction
+  object_kind: ActivityObjectKind
+  object_name: string
+  created_at: string
+  note: string | null
+  // Set when the event came from a projection over this entity's own
+  // version timeline. Events sharing the same value were part of the
+  // same version bump and cluster in the UI.
+  ontology_version: string | null
+}
+
+export interface ActivityFeed {
+  events: ActivityEvent[]
+  has_more: boolean
 }
 
 export interface ViewDetail {
