@@ -25,6 +25,7 @@ import type {
   ActivityEvent, ActivityFeed, ChartSummary, EntityDetail, EntitySummary,
   PipelineSummary, Proposal, ProposalKind,
 } from '@/api/client'
+import { ChartDetailDrawer } from '@/components/explore/ChartDetailDrawer'
 import { ChartPreview } from '@/components/explore/ChartPreview'
 import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
 import { ProposalCard } from '@/components/proposals/ProposalCard'
@@ -383,31 +384,37 @@ const KIND_ICON: Record<string, React.ReactNode> = {
 }
 
 function ChartCardEl({ card, large = false }: { card: ChartSummary; large?: boolean }) {
+  // VG-302 — click opens an in-shell side drawer instead of navigating
+  // away to /views/:name (which is a redirect to /explore now anyway).
+  const [open, setOpen] = useState(false)
   return (
-    <a
-      href={`/views/${encodeURIComponent(card.name)}`}
-      className={cn(
-        'group rounded border bg-card hover:border-foreground/30 transition-colors block',
-        large ? 'p-4' : 'p-3',
-      )}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className={cn('font-medium leading-snug', large ? 'text-sm' : 'text-xs')}>{card.name}</div>
-          <div className="text-[10px] text-muted-foreground/70 mt-0.5 font-mono truncate">{card.query}</div>
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className={cn(
+          'group rounded border bg-card hover:border-foreground/30 transition-colors block w-full text-left',
+          large ? 'p-4' : 'p-3',
+        )}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className={cn('font-medium leading-snug', large ? 'text-sm' : 'text-xs')}>{card.name}</div>
+            <div className="text-[10px] text-muted-foreground/70 mt-0.5 font-mono truncate">{card.query}</div>
+          </div>
+          <span className="shrink-0 inline-flex items-center rounded border bg-muted/40 p-1 text-muted-foreground">
+            {KIND_ICON[card.chart_type] ?? <BarChart3 className="h-3.5 w-3.5" />}
+          </span>
         </div>
-        <span className="shrink-0 inline-flex items-center rounded border bg-muted/40 p-1 text-muted-foreground">
-          {KIND_ICON[card.chart_type] ?? <BarChart3 className="h-3.5 w-3.5" />}
-        </span>
-      </div>
-      <div className="mt-3">
-        <ChartPreview viewName={card.name} height={large ? 128 : 80} />
-      </div>
-      <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground/60">
-        <span className="font-mono">{card.chart_type}</span>
-        <ArrowUpRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-      </div>
-    </a>
+        <div className="mt-3">
+          <ChartPreview viewName={card.name} height={large ? 128 : 80} />
+        </div>
+        <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground/60">
+          <span className="font-mono">{card.chart_type}</span>
+          <ArrowUpRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </div>
+      </button>
+      {open && <ChartDetailDrawer viewName={card.name} onClose={() => setOpen(false)} />}
+    </>
   )
 }
 
