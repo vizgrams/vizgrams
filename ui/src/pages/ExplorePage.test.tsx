@@ -32,6 +32,8 @@ type FakeApi = {
   listProposals: (params?: object) => Promise<unknown[]>
   executeView: (name: string, limit?: number) => Promise<unknown>
   getView: (name: string) => Promise<unknown>
+  listQueries: () => Promise<unknown[]>
+  saveView: (name: string, content: string) => Promise<unknown>
 }
 
 let fakeApi: FakeApi
@@ -67,6 +69,15 @@ vi.mock('@/components/explore/ChartDetailDrawer', () => ({
   ),
 }))
 
+vi.mock('@/components/explore/NewChartDrawer', () => ({
+  NewChartDrawer: ({ entity, onClose }: { entity: string; onClose: () => void }) => (
+    <div data-testid={`new-chart-${entity}`}>
+      new chart for {entity}
+      <button onClick={onClose}>close-new</button>
+    </div>
+  ),
+}))
+
 function makeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   return {
     listEntities: vi.fn(async () => [WIDGET, GADGET]),
@@ -77,6 +88,8 @@ function makeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     listProposals: vi.fn(async () => []),
     executeView: vi.fn(async () => ({})),
     getView: vi.fn(async () => ({})),
+    listQueries: vi.fn(async () => []),
+    saveView: vi.fn(async () => ({})),
     ...overrides,
   }
 }

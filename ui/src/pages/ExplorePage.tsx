@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import {
   Activity as ActivityIcon, ArrowUpRight, BarChart3, ChevronRight, Database,
   Download, GitCommit, Hash, History, Layers, LineChart,
@@ -27,6 +27,7 @@ import type {
 } from '@/api/client'
 import { ChartDetailDrawer } from '@/components/explore/ChartDetailDrawer'
 import { ChartPreview } from '@/components/explore/ChartPreview'
+import { NewChartDrawer } from '@/components/explore/NewChartDrawer'
 import { RecordDetailDrawer } from '@/components/explore/RecordDetailDrawer'
 import { formatValue } from '@/lib/utils'
 import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
@@ -182,10 +183,9 @@ function EntitySidebar({
 // ---------------------------------------------------------------------------
 
 function EntityHeader({ entity }: { entity: EntitySummary }) {
-  // `+ New chart` jumps to the existing /views page — chart authoring
-  // is its own surface today. The deeper integration (inline chart
-  // editor inside /explore) is deferred to a follow-up.
-  const navigate = useNavigate()
+  // VG-304 — "+ New chart" opens an in-shell drawer with a query picker
+  // + chart-type template instead of jumping to the dead /views page.
+  const [newOpen, setNewOpen] = useState(false)
   return (
     <div className="px-8 pt-6 pb-4 flex items-start justify-between gap-6 border-b">
       <div className="min-w-0">
@@ -201,12 +201,15 @@ function EntityHeader({ entity }: { entity: EntitySummary }) {
         </div>
       </div>
       <button
-        onClick={() => navigate(`/views?root=${encodeURIComponent(entity.name)}`)}
+        onClick={() => setNewOpen(true)}
         title={`Author a new chart rooted on ${entity.name}`}
         className="shrink-0 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border bg-card hover:bg-muted transition-colors"
       >
         <Plus className="h-3.5 w-3.5" /> New chart
       </button>
+      {newOpen && (
+        <NewChartDrawer entity={entity.name} onClose={() => setNewOpen(false)} />
+      )}
     </div>
   )
 }
