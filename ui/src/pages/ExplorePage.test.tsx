@@ -368,6 +368,20 @@ describe('ExplorePage tabs', () => {
     expect(screen.getByText('commits')).toBeInTheDocument()
   })
 
+  it('Pipeline tab hides the "Manage all extractors" deep-link for non-admins (VG-307)', async () => {
+    const pipeline: PipelineSummary = {
+      entity: 'Widget',
+      sources: [{ tool: 'github', extractor: 'gh', raw_table: 'raw' }],
+      mapper: { name: 'widget', groups: [] },
+    }
+    fakeApi = makeApi({ getEntityPipeline: vi.fn(async () => pipeline) })
+    renderAt('/explore?entity=Widget&tab=pipeline')
+    await screen.findByText('github')
+    // RoleContext defaults to viewer in tests without a provider, so the
+    // admin-only deep-link must NOT render.
+    expect(screen.queryByText(/Manage all extractors/i)).not.toBeInTheDocument()
+  })
+
   it('Activity tab renders ontology bump cards + artifact events', async () => {
     const events: ActivityEvent[] = [
       { actor: 'alice', action: 'updated', object_kind: 'chart',

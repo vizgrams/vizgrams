@@ -129,13 +129,14 @@ describe('VG-298 — sidebar smoke', () => {
     // Wait for the role-gated admin section to render.
     await screen.findByText('Models')
 
-    // None of the removed labels should be on the page.
-    for (const label of ['Views', 'Entity Explorer', 'Mappers', 'Ontology', 'Features', 'Query Builder', 'Graph']) {
+    // None of the removed labels should be on the page. VG-307 removed
+    // Extractors as well — per-entity Pipeline tab + /tools deep-link from
+    // PipelineTab covers the admin's needs.
+    for (const label of ['Views', 'Entity Explorer', 'Mappers', 'Ontology', 'Features', 'Query Builder', 'Graph', 'Extractors']) {
       expect(screen.queryByText(label)).not.toBeInTheDocument()
     }
     // Explore + the kept admin entries are still there.
     expect(screen.getByText('Explore')).toBeInTheDocument()
-    expect(screen.getByText('Extractors')).toBeInTheDocument()
     expect(screen.getByText('Jobs')).toBeInTheDocument()
   })
 })
