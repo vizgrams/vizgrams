@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.dependencies import get_current_user, optional_user, require_creator
+from api.dependencies import get_current_user, optional_user, require_member
 from api.services.feed_significance import compute_significance_score
 from core.caption_provider import (
     build_caption_prompt,
@@ -77,7 +77,7 @@ class PublishVizgramRequest(VizgramPayload):
 @router.post("/preview-caption")
 def preview_caption(
     body: VizgramPayload,
-    author_id: str = Depends(require_creator),
+    author_id: str = Depends(require_member),
 ):
     """Generate a caption for a vizgram without saving it.
 
@@ -111,7 +111,7 @@ def preview_caption(
 @router.post("")
 def publish_vizgram(
     body: PublishVizgramRequest,
-    author_id: str = Depends(require_creator),
+    author_id: str = Depends(require_member),
 ):
     """Publish a static vizgram snapshot. Requires Creator role or higher."""
     significance_score = compute_significance_score(body.data_snapshot, body.chart_config)

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from api.dependencies import (
     author_from_principal,
     get_current_user,
-    require_creator,
+    require_member,
     require_user_or_service_account,
     resolve_model_dir,
 )
@@ -115,7 +115,7 @@ def certify_view(
     view: str,
     model_dir: str = Depends(resolve_model_dir),
     user_id: str = Depends(get_current_user),
-    _=Depends(require_creator),
+    _=Depends(require_member),
 ):
     try:
         view_service.get_view(model_dir, view)
@@ -129,7 +129,7 @@ def certify_view(
 def uncertify_view(
     view: str,
     model_dir: str = Depends(resolve_model_dir),
-    _=Depends(require_creator),
+    _=Depends(require_member),
 ):
     try:
         view_service.get_view(model_dir, view)

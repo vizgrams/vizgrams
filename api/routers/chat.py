@@ -22,7 +22,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_current_user, require_creator, resolve_model_dir
+from api.dependencies import get_current_user, require_member, resolve_model_dir
 from api.services.chat import publish as chat_publish_service
 from api.services.chat import service
 from core import chat_history_db
@@ -127,7 +127,7 @@ def chat(
     model: str,
     model_dir: str = Depends(resolve_model_dir),
     user_id: str = Depends(get_current_user),
-    _email: str = Depends(require_creator),
+    _email: str = Depends(require_member),
 ) -> ChatResponse:
     """One assistant turn: user message in, view (saved or inline) out.
 
@@ -280,7 +280,7 @@ def chat_publish(
     model: str,
     model_dir: str = Depends(resolve_model_dir),
     user_id: str = Depends(get_current_user),
-    _email: str = Depends(require_creator),
+    _email: str = Depends(require_member),
 ) -> ChatPublishResponse:
     """Publish a chat turn as a vizgram. Saves any inline artifacts first.
 
@@ -383,7 +383,7 @@ def list_chat_sessions(
     limit: int = 50,
     offset: int = 0,
     user_id: str = Depends(get_current_user),
-    _email: str = Depends(require_creator),
+    _email: str = Depends(require_member),
 ):
     """List the caller's chat sessions for this model, newest-updated first."""
     rows = chat_history_db.list_sessions_for_user(
@@ -402,7 +402,7 @@ def list_chat_sessions(
 def get_chat_session(
     session_id: str,
     user_id: str = Depends(get_current_user),
-    _email: str = Depends(require_creator),
+    _email: str = Depends(require_member),
 ):
     """Full transcript for one session. Owner-scoped — 404 for non-owners."""
     s = chat_history_db.get_session(session_id, user_id=user_id)
@@ -420,7 +420,7 @@ def get_chat_session(
 def delete_chat_session(
     session_id: str,
     user_id: str = Depends(get_current_user),
-    _email: str = Depends(require_creator),
+    _email: str = Depends(require_member),
 ):
     """Soft-delete a session (sets ended_at). Owner-scoped — 404 otherwise."""
     if not chat_history_db.end_session(session_id, user_id=user_id):
@@ -437,7 +437,7 @@ def rename_chat_session(
     session_id: str,
     body: ChatSessionRenameRequest,
     user_id: str = Depends(get_current_user),
-    _email: str = Depends(require_creator),
+    _email: str = Depends(require_member),
 ):
     """Rename a session. Owner-scoped — 404 otherwise."""
     if not chat_history_db.update_session_title(

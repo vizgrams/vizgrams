@@ -120,7 +120,7 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
           </NavSection>
         )}
 
-        {(role === 'admin' || role === 'creator') && (
+        {(role === 'admin' || role === 'member') && (
           <NavSection label="Creator" collapsed={collapsed} dark>
             <NavItem to="/features" icon={<Sparkles className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Features</NavItem>
             <NavItem to="/queries" icon={<BarChart2 className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Query Builder</NavItem>
@@ -131,7 +131,7 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
         <NavSection label="User" collapsed={collapsed} dark>
           <NavItem to="/feed" icon={<Rss className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Feed</NavItem>
           <NavItem to="/saved" icon={<Bookmark className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Saved</NavItem>
-          {(role === 'creator' || role === 'admin') && (
+          {(role === 'member' || role === 'admin') && (
             <NavItem to="/chat" matchExact icon={<MessageSquare className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Chat</NavItem>
           )}
           <NavItem to="/views" matchPrefix="/views" icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Views</NavItem>

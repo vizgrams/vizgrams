@@ -174,11 +174,11 @@ def test_chat_rejects_overlong_message(client):
 # ---------------------------------------------------------------------------
 
 
-def test_chat_rejects_non_creators(tmp_path, monkeypatch):
-    # DEV_USER is the local-dev system-admin bypass — clear it so the test
-    # is gated purely by VZ_CREATORS / VZ_SYSTEM_ADMINS plus the header.
+def test_chat_rejects_unauthenticated_requests(tmp_path, monkeypatch):
+    """After VG-292, chat is gated on authentication only — any
+    authenticated user (member) can chat. Unauthenticated requests
+    still 403."""
     monkeypatch.delenv("DEV_USER", raising=False)
-    monkeypatch.setenv("VZ_CREATORS", "")
     monkeypatch.setenv("VZ_SYSTEM_ADMINS", "")
     monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
 
@@ -190,11 +190,11 @@ def test_chat_rejects_non_creators(tmp_path, monkeypatch):
     with patch("api.routers.chat.service.chat_turn", return_value=_ok_result()):
         try:
             with TestClient(app) as client:
+                # No X-Auth-Request-Email — unauthenticated.
                 resp = client.post(
                     "/api/v1/model/demo/chat",
                     json={"message": "anything"},
-                    headers={"X-Auth-Request-Email": "viewer@example.com"},
                 )
-            assert resp.status_code == 403
+            assert resp.status_code in (401, 403)
         finally:
             app.dependency_overrides.clear()

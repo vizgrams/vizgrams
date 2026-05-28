@@ -12,7 +12,7 @@ from fastapi import Path as PathParam
 
 from api.services.job_service import JobService
 from api.services.job_service import job_service as _job_service
-from core.rbac import ModelRole, get_model_role, is_creator, is_system_admin
+from core.rbac import ModelRole, get_model_role, is_member, is_system_admin
 
 _ENTITY_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
@@ -208,10 +208,17 @@ def require_system_admin(email: str = Depends(get_current_user_email)) -> str:
     return email
 
 
-def require_creator(email: str = Depends(get_current_user_email)) -> str:
-    """Require the user to have Creator platform role or higher."""
-    if not is_creator(email):
-        raise HTTPException(status_code=403, detail="Requires creator access.")
+def require_member(email: str = Depends(get_current_user_email)) -> str:
+    """Require the user to be authenticated.
+
+    Replaces the old ``require_creator`` (Epic 26 VG-292) — any
+    authenticated user is now a Member with chart + computed authoring
+    rights. The dependency is kept (rather than removed) so route
+    decorators remain readable + grep-able for governance-relevant
+    routes.
+    """
+    if not is_member(email):
+        raise HTTPException(status_code=403, detail="Authentication required.")
     return email
 
 

@@ -160,9 +160,11 @@ def test_publish_wraps_value_error_as_400(client):
 # ---------------------------------------------------------------------------
 
 
-def test_publish_rejects_non_creators(tmp_path, monkeypatch):
+def test_publish_rejects_unauthenticated_requests(tmp_path, monkeypatch):
+    """After VG-292, publish is gated on authentication only — any
+    authenticated user (member) can publish. Unauthenticated requests
+    still 403."""
     monkeypatch.delenv("DEV_USER", raising=False)
-    monkeypatch.setenv("VZ_CREATORS", "")
     monkeypatch.setenv("VZ_SYSTEM_ADMINS", "")
     monkeypatch.setenv("API_DB_PATH", str(tmp_path / "api.db"))
 
@@ -172,15 +174,15 @@ def test_publish_rejects_non_creators(tmp_path, monkeypatch):
     app.dependency_overrides[resolve_model_dir] = lambda model: model_dir  # noqa: ARG005
     try:
         with TestClient(app) as c:
+            # No X-Auth-Request-Email — unauthenticated.
             resp = c.post(
                 "/api/v1/model/demo/chat/publish",
                 json={
                     "title": "x",
                     "saved_view": {"name": "x", "params": {}},
                 },
-                headers={"X-Auth-Request-Email": "viewer@example.com"},
             )
-        assert resp.status_code == 403
+        assert resp.status_code in (401, 403)
     finally:
         app.dependency_overrides.clear()
 

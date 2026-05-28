@@ -242,7 +242,7 @@ function ViewResultFrame({
           {loading ? 'Running…' : 'Run'}
           <span className="text-[10px] opacity-60 ml-0.5 hidden sm:inline">⌘↵</span>
         </button>
-        {result && (role === 'admin' || role === 'creator') && (
+        {result && (role === 'admin' || role === 'member') && (
           <button onClick={openPublishDialog}
             className="flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs hover:bg-muted transition-colors">
             <Upload className="h-3.5 w-3.5" />
@@ -369,7 +369,7 @@ export function ViewsPage() {
   const { name } = useParams<{ name?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const canCreate = role === 'admin' || role === 'creator'
+  const canCreate = role === 'admin' || role === 'member'
 
   const [views, setViews] = useState<ViewSummary[]>([])
   const [filter, setFilter] = useState<LibraryFilterValue>('certified')

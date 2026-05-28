@@ -81,7 +81,7 @@ export function ChatViewCard({ response }: Props) {
 function ChatViewBody({ response }: { response: ChatResponse }) {
   const { api, model } = useModel()
   const { role } = useRole()
-  const canPublish = role === 'admin' || role === 'creator'
+  const canPublish = role === 'admin' || role === 'member'
   const navigate = useNavigate()
   const [result, setResult] = useState<ViewResult | null>(null)
   const [error, setError] = useState<string | null>(null)

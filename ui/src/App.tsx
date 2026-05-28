@@ -33,9 +33,12 @@ import { ModelsPage } from '@/pages/admin/ModelsPage'
 function ProtectedRoute({ minRole, children }: { minRole: PlatformRole; children: React.ReactNode }) {
   const { role, loading } = useRole()
   if (loading) return null
+  // Epic 26 VG-292: two-role hierarchy admin > member > viewer.
+  // 'member' satisfies any minRole except 'admin'; 'viewer' is the
+  // unauthenticated default and satisfies nothing above viewer.
   const allowed =
-    minRole === 'admin' ? role === 'admin' :
-    minRole === 'creator' ? role === 'admin' || role === 'creator' :
+    minRole === 'admin'  ? role === 'admin' :
+    minRole === 'member' ? role === 'admin' || role === 'member' :
     true
   if (!allowed) return <AccessDenied requiredRole={minRole} />
   return <>{children}</>
@@ -68,7 +71,7 @@ export default function App() {
             <Route path="/feed" element={<FeedPage />} />
             <Route path="/saved" element={<SavedPage />} />
             <Route path="/explore" element={<ExplorePage />} />
-            <Route path="/chat" element={<ProtectedRoute minRole="creator"><ChatPage /></ProtectedRoute>} />
+            <Route path="/chat" element={<ProtectedRoute minRole="member"><ChatPage /></ProtectedRoute>} />
             <Route path="/views" element={<ViewsPage />} />
             <Route path="/views/:name" element={<ViewsPage />} />
             <Route path="/entities" element={<EntitiesPage />} />
@@ -77,10 +80,10 @@ export default function App() {
             <Route path="/apps/:name" element={<AppPage />} />
             <Route path="/account" element={<AccountPage />} />
 
-            {/* Creator — creator+ */}
-            <Route path="/features" element={<ProtectedRoute minRole="creator"><FeaturesPage /></ProtectedRoute>} />
-            <Route path="/queries" element={<ProtectedRoute minRole="creator"><QueriesPage /></ProtectedRoute>} />
-            <Route path="/graph" element={<ProtectedRoute minRole="creator"><GraphPage /></ProtectedRoute>} />
+            {/* Authoring — any signed-in member */}
+            <Route path="/features" element={<ProtectedRoute minRole="member"><FeaturesPage /></ProtectedRoute>} />
+            <Route path="/queries" element={<ProtectedRoute minRole="member"><QueriesPage /></ProtectedRoute>} />
+            <Route path="/graph" element={<ProtectedRoute minRole="member"><GraphPage /></ProtectedRoute>} />
 
             {/* Admin — admin only */}
             <Route path="/admin/models" element={<ProtectedRoute minRole="admin"><ModelsPage /></ProtectedRoute>} />
