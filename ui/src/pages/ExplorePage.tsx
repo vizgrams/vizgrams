@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Activity as ActivityIcon, ArrowUpRight, BarChart3, Database,
+  Activity as ActivityIcon, ArrowUpRight, BarChart3, ChevronRight, Database,
   Download, GitCommit, Hash, History, Layers, LineChart,
   Link2, Pencil, Plus, RotateCcw, Shuffle, Sparkles, Table2, Wrench, X,
 } from 'lucide-react'
@@ -25,6 +25,7 @@ import type {
   ActivityEvent, ActivityFeed, ChartSummary, EntityDetail, EntitySummary,
   PipelineSummary, Proposal, ProposalKind,
 } from '@/api/client'
+import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
 import { ProposalCard } from '@/components/proposals/ProposalCard'
 import { ProposeChangeForm } from '@/components/proposals/ProposeChangeForm'
 import { useModel } from '@/context/ModelContext'
@@ -636,6 +637,8 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
   const [pipeline, setPipeline] = useState<PipelineSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [openExtractor, setOpenExtractor] = useState<string | null>(null)
+  // VG-297: sub-group click opens an inline mapper editor.
+  const [editingSubGroup, setEditingSubGroup] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -701,26 +704,44 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
         {pipeline.mapper.groups.length === 0
           ? <EmptyState label="Single-target mapper — no sub-groups." />
           : <div className="rounded border bg-card overflow-hidden">
-              {pipeline.mapper.groups.map((g, i) => (
-                <div
-                  key={g.name}
-                  className={cn(
-                    'flex items-center justify-between px-4 py-2.5 text-xs',
-                    i !== 0 && 'border-t',
-                  )}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Shuffle className="h-3 w-3 text-muted-foreground/60 shrink-0" />
-                    <span className="font-mono">{g.name}</span>
+              {pipeline.mapper.groups.map((g, i) => {
+                const expanded = editingSubGroup === g.name
+                return (
+                  <div key={g.name} className={cn(i !== 0 && 'border-t')}>
+                    <button
+                      onClick={() => setEditingSubGroup(expanded ? null : g.name)}
+                      className={cn(
+                        'w-full flex items-center justify-between px-4 py-2.5 text-xs transition-colors',
+                        expanded ? 'bg-muted/40' : 'hover:bg-muted/30',
+                      )}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <ChevronRight className={cn('h-3 w-3 text-muted-foreground/60 shrink-0 transition-transform', expanded && 'rotate-90')} />
+                        <Shuffle className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                        <span className="font-mono">{g.name}</span>
+                      </div>
+                    </button>
+                    {expanded && pipeline.mapper && (
+                      <MapperSubGroupEditor
+                        groupName={g.name}
+                        mapperName={pipeline.mapper.name}
+                        entityName={entity.name}
+                        onClose={() => setEditingSubGroup(null)}
+                      />
+                    )}
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
         }
       </div>
 
-      {openExtractor && (
-        <ExtractorReadDrawer name={openExtractor} onClose={() => setOpenExtractor(null)} />
+      {openExtractor && pipeline && (
+        <ExtractorDrawer
+          name={openExtractor}
+          entityName={entity.name}
+          onClose={() => setOpenExtractor(null)}
+        />
       )}
     </div>
   )
@@ -786,13 +807,31 @@ function Converger({ count }: { count: number }) {
   )
 }
 
-// Read-only extractor drawer — just shows the name + a placeholder note
-// pointing at the future admin page. The full editor lands in VG-297.
-function ExtractorReadDrawer({ name, onClose }: { name: string; onClose: () => void }) {
+// VG-297 — Extractor drawer with editable YAML.
+// Admin → direct PUT /tool/{name}/extract.
+// Member → POST /proposals with artifact_kind=extractor (after_yaml).
+function ExtractorDrawer({
+  name, entityName, onClose,
+}: { name: string; entityName: string; onClose: () => void }) {
+  const { api } = useModel()
+  const [content, setContent] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api.getExtractor(name)
+      .then((r) => { if (!cancelled) setContent(r.raw_yaml ?? '') })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Load failed') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [api, name])
+
   return (
     <>
       <div onClick={onClose} className="fixed inset-0 bg-black/30 z-40" aria-hidden />
-      <div className="fixed top-0 right-0 bottom-0 w-[28rem] max-w-[95vw] bg-card border-l z-50 flex flex-col shadow-xl">
+      <div className="fixed top-0 right-0 bottom-0 w-[40rem] max-w-[95vw] bg-card border-l z-50 flex flex-col shadow-xl">
         <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3 border-b">
           <div>
             <div className="flex items-center gap-2">
@@ -808,19 +847,91 @@ function ExtractorReadDrawer({ name, onClose }: { name: string; onClose: () => v
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          <p className="text-xs text-muted-foreground">
-            The full extractor editor lands in VG-297. Until then, manage
-            extractors from the Admin → Extractors page.
-          </p>
-          <a
-            href="/tools"
-            className="mt-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            Open extractor page <ArrowUpRight className="h-3 w-3" />
-          </a>
+          {loading
+            ? <Loading />
+            : error
+            ? <p className="text-xs text-red-600">{error}</p>
+            : (
+              <GovernedYamlEditor
+                title={`Extractor: ${name}`}
+                initialContent={content ?? ''}
+                onDirectSave={async (yaml) => { await api.saveExtractor(name, yaml) }}
+                onProposeChange={async (yaml, reason) => {
+                  await api.createProposal({
+                    artifact_kind: 'extractor',
+                    artifact_name: name,
+                    entity_name: entityName,
+                    reason,
+                    before_yaml: content ?? '',
+                    after_yaml: yaml,
+                  })
+                }}
+                onClose={onClose}
+              />
+            )
+          }
         </div>
       </div>
     </>
+  )
+}
+
+// VG-297 — Mapper sub-group editor. Sub-groups are RowGroup entries
+// inside a mapper YAML; this editor opens the whole mapper for now
+// (per-sub-group structural editing is a follow-up). Admin → direct
+// PUT mapper; member → POST proposal with artifact_kind=sub_group so
+// the audit trail records *which* sub-group was being edited.
+function MapperSubGroupEditor({
+  groupName, mapperName, entityName, onClose,
+}: {
+  groupName: string
+  mapperName: string
+  entityName: string
+  onClose: () => void
+}) {
+  const { api } = useModel()
+  const [content, setContent] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api.getMapper(mapperName)
+      .then((r) => { if (!cancelled) setContent(r.raw_yaml ?? '') })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Load failed') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [api, mapperName])
+
+  return (
+    <div className="border-t bg-background px-5 py-4">
+      {loading
+        ? <Loading />
+        : error
+        ? <p className="text-xs text-red-600">{error}</p>
+        : (
+          <GovernedYamlEditor
+            title={`Sub-group: ${groupName} (inside mapper ${mapperName})`}
+            initialContent={content ?? ''}
+            onDirectSave={async (yaml) => { await api.saveMapper(mapperName, yaml) }}
+            onProposeChange={async (yaml, reason) => {
+              await api.createProposal({
+                artifact_kind: 'sub_group',
+                // Names the sub-group, not the mapper, so reviewers
+                // can see exactly which row group is being changed.
+                artifact_name: groupName,
+                entity_name: entityName,
+                reason,
+                before_yaml: content ?? '',
+                after_yaml: yaml,
+              })
+            }}
+            onClose={onClose}
+          />
+        )
+      }
+    </div>
   )
 }
 
