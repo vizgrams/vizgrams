@@ -26,6 +26,7 @@ import type {
   PipelineSummary, Proposal, ProposalKind,
 } from '@/api/client'
 import { ChartPreview } from '@/components/explore/ChartPreview'
+import { formatValue } from '@/lib/utils'
 import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
 import { ProposalCard } from '@/components/proposals/ProposalCard'
 import { ProposeChangeForm } from '@/components/proposals/ProposeChangeForm'
@@ -285,10 +286,41 @@ function OverviewTab({ entity, onSeeAll }: { entity: EntitySummary; onSeeAll: ()
 }
 
 function KpiCard({ chart }: { chart: ChartSummary }) {
+  const { api } = useModel()
+  const [value, setValue] = useState<string | number | null>(null)
+  const [suffix, setSuffix] = useState<string | null>(null)
+  const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading')
+
+  // VG-301 — execute the view and pull the scalar. Matches ViewContent's
+  // metric path: result.measure names the value column, value lives at
+  // rows[0][colIdx].
+  useEffect(() => {
+    let cancelled = false
+    setState('loading')
+    api.executeView(chart.name, 1)
+      .then((r) => {
+        if (cancelled) return
+        const colIdx = r.measure ? r.columns.indexOf(r.measure) : -1
+        const v = colIdx >= 0 && r.rows.length > 0 ? r.rows[0][colIdx] : null
+        const fmt = r.measure ? r.formats?.[r.measure] : undefined
+        setValue(v != null ? formatValue(v, fmt) : null)
+        const viz = r.visualization as { suffix?: string }
+        setSuffix(viz?.suffix ?? null)
+        setState('ok')
+      })
+      .catch(() => { if (!cancelled) setState('error') })
+    return () => { cancelled = true }
+  }, [api, chart.name])
+
   return (
     <div className="rounded border bg-card p-4">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">{chart.name}</div>
-      <div className="text-2xl font-semibold tabular-nums mt-1">—</div>
+      <div className="text-2xl font-semibold tabular-nums mt-1">
+        {state === 'loading' ? <span className="text-muted-foreground/40">…</span>
+          : state === 'error' || value == null ? <span className="text-muted-foreground/40">—</span>
+          : <>{value}{suffix && <span className="ml-1 text-sm font-normal text-muted-foreground">{suffix}</span>}</>
+        }
+      </div>
       <div className="text-[10px] text-muted-foreground/60 mt-1 font-mono">{chart.query}</div>
     </div>
   )
