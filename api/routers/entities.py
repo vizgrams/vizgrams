@@ -12,7 +12,14 @@ from api.dependencies import (
 )
 from api.routers.jobs import _to_job_out
 from api.schemas.common import ValidationResult, YAMLContent
-from api.schemas.entity import EntityCreate, EntityDetail, EntitySummary
+from api.schemas.entity import (
+    ActivityFeed,
+    ChartSummary,
+    EntityCreate,
+    EntityDetail,
+    EntitySummary,
+    PipelineSummary,
+)
 from api.schemas.job import JobOut
 from api.services import entity_service, feature_service
 from api.services.entity_service import EntityValidationError
@@ -132,6 +139,52 @@ def rematerialize_entity(
     except BatchServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return _to_job_out(job)
+
+
+@router.get("/{entity}/charts", response_model=list[ChartSummary])
+def list_entity_charts(
+    entity: str = Depends(resolve_entity),
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
+    """Charts (views) whose underlying query is rooted on this entity.
+
+    Foundation for /explore Charts tab (Epic 26 VG-290). Returns
+    ViewSummary + a flattened ``chart_type`` so the UI doesn't have to
+    parse the visualization blob.
+    """
+    return entity_service.list_charts_for_entity(model_dir, entity)
+
+
+@router.get("/{entity}/pipeline", response_model=PipelineSummary | None)
+def get_entity_pipeline(
+    entity: str = Depends(resolve_entity),
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
+    """Lineage graph for the /explore Pipeline tab (Epic 26 VG-290).
+
+    Returns ``{entity, sources, mapper}`` — the mapper writing to this
+    entity plus the raw tables it joins, traced back to the extractors
+    and tools that produced them. ``None`` when no mapper targets this
+    entity (junction/derived entities)."""
+    return entity_service.get_pipeline_for_entity(model_dir, entity)
+
+
+@router.get("/{entity}/activity", response_model=ActivityFeed)
+def get_entity_activity(
+    entity: str = Depends(resolve_entity),
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Chronological activity feed for the /explore Activity tab.
+
+    Merges ontology row-level changes (projected from the entity's own
+    version diffs) with version bumps of charts / computed features /
+    mappers that touch this entity. Pagination is offset-based."""
+    return entity_service.get_activity_for_entity(model_dir, entity, limit=limit, offset=offset)
 
 
 @router.get("/{entity}/feature-values")
