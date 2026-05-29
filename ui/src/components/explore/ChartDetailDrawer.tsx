@@ -2,19 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * ChartDetailDrawer — full-chart side panel on /explore (Epic 27 VG-302).
+ * ChartDetailDrawer — full-chart side panel on /explore (Epic 27 VG-302
+ * + edit follow-up).
  *
- * Replaces the dead /views/:name link from ChartCardEl. Fetches the view
- * + its result and hands them to the canonical ViewContent renderer so
- * the in-shell experience matches /views without needing to navigate
- * away. Drilldowns inside the drawer push another DrilldownOverlay on
- * top instead of navigating — keeps the user in /explore.
+ * Two modes:
+ *   - Preview (default): renders the chart via the canonical ViewContent.
+ *     Drilldowns inside the drawer push a DrilldownOverlay on top.
+ *   - Edit: side-by-side query + visualization YAML editors. Save calls
+ *     api.saveChart which writes both atomically (query rollback on view
+ *     validation failure). Switching back to Preview refetches.
+ *
+ * The chart-as-one-thing UX is the point: users don't have to think
+ * "edit query, then edit view." Members proposing changes is deferred
+ * to a follow-up — for now Edit is an admin-only direct-save.
  */
 
 import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
+import { Eye, Pencil, X } from 'lucide-react'
 
-import type { ViewDetail, ViewResult } from '@/api/client'
+import type { QueryDetail, ViewDetail, ViewResult } from '@/api/client'
 import { DrilldownOverlay } from '@/components/explore/DrilldownOverlay'
 import { ViewContent } from '@/components/view/ViewContent'
 import type { DrillFrame } from '@/components/view/drilldown'
@@ -25,30 +31,47 @@ interface Props {
   onClose: () => void
 }
 
+type Mode = 'preview' | 'edit'
+
 export function ChartDetailDrawer({ viewName, onClose }: Props) {
   const { api } = useModel()
+  const [mode, setMode] = useState<Mode>('preview')
   const [detail, setDetail] = useState<ViewDetail | null>(null)
   const [result, setResult] = useState<ViewResult | null>(null)
+  const [query, setQuery] = useState<QueryDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  // Nested drilldown — clicking a point/row inside the rendered view
-  // pushes another overlay on top instead of navigating away.
+  const [refreshTick, setRefreshTick] = useState(0)
   const [nested, setNested] = useState<DrillFrame | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
-    Promise.all([api.getView(viewName), api.executeView(viewName, 1000)])
+    Promise.all([
+      api.getView(viewName),
+      api.executeView(viewName, 1000),
+    ])
       .then(([d, r]) => {
         if (cancelled) return
         setDetail(d)
         setResult(r)
+        // Best-effort fetch of the underlying query so Edit mode has the
+        // YAML to start from. Convention: query name == view name for
+        // charts authored via NewChartDrawer. Older charts may reference
+        // a differently-named query — fall back to that.
+        const targetQuery = (d.query as string | null) || viewName
+        return api.getQuery(targetQuery).then((q) => {
+          if (!cancelled) setQuery(q)
+        }).catch(() => {
+          // No matching query is recoverable — edit will just show blank.
+          if (!cancelled) setQuery(null)
+        })
       })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [api, viewName])
+  }, [api, viewName, refreshTick])
 
   return (
     <>
@@ -63,20 +86,42 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
               </p>
             )}
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground shrink-0">
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => setMode((m) => (m === 'preview' ? 'edit' : 'preview'))}
+              title={mode === 'preview' ? 'Edit' : 'Preview'}
+              className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border bg-card text-muted-foreground hover:text-foreground"
+            >
+              {mode === 'preview' ? <><Pencil className="h-3 w-3" /> Edit</> : <><Eye className="h-3 w-3" /> Preview</>}
+            </button>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {loading && <p className="text-xs text-muted-foreground">Loading…</p>}
           {error && <p className="text-xs text-red-600">{error}</p>}
-          {!loading && !error && result && (
+
+          {!loading && !error && mode === 'preview' && result && (
             <ViewContent
               result={result}
               rowDrilldown={undefined}
               paramValues={{}}
               onNavigate={(frame) => setNested(frame)}
+            />
+          )}
+
+          {!loading && !error && mode === 'edit' && (
+            <EditPanel
+              viewName={viewName}
+              initialQueryYaml={query?.raw_yaml ?? ''}
+              initialViewYaml={detail?.raw_yaml ?? ''}
+              onSaved={() => {
+                setMode('preview')
+                setRefreshTick((t) => t + 1)
+              }}
             />
           )}
         </div>
@@ -85,5 +130,83 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
         <DrilldownOverlay frame={nested} onClose={() => setNested(null)} />
       )}
     </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Edit panel — two YAML textareas + one Save button calling api.saveChart.
+// Kept local to ChartDetailDrawer since the lifecycle is tied to it.
+// ---------------------------------------------------------------------------
+
+function EditPanel({
+  viewName, initialQueryYaml, initialViewYaml, onSaved,
+}: {
+  viewName: string
+  initialQueryYaml: string
+  initialViewYaml: string
+  onSaved: () => void
+}) {
+  const { api } = useModel()
+  const [queryYaml, setQueryYaml] = useState(initialQueryYaml)
+  const [viewYaml, setViewYaml] = useState(initialViewYaml)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // If the parent refetches and supplies new initial content, pick it up.
+  useEffect(() => { setQueryYaml(initialQueryYaml) }, [initialQueryYaml])
+  useEffect(() => { setViewYaml(initialViewYaml) }, [initialViewYaml])
+
+  async function save() {
+    setSaving(true)
+    setError(null)
+    try {
+      await api.saveChart(viewName, queryYaml, viewYaml)
+      onSaved()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5">
+          Query (YAML)
+        </div>
+        <textarea
+          value={queryYaml}
+          onChange={(e) => setQueryYaml(e.target.value)}
+          rows={12}
+          className="w-full text-xs bg-background border rounded px-2.5 py-2 font-mono resize-y"
+          placeholder="No query found — paste the query YAML here to create one."
+        />
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5">
+          Visualization (YAML)
+        </div>
+        <textarea
+          value={viewYaml}
+          onChange={(e) => setViewYaml(e.target.value)}
+          rows={12}
+          className="w-full text-xs bg-background border rounded px-2.5 py-2 font-mono resize-y"
+        />
+      </div>
+
+      {error && <p className="text-xs text-red-600 whitespace-pre-wrap">{error}</p>}
+
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="text-xs px-3 py-1.5 rounded border bg-foreground text-background hover:bg-foreground/90 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {saving ? 'Saving…' : 'Save chart'}
+        </button>
+      </div>
+    </div>
   )
 }
