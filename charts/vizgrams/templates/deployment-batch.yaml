@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vizgrams.fullname" . }}-batch
+  labels:
+    {{- include "vizgrams.labels" . | nindent 4 }}
+    app.kubernetes.io/component: batch
+spec:
+  replicas: {{ .Values.batch.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vizgrams.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: batch
+  template:
+    metadata:
+      labels:
+        {{- include "vizgrams.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: batch
+    spec:
+      serviceAccountName: {{ include "vizgrams.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: batch
+          image: {{ include "vizgrams.image" (dict "root" . "name" "batch" "tag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.batch.port }}
+              protocol: TCP
+          env:
+            - name: BATCH_WORKERS
+              value: {{ .Values.batch.workers | quote }}
+            {{- include "vizgrams.commonEnv" . | nindent 12 }}
+          {{- with (include "vizgrams.commonEnvFrom" .) }}
+          envFrom:
+            {{- . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.batch.resources | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
+            {{- if .Values.models.existingClaim }}
+            - name: models
+              mountPath: /models
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "vizgrams.fullname" . }}-data
+        {{- end }}
+        {{- if .Values.models.existingClaim }}
+        - name: models
+          persistentVolumeClaim:
+            claimName: {{ .Values.models.existingClaim }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

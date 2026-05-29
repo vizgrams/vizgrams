@@ -1,0 +1,44 @@
+{{- if .Values.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "vizgrams.fullname" . }}
+  labels:
+    {{- include "vizgrams.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      {{- if .Values.ingress.tls.secretName }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # API + everything under /api goes to the FastAPI service.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "vizgrams.fullname" . }}-api
+                port:
+                  number: {{ .Values.api.port }}
+          # Everything else hits the UI (which is nginx + the React bundle).
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "vizgrams.fullname" . }}-ui
+                port:
+                  number: {{ .Values.ui.port }}
+{{- end }}

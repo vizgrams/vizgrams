@@ -1,0 +1,34 @@
+apiVersion: v2
+name: vizgrams
+description: |
+  Semantic-layer + chart-publishing platform. Users define an ontology
+  (entities + relations), extract raw data into it, define queries / views,
+  and publish chart snapshots to a feed.
+
+  This chart installs the API, the batch service, and the UI as three
+  Deployments behind an Ingress. ClickHouse is expected to exist already —
+  point at it via `values.clickhouse.host`. SQLite (default for small
+  deployments) requires a PVC for the metadata DB.
+
+type: application
+
+# Chart and app versions move in lockstep — every git tag publishes both
+# the image and the chart at the same version. Override image.tag in
+# values.yaml only if you genuinely want to deploy a chart-version /
+# image-version skew (rare).
+version: 0.0.0
+appVersion: "0.0.0"
+
+home: https://github.com/vizgrams/vizgrams
+sources:
+  - https://github.com/vizgrams/vizgrams
+
+maintainers:
+  - name: Oliver Fenton
+    email: mail@oliverfenton.me
+
+keywords:
+  - analytics
+  - semantic-layer
+  - charts
+  - dashboards
