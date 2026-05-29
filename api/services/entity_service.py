@@ -982,7 +982,7 @@ def save_feature_expr(
     }
 
 
-def get___feature_values_for_entity(model_dir: Path, entity_name: str) -> dict:
+def get_feature_values_for_entity(model_dir: Path, entity_name: str) -> dict:
     """Return {entity_id: {feature_id: value}} for all computed feature values of an entity."""
     features = _features_for_entity(model_dir, entity_name)
     if not features:
