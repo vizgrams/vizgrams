@@ -868,17 +868,23 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
         }
       </div>
 
-      {/* VG-307 — admin-only deep-link to the cross-entity extractor list.
-          Sidebar entry was removed; this keeps /tools discoverable for
-          admins who need to author / manage extractors not yet wired to
-          an entity. */}
+      {/* VG-307 / VG-308 — admin-only deep-links to the cross-entity
+          extractor + mapper lists. The per-entity affordances above
+          cover most flows; these stay reachable for orphaned-artifact
+          management. */}
       {role === 'admin' && (
-        <div className="pt-1">
+        <div className="pt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
           <a
             href="/tools"
-            className="text-[11px] text-muted-foreground/70 hover:text-foreground inline-flex items-center gap-1"
+            className="text-muted-foreground/70 hover:text-foreground inline-flex items-center gap-1"
           >
             Manage all extractors <ArrowUpRight className="h-3 w-3" />
+          </a>
+          <a
+            href="/mappers"
+            className="text-muted-foreground/70 hover:text-foreground inline-flex items-center gap-1"
+          >
+            Manage all mappers <ArrowUpRight className="h-3 w-3" />
           </a>
         </div>
       )}

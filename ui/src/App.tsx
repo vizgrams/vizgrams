@@ -10,6 +10,7 @@ import type { PlatformRole } from '@/api/client'
 import { Layout } from '@/components/Layout'
 import { JobLogPage } from '@/pages/JobLogPage'
 import { ToolsPage } from '@/pages/ToolsPage'
+import { MappersPage } from '@/pages/MappersPage'
 import { AppPage } from '@/pages/AppPage'
 import ChatPage from '@/pages/ChatPage'
 import { AccountPage } from '@/pages/AccountPage'
@@ -78,9 +79,12 @@ export default function App() {
             <Route path="/apps/:name" element={<AppPage />} />
             <Route path="/account" element={<AccountPage />} />
 
-            {/* Admin — admin only */}
+            {/* Admin — admin only. /tools + /mappers are kept as
+                fallback admin surfaces; the primary editor for both is
+                the per-entity Pipeline tab on /explore (VG-307, VG-308). */}
             <Route path="/admin/models" element={<ProtectedRoute minRole="admin"><ModelsPage /></ProtectedRoute>} />
             <Route path="/tools" element={<ProtectedRoute minRole="admin"><ToolsPage /></ProtectedRoute>} />
+            <Route path="/mappers" element={<ProtectedRoute minRole="admin"><MappersPage /></ProtectedRoute>} />
             <Route path="/jobs" element={<ProtectedRoute minRole="admin"><JobLogPage /></ProtectedRoute>} />
 
             {/* VG-298 — legacy routes redirect to /explore */}
@@ -92,7 +96,6 @@ export default function App() {
             <Route path="/queries" element={<Navigate to="/explore" replace />} />
             <Route path="/features" element={<Navigate to="/explore" replace />} />
             <Route path="/graph" element={<Navigate to="/explore" replace />} />
-            <Route path="/mappers" element={<Navigate to="/explore" replace />} />
             <Route path="/ontology" element={<Navigate to="/explore" replace />} />
           </Routes>
         </Layout>

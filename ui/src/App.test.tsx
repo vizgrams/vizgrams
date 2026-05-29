@@ -43,7 +43,6 @@ function renderRoutes(initial: string) {
         <Route path="/queries" element={<Navigate to="/explore" replace />} />
         <Route path="/features" element={<Navigate to="/explore" replace />} />
         <Route path="/graph" element={<Navigate to="/explore" replace />} />
-        <Route path="/mappers" element={<Navigate to="/explore" replace />} />
         <Route path="/ontology" element={<Navigate to="/explore" replace />} />
       </Routes>
     </MemoryRouter>,
@@ -51,6 +50,7 @@ function renderRoutes(initial: string) {
 }
 
 describe('VG-298 — legacy route redirects', () => {
+  // VG-308: /mappers restored as a real admin route, removed from redirect list.
   it.each([
     ['/views', '/explore'],
     ['/views/my-chart', '/explore'],
@@ -58,7 +58,6 @@ describe('VG-298 — legacy route redirects', () => {
     ['/queries', '/explore'],
     ['/features', '/explore'],
     ['/graph', '/explore'],
-    ['/mappers', '/explore'],
     ['/ontology', '/explore'],
   ])('redirects %s → %s', async (from, to) => {
     renderRoutes(from)
