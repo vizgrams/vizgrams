@@ -48,14 +48,14 @@ def get_entity_record(model_dir: Path, entity_name: str, entity_id: str) -> dict
             raise KeyError(f"{entity_name} '{entity_id}' not found.")
         row = dict(zip(columns, rows[0]))
 
-        __feature_values: dict = {}
+        feature_values: dict = {}
         try:
             fv_rows = backend.execute(
                 "SELECT feature_id, value, computed_at FROM __feature_value WHERE entity_id = ?",
                 (entity_id,),
             )
             for fid, val, computed_at in fv_rows:
-                __feature_values[fid] = {"value": val, "computed_at": computed_at}
+                feature_values[fid] = {"value": val, "computed_at": computed_at}
         except Exception:
             pass  # __feature_value table may not exist
 
@@ -107,7 +107,7 @@ def get_entity_record(model_dir: Path, entity_name: str, entity_id: str) -> dict
         "id": entity_id,
         "properties": row,
         "relationships": relationship_stubs,
-        "__feature_values": __feature_values,
+        "feature_values": feature_values,
     }
 
 
