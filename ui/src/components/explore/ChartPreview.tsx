@@ -21,6 +21,7 @@ import { useEffect, useState } from 'react'
 import type { ViewResult } from '@/api/client'
 import { CalendarHeatmapChart } from '@/components/charts/CalendarHeatmapChart'
 import { LineBarChart } from '@/components/charts/LineBarChart'
+import { MapChart } from '@/components/charts/MapChart'
 import { useModel } from '@/context/ModelContext'
 
 interface Props {
@@ -91,6 +92,26 @@ export function ChartPreview({ viewName, height = 120 }: Props) {
     )
   }
 
+  if (result.type === 'map') {
+    return (
+      <PreviewShell height={height} bare>
+        <MapChart
+          rows={result.rows}
+          columns={result.columns}
+          latKey={viz.lat as string}
+          lonKey={viz.lon as string}
+          labelKey={viz.label as string | undefined}
+          tooltipKeys={viz.popup as string[] | undefined}
+          sizeKey={viz.size as string | undefined}
+          zoom={viz.zoom as number | undefined}
+          centerLat={viz.center_lat as number | undefined}
+          centerLon={(viz.center_lon ?? viz.center_long) as number | undefined}
+          height={height}
+        />
+      </PreviewShell>
+    )
+  }
+
   if (result.type === 'table') {
     // Compact preview — first 3 rows, first 3 cols. The full table opens
     // in the chart detail drawer (VG-302).
@@ -120,9 +141,9 @@ export function ChartPreview({ viewName, height = 120 }: Props) {
     )
   }
 
-  // Fallback — unsupported types (map needs a wider canvas; metric goes
-  // through KpiCard; unknown chart_type just falls through). Show the
-  // type label so the card still conveys what's there.
+  // Fallback — metric goes through KpiCard; unknown chart_type just
+  // falls through. Show the type label so the card still conveys what's
+  // there.
   return (
     <PreviewShell height={height}>
       <span className="text-[10px] text-muted-foreground/60 font-mono">{chartType ?? result.type}</span>

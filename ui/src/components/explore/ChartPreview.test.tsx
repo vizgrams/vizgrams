@@ -25,6 +25,11 @@ vi.mock('@/components/charts/CalendarHeatmapChart', () => ({
     <div data-testid="heatmap">{dateKey}</div>
   ),
 }))
+vi.mock('@/components/charts/MapChart', () => ({
+  MapChart: ({ latKey, lonKey }: { latKey: string; lonKey: string }) => (
+    <div data-testid="map">{latKey}:{lonKey}</div>
+  ),
+}))
 
 function makeLineResult(): ViewResult {
   return {
@@ -45,6 +50,17 @@ describe('ChartPreview', () => {
     render(<ChartPreview viewName="prs_by_day" />)
     await waitFor(() => expect(screen.getByTestId('linebar-chart')).toHaveTextContent('line:day'))
     expect(executeView).toHaveBeenCalledWith('prs_by_day', 500)
+  })
+
+  it('renders MapChart for type=map', async () => {
+    executeView.mockClear().mockResolvedValue({
+      name: 'airports', type: 'map',
+      columns: ['lat', 'lon', 'name'], rows: [[51.5, 0.1, 'LHR']],
+      visualization: { lat: 'lat', lon: 'lon', label: 'name' },
+      formats: {}, params: [], measure: null,
+    } as unknown as ViewResult)
+    render(<ChartPreview viewName="airports" />)
+    await waitFor(() => expect(screen.getByTestId('map')).toHaveTextContent('lat:lon'))
   })
 
   it('renders CalendarHeatmapChart for chart_type=calendar_heatmap', async () => {
