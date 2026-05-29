@@ -1,0 +1,19 @@
+# Patterns to ignore when building Helm packages.
+.DS_Store
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+# OS / IDE
+*.swp
+*.bak
+*.tmp
+*.orig
+.idea/
+.vscode/
+# Examples — keep out of the packaged chart so customers always grab
+# fresh ones from the README link rather than getting stale copies.
+values-enterprise.example.yaml

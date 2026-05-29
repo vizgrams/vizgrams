@@ -1,0 +1,84 @@
+# Example enterprise overrides — copy, edit, pass with `helm install -f`.
+#
+# Assumes:
+#   - cert-manager handles TLS via an existing ClusterIssuer
+#   - nginx ingress controller is the cluster ingress
+#   - ClickHouse runs separately (Altinity operator, Bitnami chart, ...)
+#   - oauth2-proxy is installed cluster-wide for forward-auth
+#   - external-secrets is used to sync from your secret store (Vault, ASM, ...)
+
+image:
+  tag: ""    # leave blank to pin to chart appVersion
+
+api:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+batch:
+  replicas: 1
+  workers: 8
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+ui:
+  replicas: 2
+
+persistence:
+  enabled: true
+  size: 50Gi
+  storageClass: gp3
+
+models:
+  existingClaim: vizgrams-models-prod
+
+clickhouse:
+  enabled: true
+  host: clickhouse.data.svc.cluster.local
+  port: 8123
+  database: vizgrams
+  user: vizgrams
+  existingSecret: vizgrams-clickhouse
+  existingSecretKey: password
+
+auth:
+  systemAdmins: "admin@example.com"
+  existingSecret: vizgrams-auth-secrets
+
+ingress:
+  enabled: true
+  className: nginx
+  host: vizgrams.internal.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Hand off to oauth2-proxy installed cluster-wide.
+    nginx.ingress.kubernetes.io/auth-url: "https://oauth2-proxy.auth.svc.cluster.local/oauth2/auth"
+    nginx.ingress.kubernetes.io/auth-signin: "https://vizgrams.internal.example.com/oauth2/start?rd=$escaped_request_uri"
+  tls:
+    enabled: true
+    secretName: vizgrams-tls
+
+serviceAccount:
+  create: true
+  annotations:
+    # GKE workload identity, IRSA on EKS, etc.
+    iam.gke.io/gcp-service-account: vizgrams@PROJECT.iam.gserviceaccount.com
+
+# Place a Topology Spread Constraint or affinity rule here if you want
+# api/batch/ui pods spread across nodes/zones.
+affinity: {}
+
+nodeSelector:
+  workload: apps
+
+tolerations: []

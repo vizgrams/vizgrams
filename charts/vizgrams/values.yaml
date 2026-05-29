@@ -1,0 +1,159 @@
+# Default values for the vizgrams chart.
+# Override these from your own values.yaml — never fork the chart.
+# See values-enterprise.example.yaml for a realistic production override.
+
+# ---------------------------------------------------------------------------
+# Image source
+# ---------------------------------------------------------------------------
+image:
+  registry: ghcr.io/vizgrams
+  pullPolicy: IfNotPresent
+  # Tag defaults to the chart's appVersion. Override only if you need to
+  # deploy a different image version than what the chart was packaged with.
+  tag: ""
+imagePullSecrets: []
+
+# ---------------------------------------------------------------------------
+# Components — three Deployments: API, batch worker, UI.
+# Each can be sized independently.
+# ---------------------------------------------------------------------------
+api:
+  replicas: 1
+  port: 8000
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+batch:
+  replicas: 1
+  port: 8001
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  # Number of worker processes inside the container. Matches BATCH_WORKERS.
+  workers: 4
+
+ui:
+  replicas: 1
+  port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Persistence — required for SQLite metadata DB.
+# Set persistence.enabled=false if you're using ClickHouse for everything
+# and don't need a metadata PVC.
+# ---------------------------------------------------------------------------
+persistence:
+  enabled: true
+  size: 10Gi
+  # storageClass: ""    # leave unset to use the cluster default
+  accessMode: ReadWriteOnce
+  # Mount path inside the api + batch containers.
+  mountPath: /data
+
+# ---------------------------------------------------------------------------
+# Models directory — vizgrams's catalog of models lives on disk. For a
+# k8s deployment, either:
+#   (a) bake them into a sidecar / init container (recommended for CI/CD)
+#   (b) ship them via an extra PVC
+#   (c) sync them in via a GitOps tool (e.g. vzctl sync)
+# Default: empty mount, customers configure their own.
+# ---------------------------------------------------------------------------
+models:
+  # If set, mounts the named existing PVC at /models.
+  existingClaim: ""
+
+# ---------------------------------------------------------------------------
+# ClickHouse — chart does NOT install ClickHouse; point at an existing one.
+# Bitnami's clickhouse chart or your operator of choice handles that.
+# ---------------------------------------------------------------------------
+clickhouse:
+  enabled: false
+  host: ""
+  port: 8123
+  database: vizgrams
+  user: default
+  existingSecret: ""        # name of secret with key `password`
+  existingSecretKey: password
+
+# ---------------------------------------------------------------------------
+# Auth — OIDC via oauth2-proxy in front of the API.
+# This chart does NOT bundle oauth2-proxy — assume the cluster has it
+# (Bitnami chart, in-house) and that the Ingress is annotated for
+# forward-auth. Pass the secret your provider needs as `auth.existingSecret`.
+# ---------------------------------------------------------------------------
+auth:
+  # Adds VZ_SYSTEM_ADMINS to the env. Comma-separated emails or "*".
+  systemAdmins: ""
+  # Existing Secret with keys: OAUTH2_COOKIE_SECRET, OIDC_CLIENT_SECRET,
+  # BATCH_SERVICE_SECRET, OPENAI_API_KEY (optional).
+  existingSecret: ""
+
+# ---------------------------------------------------------------------------
+# Ingress — Traefik / nginx / cloud LB. Customers always override this.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  host: vizgrams.local
+  tls:
+    enabled: false
+    secretName: ""
+
+# ---------------------------------------------------------------------------
+# Service account — useful for cloud workload identity (GKE, IRSA).
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# ---------------------------------------------------------------------------
+# Workload placement + security
+# ---------------------------------------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+
+securityContext:
+  runAsUser: 1000
+  runAsNonRoot: true
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+# ---------------------------------------------------------------------------
+# Extras — escape hatch for cases the chart doesn't model directly.
+# Use these before forking. If you need them often, open an issue so we
+# can add a first-class knob.
+# ---------------------------------------------------------------------------
+extraEnv: []
+# - name: LOG_LEVEL
+#   value: "DEBUG"
+
+extraEnvFrom: []
+# - secretRef:
+#     name: my-extra-secrets
+
+extraVolumes: []
+extraVolumeMounts: []

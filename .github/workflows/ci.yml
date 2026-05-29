@@ -180,3 +180,58 @@ jobs:
           labels: ${{ steps.meta-ui.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Helm chart: lint on every push/PR, package + publish to GHCR's OCI
+  # registry only on semver tags. Chart version + appVersion are stamped
+  # from the git tag so the chart and the images it references stay in
+  # lockstep.
+  # ---------------------------------------------------------------------------
+  helm:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Lint chart
+        run: helm lint charts/vizgrams
+
+      - name: Render chart (default values)
+        run: helm template vizgrams charts/vizgrams > /dev/null
+
+      - name: Render chart (enterprise example values)
+        run: |
+          helm template vizgrams charts/vizgrams \
+            -f charts/vizgrams/values-enterprise.example.yaml > /dev/null
+
+      - name: Stamp chart version from git tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          sed -i "s/^version:.*/version: ${VERSION}/" charts/vizgrams/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/vizgrams/Chart.yaml
+          echo "Stamped chart version: ${VERSION}"
+          grep -E '^(version|appVersion):' charts/vizgrams/Chart.yaml
+
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package + push chart
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          helm package charts/vizgrams --destination /tmp/chart
+          helm push /tmp/chart/vizgrams-*.tgz oci://ghcr.io/vizgrams/charts
