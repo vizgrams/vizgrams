@@ -29,6 +29,7 @@ import { ChartDetailDrawer } from '@/components/explore/ChartDetailDrawer'
 import { ChartPreview } from '@/components/explore/ChartPreview'
 import { NewChartDrawer } from '@/components/explore/NewChartDrawer'
 import { RecordDetailDrawer } from '@/components/explore/RecordDetailDrawer'
+import { SchemaAddPanel } from '@/components/explore/SchemaAddPanel'
 import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
 import { ProposalCard } from '@/components/proposals/ProposalCard'
 import { ProposeChangeForm } from '@/components/proposals/ProposeChangeForm'
@@ -489,6 +490,8 @@ function SchemaTab({ entity }: { entity: EntitySummary }) {
               />
             ))
         }
+        {/* VG-306 — propose a new attribute (admins apply on approval) */}
+        <SchemaAddPanel entity={entity.name} kind="attribute" />
       </SchemaList>
       <SchemaList icon={<Link2 className="h-3.5 w-3.5" />} title="Relations">
         {detail.relations.length === 0
@@ -505,6 +508,8 @@ function SchemaTab({ entity }: { entity: EntitySummary }) {
               />
             ))
         }
+        {/* VG-306 — propose a new relation */}
+        <SchemaAddPanel entity={entity.name} kind="relation" />
       </SchemaList>
       <SchemaList icon={<Sparkles className="h-3.5 w-3.5" />} title="Computed">
         {detail.features.length === 0
