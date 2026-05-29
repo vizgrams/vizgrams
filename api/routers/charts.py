@@ -18,8 +18,8 @@ from pydantic import BaseModel
 
 from api.dependencies import (
     author_from_principal,
-    resolve_model_dir,
     require_user_or_service_account,
+    resolve_model_dir,
 )
 from api.schemas.query import QueryDetail
 from api.schemas.view import ViewDetail
