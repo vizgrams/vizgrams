@@ -7,23 +7,26 @@
  *   /apps/:name              the app with default params
  *   /apps/:name?p=v          params prefilled from the URL
  *
- * Drilldown clicks resolve to router URLs via ``frameToUrl``.
+ * Drilldowns open an in-shell DrilldownOverlay rather than navigating
+ * away — keeps the user inside the app context (which is the point of
+ * an "app" surface). True app→app frames still navigate.
  */
 
-import { useCallback } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useCallback, useState } from 'react'
+import { useParams, useSearchParams } from 'react-router-dom'
 
+import { DrilldownOverlay } from '@/components/explore/DrilldownOverlay'
 import { AppFrame } from '@/pages/explore/AppFrame'
-import { type DrillFrame, frameToUrl } from '@/components/view/drilldown'
+import { type DrillFrame } from '@/components/view/drilldown'
 
 export function AppPage() {
   const { name } = useParams<{ name: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
+  const [drilldown, setDrilldown] = useState<DrillFrame | null>(null)
 
   const handleNavigate = useCallback((frame: DrillFrame) => {
-    navigate(frameToUrl(frame))
-  }, [navigate])
+    setDrilldown(frame)
+  }, [])
 
   const handleParamsApplied = useCallback((next: Record<string, string>) => {
     const sp = new URLSearchParams()
@@ -44,6 +47,9 @@ export function AppPage() {
         onNavigate={handleNavigate}
         onParamsApplied={handleParamsApplied}
       />
+      {drilldown && (
+        <DrilldownOverlay frame={drilldown} onClose={() => setDrilldown(null)} />
+      )}
     </div>
   )
 }

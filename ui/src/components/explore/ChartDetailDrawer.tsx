@@ -7,17 +7,17 @@
  * Replaces the dead /views/:name link from ChartCardEl. Fetches the view
  * + its result and hands them to the canonical ViewContent renderer so
  * the in-shell experience matches /views without needing to navigate
- * away. Drilldown clicks update the URL the same way the standalone
- * /views page does.
+ * away. Drilldowns inside the drawer push another DrilldownOverlay on
+ * top instead of navigating — keeps the user in /explore.
  */
 
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { X } from 'lucide-react'
 
 import type { ViewDetail, ViewResult } from '@/api/client'
+import { DrilldownOverlay } from '@/components/explore/DrilldownOverlay'
 import { ViewContent } from '@/components/view/ViewContent'
-import { frameToUrl } from '@/components/view/drilldown'
+import type { DrillFrame } from '@/components/view/drilldown'
 import { useModel } from '@/context/ModelContext'
 
 interface Props {
@@ -27,11 +27,13 @@ interface Props {
 
 export function ChartDetailDrawer({ viewName, onClose }: Props) {
   const { api } = useModel()
-  const navigate = useNavigate()
   const [detail, setDetail] = useState<ViewDetail | null>(null)
   const [result, setResult] = useState<ViewResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // Nested drilldown — clicking a point/row inside the rendered view
+  // pushes another overlay on top instead of navigating away.
+  const [nested, setNested] = useState<DrillFrame | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -74,17 +76,14 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
               result={result}
               rowDrilldown={undefined}
               paramValues={{}}
-              onNavigate={(frame) => {
-                // Close the drawer when navigating away — react-router will
-                // unmount /explore anyway, but clearing local state avoids
-                // a flash if we ever stay in-page.
-                onClose()
-                navigate(frameToUrl(frame))
-              }}
+              onNavigate={(frame) => setNested(frame)}
             />
           )}
         </div>
       </div>
+      {nested && (
+        <DrilldownOverlay frame={nested} onClose={() => setNested(null)} />
+      )}
     </>
   )
 }
