@@ -34,6 +34,7 @@ import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
 import { ProposalCard } from '@/components/proposals/ProposalCard'
 import { ProposeChangeForm } from '@/components/proposals/ProposeChangeForm'
 import { useModel } from '@/context/ModelContext'
+import { useRole } from '@/context/RoleContext'
 import { cn, formatValue } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
@@ -764,6 +765,7 @@ function SchemaList({
 
 function PipelineTab({ entity }: { entity: EntitySummary }) {
   const { api } = useModel()
+  const { role } = useRole()
   const [pipeline, setPipeline] = useState<PipelineSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [openExtractor, setOpenExtractor] = useState<string | null>(null)
@@ -865,6 +867,21 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
             </div>
         }
       </div>
+
+      {/* VG-307 — admin-only deep-link to the cross-entity extractor list.
+          Sidebar entry was removed; this keeps /tools discoverable for
+          admins who need to author / manage extractors not yet wired to
+          an entity. */}
+      {role === 'admin' && (
+        <div className="pt-1">
+          <a
+            href="/tools"
+            className="text-[11px] text-muted-foreground/70 hover:text-foreground inline-flex items-center gap-1"
+          >
+            Manage all extractors <ArrowUpRight className="h-3 w-3" />
+          </a>
+        </div>
+      )}
 
       {openExtractor && pipeline && (
         <ExtractorDrawer
