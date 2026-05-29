@@ -513,6 +513,16 @@ export function makeApi(model: string) {
     saveView: (name: string, content: string) =>
       put<ViewDetail>(`${BASE}/view/${encodeURIComponent(name)}`, { content }),
 
+    // Unified chart save — writes query.yaml + view.yaml atomically.
+    // The chart name is used for both files. On view-validation failure
+    // the server rolls back the query write. Use this for any chart
+    // edit / create from the user-facing /explore flow.
+    saveChart: (name: string, queryYaml: string, viewYaml: string) =>
+      put<{ query: QueryDetail; view: ViewDetail }>(
+        `${BASE}/chart/${encodeURIComponent(name)}`,
+        { query_yaml: queryYaml, view_yaml: viewYaml },
+      ),
+
     listApplications: () =>
       get<ApplicationSummary[]>(`${BASE}/application`),
 

@@ -2,17 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * NewChartDrawer — author a new chart from /explore (Epic 27 VG-304).
+ * NewChartDrawer — unified chart authoring (Epic 27 VG-304 + follow-up).
  *
- * Replaces the dead "+ New chart" → /views?root= link. Minimal form: pick
- * a query rooted on the current entity, name the chart, pick a chart
- * type, and edit the generated YAML template before saving via
- * api.saveView. Matches the spirit of the existing /views startNewView
- * flow (prompt + template) but in a proper drawer with query selection
- * scoped to the entity.
+ * Authors the query + visualization that compose a chart in a single
+ * drawer. Both YAML files are saved atomically via api.saveChart, which
+ * rolls back the query write if the view fails to validate.
+ *
+ * Mental model: the user creates ONE thing — a chart. Internally that's
+ * still a query.yaml + a view.yaml sharing the same name. Power users
+ * who want query reuse can still author standalone queries via the
+ * regular endpoints; this drawer is the friendly default.
+ *
+ * "Start from existing query" pre-populates the query pane from an
+ * existing artifact so reuse is one click away without forcing the user
+ * to think about it.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 
 import type { QuerySummary } from '@/api/client'
@@ -25,48 +31,57 @@ type ChartType = 'line' | 'bar' | 'kpi' | 'table'
 interface Props {
   entity: string
   onClose: () => void
-  onCreated?: (viewName: string) => void
+  onCreated?: (chartName: string) => void
 }
 
 export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
   const { api } = useModel()
   const [queries, setQueries] = useState<QuerySummary[]>([])
-  const [loadingQueries, setLoadingQueries] = useState(true)
 
   const [name, setName] = useState('')
-  const [queryName, setQueryName] = useState('')
   const [chartType, setChartType] = useState<ChartType>('bar')
-  const [yaml, setYaml] = useState('')
-  const [yamlDirty, setYamlDirty] = useState(false)
+  const [queryYaml, setQueryYaml] = useState('')
+  const [viewYaml, setViewYaml] = useState('')
+  const [queryDirty, setQueryDirty] = useState(false)
+  const [viewDirty, setViewDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Load queries rooted on this entity. The /query endpoint returns all
-  // queries; we filter client-side by `root` so the user only sees
-  // relevant choices.
+  // List existing queries for the "Start from" picker. Filtered to those
+  // rooted on the current entity so the user only sees relevant ones.
   useEffect(() => {
     let cancelled = false
-    setLoadingQueries(true)
     api.listQueries()
-      .then((qs) => {
-        if (cancelled) return
-        const filtered = qs.filter((q) => q.root === entity)
-        setQueries(filtered)
-        if (filtered.length > 0 && !queryName) setQueryName(filtered[0].name)
-      })
+      .then((qs) => { if (!cancelled) setQueries(qs.filter((q) => q.root === entity)) })
       .catch(() => { if (!cancelled) setQueries([]) })
-      .finally(() => { if (!cancelled) setLoadingQueries(false) })
     return () => { cancelled = true }
-    // queryName only initialised once — don't re-run when it changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, entity])
 
-  // Regenerate the YAML template whenever name/query/type changes — but
-  // only if the user hasn't started editing it themselves.
-  useEffect(() => {
-    if (yamlDirty) return
-    setYaml(buildTemplate({ name, queryName, chartType }))
-  }, [name, queryName, chartType, yamlDirty])
+  // Regenerate templates when name / type / entity changes — unless the
+  // user has typed into the pane (the dirty flags). Each pane tracks its
+  // own dirty bit so editing one doesn't freeze the other.
+  const defaultQuery = useMemo(
+    () => buildQueryTemplate({ name, entity }),
+    [name, entity],
+  )
+  const defaultView = useMemo(
+    () => buildViewTemplate({ name, chartType }),
+    [name, chartType],
+  )
+  useEffect(() => { if (!queryDirty) setQueryYaml(defaultQuery) }, [defaultQuery, queryDirty])
+  useEffect(() => { if (!viewDirty) setViewYaml(defaultView) }, [defaultView, viewDirty])
+
+  function loadExistingQuery(qName: string) {
+    if (!qName) return
+    api.getQuery(qName)
+      .then((q) => {
+        if (q.raw_yaml) {
+          setQueryYaml(q.raw_yaml)
+          setQueryDirty(true)
+        }
+      })
+      .catch(() => { /* silent — picker keeps current yaml */ })
+  }
 
   async function save() {
     setError(null)
@@ -74,13 +89,9 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
       setError('Name must be lowercase letters / digits / underscores, starting with a letter.')
       return
     }
-    if (!queryName) {
-      setError('Pick a query first.')
-      return
-    }
     setSaving(true)
     try {
-      await api.saveView(name, yaml)
+      await api.saveChart(name, queryYaml, viewYaml)
       onCreated?.(name)
       onClose()
     } catch (e) {
@@ -93,7 +104,7 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
   return (
     <>
       <div onClick={onClose} className="fixed inset-0 bg-black/30 z-40" aria-hidden />
-      <div className="fixed top-0 right-0 bottom-0 w-[36rem] max-w-[95vw] bg-card border-l z-50 flex flex-col shadow-xl">
+      <div className="fixed top-0 right-0 bottom-0 w-[42rem] max-w-[95vw] bg-card border-l z-50 flex flex-col shadow-xl">
         <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3 border-b">
           <div>
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">{entity}</div>
@@ -104,7 +115,7 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           <Field label="Name">
             <input
               value={name}
@@ -112,24 +123,9 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
               placeholder="snake_case_name"
               className="w-full text-xs bg-background border rounded px-2 py-1.5 font-mono"
             />
-          </Field>
-
-          <Field label={`Query rooted on ${entity}`}>
-            {loadingQueries
-              ? <p className="text-xs text-muted-foreground/60">Loading…</p>
-              : queries.length === 0
-                ? <p className="text-xs text-muted-foreground/60">No queries rooted on {entity}. Author a query first.</p>
-                : (
-                  <select
-                    value={queryName}
-                    onChange={(e) => setQueryName(e.target.value)}
-                    className="w-full text-xs bg-background border rounded px-2 py-1.5 font-mono"
-                  >
-                    {queries.map((q) => (
-                      <option key={q.name} value={q.name}>{q.name}</option>
-                    ))}
-                  </select>
-                )}
+            <p className="text-[10px] text-muted-foreground/60 mt-1">
+              Used as the name of both the query and the chart that consume it.
+            </p>
           </Field>
 
           <Field label="Chart type">
@@ -149,24 +145,56 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
             </div>
           </Field>
 
-          <Field label="YAML">
+          {queries.length > 0 && (
+            <Field label="Start from existing query (optional)">
+              <select
+                onChange={(e) => loadExistingQuery(e.target.value)}
+                defaultValue=""
+                className="w-full text-xs bg-background border rounded px-2 py-1.5 font-mono"
+              >
+                <option value="">— author a new query —</option>
+                {queries.map((q) => (
+                  <option key={q.name} value={q.name}>{q.name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+
+          <Field label="Query (YAML)">
             <textarea
-              value={yaml}
-              onChange={(e) => { setYaml(e.target.value); setYamlDirty(true) }}
-              rows={12}
+              value={queryYaml}
+              onChange={(e) => { setQueryYaml(e.target.value); setQueryDirty(true) }}
+              rows={10}
               className="w-full text-xs bg-background border rounded px-2.5 py-2 font-mono resize-y"
             />
-            {yamlDirty && (
+            {queryDirty && (
               <button
-                onClick={() => { setYamlDirty(false) }}
+                onClick={() => setQueryDirty(false)}
                 className="mt-1 text-[10px] text-muted-foreground hover:text-foreground"
               >
-                Reset to template
+                Reset query to template
               </button>
             )}
           </Field>
 
-          {error && <p className="text-xs text-red-600">{error}</p>}
+          <Field label="Visualization (YAML)">
+            <textarea
+              value={viewYaml}
+              onChange={(e) => { setViewYaml(e.target.value); setViewDirty(true) }}
+              rows={10}
+              className="w-full text-xs bg-background border rounded px-2.5 py-2 font-mono resize-y"
+            />
+            {viewDirty && (
+              <button
+                onClick={() => setViewDirty(false)}
+                className="mt-1 text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                Reset visualization to template
+              </button>
+            )}
+          </Field>
+
+          {error && <p className="text-xs text-red-600 whitespace-pre-wrap">{error}</p>}
         </div>
 
         <div className="flex justify-end gap-2 px-5 py-3 border-t">
@@ -178,7 +206,7 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
           </button>
           <button
             onClick={save}
-            disabled={saving || queries.length === 0}
+            disabled={saving}
             className="text-xs px-3 py-1.5 rounded border bg-foreground text-background hover:bg-foreground/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? 'Saving…' : 'Create chart'}
@@ -198,16 +226,28 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-export function buildTemplate({
-  name, queryName, chartType,
-}: { name: string; queryName: string; chartType: ChartType }): string {
+export function buildQueryTemplate({ name, entity }: { name: string; entity: string }): string {
+  const safeName = name || '<query_name>'
+  return [
+    `name: ${safeName}`,
+    `entity: ${entity}`,
+    'attributes:',
+    '  - <attribute_name>',
+    'measures:',
+    '  - count(*)',
+    '',
+  ].join('\n')
+}
+
+export function buildViewTemplate({
+  name, chartType,
+}: { name: string; chartType: ChartType }): string {
   const safeName = name || '<chart_name>'
-  const safeQuery = queryName || '<query_name>'
   if (chartType === 'kpi') {
     return [
       `name: ${safeName}`,
       'type: metric',
-      `query: ${safeQuery}`,
+      `query: ${safeName}`,
       'measure: <measure_name>',
       'visualization:',
       '  suffix: ""',
@@ -218,18 +258,17 @@ export function buildTemplate({
     return [
       `name: ${safeName}`,
       'type: table',
-      `query: ${safeQuery}`,
+      `query: ${safeName}`,
       'visualization:',
       '  columns:',
       '    - <column_name>',
       '',
     ].join('\n')
   }
-  // bar / line
   return [
     `name: ${safeName}`,
     'type: chart',
-    `query: ${safeQuery}`,
+    `query: ${safeName}`,
     'visualization:',
     `  chart_type: ${chartType}`,
     '  x: <x_column>',

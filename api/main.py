@@ -180,6 +180,7 @@ from api.limiter import limiter
 from api.routers import (
     applications,
     batch,
+    charts,
     chat,
     entities,
     explore,
@@ -255,6 +256,7 @@ app.include_router(features.model_feature_router, prefix=PREFIX)
 app.include_router(expression.router, prefix=PREFIX)
 app.include_router(queries.router, prefix=PREFIX)
 app.include_router(views.router, prefix=PREFIX)
+app.include_router(charts.router, prefix=PREFIX)
 app.include_router(applications.router, prefix=PREFIX)
 app.include_router(graph.router, prefix=PREFIX)
 app.include_router(explore.router, prefix=PREFIX)
