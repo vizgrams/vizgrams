@@ -89,7 +89,10 @@ jobs:
   # published so it can't be accidentally consumed.
   # ---------------------------------------------------------------------------
   docker:
-    name: Docker build & publish
+    # Job name kept as "Docker build" — the main branch protection ruleset
+    # references that exact context name as a required check. Publishing is
+    # what the job actually does now (see header comment).
+    name: Docker build
     runs-on: ubuntu-latest
     needs: [python, ui]
     permissions:
