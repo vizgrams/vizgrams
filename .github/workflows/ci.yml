@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    # Semver tags trigger a versioned publish to GHCR. Tag pushes are NOT
+    # restricted by the branches filter above — they fire regardless.
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -76,12 +79,22 @@ jobs:
         run: npm run build
 
   # ---------------------------------------------------------------------------
-  # Docker: build all three images (no push — validates Dockerfiles)
+  # Docker: build + publish images to GHCR.
+  #
+  # PRs build only (validates Dockerfiles).
+  # Push to main publishes :main + :sha-<full> (mutable + immutable).
+  # Tag v1.2.3 publishes :1.2.3, :1.2, :1 (all immutable).
+  #
+  # Ops repos pin a specific version — :latest is intentionally NEVER
+  # published so it can't be accidentally consumed.
   # ---------------------------------------------------------------------------
   docker:
-    name: Docker build
+    name: Docker build & publish
     runs-on: ubuntu-latest
     needs: [python, ui]
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -89,32 +102,81 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3.10.0
 
-      - name: Build API image
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Per-image metadata — drives tags. type=ref tags `main` on a main
+      # push; type=sha tags `sha-<long>`; semver tags fire on v* git tags.
+      - name: API image metadata
+        id: meta-api
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/vizgrams/api
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build & push API image
         uses: docker/build-push-action@v6.15.0
         with:
           context: .
           file: Dockerfile.api
-          push: false
-          tags: vizgrams/api:ci
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-api.outputs.tags }}
+          labels: ${{ steps.meta-api.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build batch image
+      - name: Batch image metadata
+        id: meta-batch
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/vizgrams/batch
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build & push batch image
         uses: docker/build-push-action@v6.15.0
         with:
           context: .
           file: Dockerfile.batch
-          push: false
-          tags: vizgrams/batch:ci
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-batch.outputs.tags }}
+          labels: ${{ steps.meta-batch.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build UI image
+      - name: UI image metadata
+        id: meta-ui
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/vizgrams/ui
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build & push UI image
         uses: docker/build-push-action@v6.15.0
         with:
           context: .
           file: Dockerfile.ui
-          push: false
-          tags: vizgrams/ui:ci
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-ui.outputs.tags }}
+          labels: ${{ steps.meta-ui.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
