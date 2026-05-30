@@ -160,9 +160,9 @@ function JobRow({
               </ul>
             ) : !job.error ? (
               <p className="text-xs text-muted-foreground italic">
-                No progress reported yet.
-                {isRunning && ' Auto-refreshing every few seconds.'}
-                {!isRunning && ' Container stdout/stderr is in `docker logs batch`.'}
+                {isRunning
+                  ? 'No progress reported yet — auto-refreshing.'
+                  : 'No progress details were recorded for this job.'}
               </p>
             ) : null}
           </td>
