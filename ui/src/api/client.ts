@@ -196,7 +196,7 @@ export interface FeatureSummary extends LibraryFields {
   raw_yaml: string | null
 }
 
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type JobStatus = 'pending' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled'
 
 export interface JobOut {
   job_id: string
@@ -261,6 +261,15 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+  if (!res.ok) {
+    const detail = await res.text()
+    throw new Error(`${res.status}: ${detail}`)
+  }
+  return res.json() as Promise<T>
+}
+
+async function delJson<T>(path: string): Promise<T> {
+  const res = await fetch(path, { method: 'DELETE' })
   if (!res.ok) {
     const detail = await res.text()
     throw new Error(`${res.status}: ${detail}`)
@@ -386,6 +395,12 @@ export function makeApi(model: string) {
 
     getJob: (jobId: string) =>
       get<JobOut>(`${BASE}/job/${jobId}`),
+
+    // Asks the batch service to cancel a running job. Returns the
+    // updated job record (status transitions to 'cancelling' first,
+    // then 'cancelled' on the next poll once the worker honors it).
+    cancelJob: (jobId: string) =>
+      delJson<JobOut>(`${BASE}/job/${jobId}`),
 
     listJobs: (params?: { status?: string; operation?: string; limit?: number }) => {
       const qs = new URLSearchParams()
