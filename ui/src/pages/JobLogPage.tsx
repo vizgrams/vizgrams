@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
-import { CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight } from 'lucide-react'
+import { CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, X, RotateCcw } from 'lucide-react'
 import type { JobOut } from '@/api/client'
 import { useModel } from '@/context/ModelContext'
 import { Card, ErrorMessage, Spinner } from '@/components/Layout'
@@ -74,46 +74,97 @@ function StatusBadge({ status }: { status: JobOut['status'] }) {
 // Row
 // ---------------------------------------------------------------------------
 
-function JobRow({ job }: { job: JobOut }) {
-  const [expanded, setExpanded] = useState(false)
-  const hasDetail = !!(job.error || job.warnings.length || job.progress.length)
+function JobRow({
+  job, onCancel, onRerun, defaultExpanded = false,
+}: {
+  job: JobOut
+  onCancel: (job: JobOut) => Promise<void>
+  onRerun: (job: JobOut) => Promise<void>
+  defaultExpanded?: boolean
+}) {
+  // Rows used to be clickable only when detail existed. That left running
+  // jobs with no progress yet looking dead. Always expandable now; we
+  // render a "no progress reported yet" hint when the lists are empty.
+  const [expanded, setExpanded] = useState(defaultExpanded)
+  const [busy, setBusy] = useState<'cancel' | 'rerun' | null>(null)
+  const isRunning = RUNNING.has(job.status)
+  const isTerminal = !isRunning  // completed, failed, cancelled
+  const canRerun = isTerminal && !!(job.extractor || job.entity)
+
+  async function handleCancel(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!window.confirm(`Cancel ${opLabel(job.operation)} (${subject(job)})?`)) return
+    setBusy('cancel')
+    try { await onCancel(job) } finally { setBusy(null) }
+  }
+
+  async function handleRerun(e: React.MouseEvent) {
+    e.stopPropagation()
+    setBusy('rerun')
+    try { await onRerun(job) } finally { setBusy(null) }
+  }
 
   return (
     <>
       <tr
-        className={cn(
-          'border-b last:border-0 transition-colors',
-          hasDetail ? 'cursor-pointer hover:bg-muted/30' : 'hover:bg-muted/20',
-        )}
-        onClick={() => hasDetail && setExpanded((e) => !e)}
+        className="border-b last:border-0 transition-colors cursor-pointer hover:bg-muted/30"
+        onClick={() => setExpanded((x) => !x)}
       >
         <td className="px-4 py-3 w-6">
-          {hasDetail && (
-            expanded
-              ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-              : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-          )}
+          {expanded
+            ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
         </td>
         <td className="px-4 py-3 text-sm font-medium">{opLabel(job.operation)}</td>
         <td className="px-4 py-3 text-sm text-muted-foreground font-mono">{subject(job)}</td>
         <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
         <td className="px-4 py-3 text-sm text-muted-foreground tabular-nums">{duration(job)}</td>
         <td className="px-4 py-3 text-sm text-muted-foreground">{relativeTime(job.started_at)}</td>
+        <td className="px-4 py-3 text-right whitespace-nowrap">
+          {isRunning && (
+            <button
+              onClick={handleCancel}
+              disabled={busy !== null || job.status === 'cancelling'}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Cancel this job"
+            >
+              <X className="h-3 w-3" />
+              {busy === 'cancel' ? 'Cancelling…' : 'Cancel'}
+            </button>
+          )}
+          {canRerun && (
+            <button
+              onClick={handleRerun}
+              disabled={busy !== null}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Run the same operation again"
+            >
+              <RotateCcw className="h-3 w-3" />
+              {busy === 'rerun' ? 'Starting…' : 'Rerun'}
+            </button>
+          )}
+        </td>
       </tr>
-      {expanded && hasDetail && (
+      {expanded && (
         <tr className="border-b bg-muted/20">
-          <td colSpan={6} className="px-8 py-3 space-y-2">
+          <td colSpan={7} className="px-8 py-3 space-y-2">
             {job.error && (
-              <p className="text-sm text-red-700 font-mono">{job.error}</p>
+              <p className="text-sm text-red-700 font-mono whitespace-pre-wrap">{job.error}</p>
             )}
             {job.warnings.map((w, i) => (
               <p key={i} className="text-sm text-yellow-700">{w}</p>
             ))}
-            {job.progress.length > 0 && (
-              <ul className="text-xs text-muted-foreground space-y-0.5">
+            {job.progress.length > 0 ? (
+              <ul className="text-xs text-muted-foreground font-mono space-y-0.5 max-h-72 overflow-y-auto">
                 {job.progress.map((p, i) => <li key={i}>{p}</li>)}
               </ul>
-            )}
+            ) : !job.error ? (
+              <p className="text-xs text-muted-foreground italic">
+                No progress reported yet.
+                {isRunning && ' Auto-refreshing every few seconds.'}
+                {!isRunning && ' Container stdout/stderr is in `docker logs batch`.'}
+              </p>
+            ) : null}
           </td>
         </tr>
       )}
@@ -144,6 +195,7 @@ export function JobLogPage() {
   const [filter, setFilter] = useState<Filter>('all')
   const [jobs, setJobs] = useState<JobOut[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   async function load() {
     try {
@@ -153,6 +205,46 @@ export function JobLogPage() {
       setError(null)
     } catch (e) {
       setError(String(e))
+    }
+  }
+
+  // Cancel a running job. The batch service flips it to 'cancelling';
+  // the next poll picks up the final 'cancelled' state.
+  async function cancel(job: JobOut) {
+    setActionError(null)
+    try {
+      await api.cancelJob(job.job_id)
+      await load()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // Rerun a terminal job by re-issuing the same operation. The batch
+  // service uses the sentinel '__all__' as the entity for "run all
+  // mappers / materialize every entity" jobs — dispatching those to
+  // the per-entity endpoints would 422 since '__all__' violates the
+  // entity-name regex. Route them to the *-all endpoints instead.
+  async function rerun(job: JobOut) {
+    setActionError(null)
+    const isAll = job.entity === '__all__'
+    try {
+      if (job.operation === 'extract' && job.extractor) {
+        await api.runExtractor(job.extractor, job.task ?? undefined)
+      } else if (job.operation === 'map' && isAll) {
+        await api.runAllMappers()
+      } else if (job.operation === 'map' && job.entity) {
+        await api.runMapper(job.entity)
+      } else if (job.operation === 'reconcile_all' || (job.operation === 'materialize' && isAll)) {
+        await api.reconcileAll()
+      } else if (job.operation === 'materialize' && job.entity) {
+        await api.rematerializeEntity(job.entity)
+      } else {
+        throw new Error(`Don't know how to rerun operation "${job.operation}".`)
+      }
+      await load()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -205,6 +297,7 @@ export function JobLogPage() {
       </div>
 
       {error && <ErrorMessage message={error} />}
+      {actionError && <ErrorMessage message={actionError} />}
 
       {!jobs && !error && <Spinner />}
 
@@ -222,10 +315,21 @@ export function JobLogPage() {
                   <th className="text-left px-4 py-2.5 font-medium">Status</th>
                   <th className="text-left px-4 py-2.5 font-medium">Duration</th>
                   <th className="text-left px-4 py-2.5 font-medium">Started</th>
+                  <th className="text-right px-4 py-2.5 font-medium w-32">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {jobs.map((job) => <JobRow key={job.job_id} job={job} />)}
+                {jobs.map((job) => (
+                  <JobRow
+                    key={job.job_id}
+                    job={job}
+                    onCancel={cancel}
+                    onRerun={rerun}
+                    // Auto-expand running jobs so the progress tail is
+                    // the default view when someone opens the page.
+                    defaultExpanded={RUNNING.has(job.status)}
+                  />
+                ))}
               </tbody>
             </table>
           )}
