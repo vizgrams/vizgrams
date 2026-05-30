@@ -390,8 +390,20 @@ export function makeApi(model: string) {
     runMapper: (entity: string) =>
       post<JobOut>(`${BASE}/entity/${entity}/mapper/execute`, {}),
 
+    // Run every mapper in topological order in a single background job.
+    // Backend stores this with entity sentinel '__all__' in the job log
+    // — Rerun on /jobs dispatches here when it sees that sentinel.
+    runAllMappers: () =>
+      post<JobOut>(`${BASE}/mapper/execute-all`, {}),
+
     rematerializeEntity: (entity: string) =>
       post<JobOut>(`${BASE}/entity/${entity}/rematerialize`, {}),
+
+    // Materialize every entity in a single background job. Mirrors
+    // runAllMappers — Rerun dispatches here for reconcile_all / for a
+    // materialize job whose entity is the '__all__' sentinel.
+    reconcileAll: () =>
+      post<JobOut>(`${BASE}/entity/reconcile-all`, {}),
 
     getJob: (jobId: string) =>
       get<JobOut>(`${BASE}/job/${jobId}`),

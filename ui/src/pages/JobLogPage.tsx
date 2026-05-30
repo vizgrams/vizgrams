@@ -220,17 +220,23 @@ export function JobLogPage() {
     }
   }
 
-  // Rerun a terminal job by re-issuing the same operation. We have to
-  // dispatch on operation: extract → runExtractor, map / materialize →
-  // runMapper / rematerializeEntity. Reconcile-features is a feature-
-  // service action; defer to a follow-up since it's rarer.
+  // Rerun a terminal job by re-issuing the same operation. The batch
+  // service uses the sentinel '__all__' as the entity for "run all
+  // mappers / materialize every entity" jobs — dispatching those to
+  // the per-entity endpoints would 422 since '__all__' violates the
+  // entity-name regex. Route them to the *-all endpoints instead.
   async function rerun(job: JobOut) {
     setActionError(null)
+    const isAll = job.entity === '__all__'
     try {
       if (job.operation === 'extract' && job.extractor) {
         await api.runExtractor(job.extractor, job.task ?? undefined)
+      } else if (job.operation === 'map' && isAll) {
+        await api.runAllMappers()
       } else if (job.operation === 'map' && job.entity) {
         await api.runMapper(job.entity)
+      } else if (job.operation === 'reconcile_all' || (job.operation === 'materialize' && isAll)) {
+        await api.reconcileAll()
       } else if (job.operation === 'materialize' && job.entity) {
         await api.rematerializeEntity(job.entity)
       } else {
