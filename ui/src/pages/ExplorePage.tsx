@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Activity as ActivityIcon, ArrowUpRight, BarChart3, ChevronRight, Database,
+  Activity as ActivityIcon, ArrowUpRight, BarChart3, Database,
   Download, GitCommit, Hash, History, Layers, LineChart,
   Link2, Pencil, Plus, RotateCcw, Shuffle, Sparkles, Table2, Wrench, X,
 } from 'lucide-react'
@@ -763,14 +763,27 @@ function SchemaList({
 // Pipeline — lineage chips + read-only mapper sub-groups + drawer
 // ---------------------------------------------------------------------------
 
+// Pipeline tab — single end-to-end lineage view.
+//
+// Sources fan into the mapper (left column), sub-groups fan out of the
+// mapper into the entity (right column). Every chip is the entry point
+// to edit the thing it represents:
+//   - Tool: read-only (configured globally; not editable per-entity)
+//   - Extractor: opens the governed YAML editor
+//   - Raw: read-only (it's just data)
+//   - Mapper: opens whole-mapper YAML editor (add/remove sub-groups etc.)
+//   - Sub-group: opens sub-group-focused editor inside the mapper YAML
+//   - Entity: not editable here — Schema tab is the editor for entities
 function PipelineTab({ entity }: { entity: EntitySummary }) {
   const { api } = useModel()
-  const { role } = useRole()
+  // Suppress unused-import warning while keeping useRole available for
+  // any per-role gating we add to chips later.
+  void useRole
   const [pipeline, setPipeline] = useState<PipelineSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [openExtractor, setOpenExtractor] = useState<string | null>(null)
-  // VG-297: sub-group click opens an inline mapper editor.
   const [editingSubGroup, setEditingSubGroup] = useState<string | null>(null)
+  const [editingMapper, setEditingMapper] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -785,123 +798,171 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
   if (loading) return <Loading />
   if (!pipeline || !pipeline.mapper) return <EmptyState label={`No pipeline configured for ${entity.name}.`} />
 
-  const multi = pipeline.sources.length > 1
+  const mapper = pipeline.mapper
+  const sources = pipeline.sources
+  const subgroups = mapper.groups
+  const headerNote = [
+    sources.length > 1 && `${sources.length} sources join`,
+    subgroups.length > 1 && `${subgroups.length} sub-groups merge`,
+  ].filter(Boolean).join(' · ')
+
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div>
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-2">
-          Lineage
-          {multi && (
-            <span className="ml-2 text-muted-foreground/60 normal-case tracking-normal">
-              · {pipeline.sources.length} raw tables joined in the mapper
-            </span>
-          )}
-        </div>
-        <div className="rounded border bg-card p-4 overflow-x-auto">
-          <div className="flex items-center gap-3 min-w-max">
-            <div className="flex flex-col gap-2">
-              {pipeline.sources.map((src, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <LineageChip
-                    icon={<Wrench className="h-3 w-3" />}
-                    kind="Tool"
-                    name={src.tool ?? '(not in catalog)'}
-                    muted={!src.tool}
-                  />
-                  <LineageArrow />
-                  <LineageChip
-                    icon={<Download className="h-3 w-3" />}
-                    kind="Extractor"
-                    name={src.extractor ?? '(not in catalog)'}
-                    muted={!src.extractor}
-                    onClick={src.extractor ? () => setOpenExtractor(src.extractor) : undefined}
-                  />
-                  <LineageArrow />
-                  <LineageChip icon={<Database className="h-3 w-3" />} kind="Raw" name={src.raw_table} mono />
-                </div>
-              ))}
-            </div>
-            {multi && <Converger count={pipeline.sources.length} />}
-            {!multi && <LineageArrow />}
-            <LineageChip icon={<Shuffle className="h-3 w-3" />} kind="Mapper" name={pipeline.mapper.name} highlight />
-            <LineageArrow />
-            <LineageChip icon={<Layers className="h-3 w-3" />} kind="Entity" name={entity.name} active />
+    <div className="space-y-4 max-w-5xl">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+        Lineage
+        {headerNote && (
+          <span className="ml-2 text-muted-foreground/60 normal-case tracking-normal">
+            · {headerNote}
+          </span>
+        )}
+      </div>
+
+      <div className="rounded border bg-card p-5 overflow-x-auto">
+        <div className="flex items-stretch gap-4 min-w-max">
+          {/* Sources column — one row per raw table feeding the mapper */}
+          <div className="flex flex-col gap-2 justify-center">
+            {sources.length === 0
+              ? <EmptyRow label="No sources declared in the mapper." />
+              : sources.map((src, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <LineageChip
+                      icon={<Wrench className="h-3 w-3" />}
+                      kind="Tool"
+                      name={src.tool ?? '(not in catalog)'}
+                      muted={!src.tool}
+                    />
+                    <LineageArrow />
+                    <LineageChip
+                      icon={<Download className="h-3 w-3" />}
+                      kind="Extractor"
+                      name={src.extractor ?? '(not in catalog)'}
+                      muted={!src.extractor}
+                      onClick={src.extractor ? () => setOpenExtractor(src.extractor) : undefined}
+                    />
+                    <LineageArrow />
+                    <LineageChip icon={<Database className="h-3 w-3" />} kind="Raw" name={src.raw_table} mono />
+                  </div>
+                ))
+            }
+          </div>
+
+          {/* Sources → Mapper converger */}
+          {sources.length > 1
+            ? <Converger count={sources.length} />
+            : <LineageArrow />
+          }
+
+          {/* Mapper chip — clicking edits the whole mapper YAML */}
+          <div className="flex items-center">
+            <LineageChip
+              icon={<Shuffle className="h-3 w-3" />}
+              kind="Mapper"
+              name={mapper.name}
+              highlight
+              onClick={() => setEditingMapper(true)}
+            />
+          </div>
+
+          {/* Mapper → Sub-groups diverger (only when multiple sub-groups) */}
+          {subgroups.length > 1
+            ? <Diverger count={subgroups.length} />
+            : <LineageArrow />
+          }
+
+          {/* Sub-groups column — one chip per sub-group, each clickable */}
+          <div className="flex flex-col gap-2 justify-center">
+            {subgroups.length === 0 ? (
+              // Single-target mapper — there's no sub-group, the mapper
+              // writes directly. Render a placeholder so the lane closes.
+              <LineageChip
+                icon={<Shuffle className="h-3 w-3" />}
+                kind="Sub-group"
+                name="(direct)"
+                muted
+              />
+            ) : subgroups.map((g) => (
+              <LineageChip
+                key={g.name}
+                icon={<Shuffle className="h-3 w-3" />}
+                kind="Sub-group"
+                name={g.name}
+                mono
+                onClick={() => setEditingSubGroup(g.name)}
+              />
+            ))}
+          </div>
+
+          {/* Sub-groups → Entity converger (mirror of the source one) */}
+          {subgroups.length > 1
+            ? <Converger count={subgroups.length} />
+            : <LineageArrow />
+          }
+
+          {/* Entity */}
+          <div className="flex items-center">
+            <LineageChip
+              icon={<Layers className="h-3 w-3" />}
+              kind="Entity"
+              name={entity.name}
+              active
+            />
           </div>
         </div>
       </div>
 
-      <div>
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-2">
-          Mapper sub-groups
-          {pipeline.mapper.groups.length > 1 && (
-            <span className="ml-2 text-muted-foreground/60 normal-case tracking-normal">
-              · this mapper writes {pipeline.mapper.groups.length} sets of rows into {entity.name}
-            </span>
-          )}
-        </div>
-        {pipeline.mapper.groups.length === 0
-          ? <EmptyState label="Single-target mapper — no sub-groups." />
-          : <div className="rounded border bg-card overflow-hidden">
-              {pipeline.mapper.groups.map((g, i) => {
-                const expanded = editingSubGroup === g.name
-                return (
-                  <div key={g.name} className={cn(i !== 0 && 'border-t')}>
-                    <button
-                      onClick={() => setEditingSubGroup(expanded ? null : g.name)}
-                      className={cn(
-                        'w-full flex items-center justify-between px-4 py-2.5 text-xs transition-colors',
-                        expanded ? 'bg-muted/40' : 'hover:bg-muted/30',
-                      )}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <ChevronRight className={cn('h-3 w-3 text-muted-foreground/60 shrink-0 transition-transform', expanded && 'rotate-90')} />
-                        <Shuffle className="h-3 w-3 text-muted-foreground/60 shrink-0" />
-                        <span className="font-mono">{g.name}</span>
-                      </div>
-                    </button>
-                    {expanded && pipeline.mapper && (
-                      <MapperSubGroupEditor
-                        groupName={g.name}
-                        mapperName={pipeline.mapper.name}
-                        entityName={entity.name}
-                        onClose={() => setEditingSubGroup(null)}
-                      />
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-        }
-      </div>
+      <p className="text-[11px] text-muted-foreground/60">
+        Click any chip to edit. The mapper chip opens the whole-mapper YAML
+        (use this to add or remove sub-groups, or change sources).
+      </p>
 
-      {/* VG-307 / VG-308 — admin-only deep-links to the cross-entity
-          extractor + mapper lists. The per-entity affordances above
-          cover most flows; these stay reachable for orphaned-artifact
-          management. */}
-      {role === 'admin' && (
-        <div className="pt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-          <a
-            href="/tools"
-            className="text-muted-foreground/70 hover:text-foreground inline-flex items-center gap-1"
-          >
-            Manage all extractors <ArrowUpRight className="h-3 w-3" />
-          </a>
-          <a
-            href="/mappers"
-            className="text-muted-foreground/70 hover:text-foreground inline-flex items-center gap-1"
-          >
-            Manage all mappers <ArrowUpRight className="h-3 w-3" />
-          </a>
-        </div>
-      )}
-
-      {openExtractor && pipeline && (
+      {/* Drawers for in-place edits */}
+      {openExtractor && (
         <ExtractorDrawer
           name={openExtractor}
           entityName={entity.name}
           onClose={() => setOpenExtractor(null)}
         />
       )}
+      {editingMapper && (
+        <MapperEditorDrawer
+          mapperName={mapper.name}
+          entityName={entity.name}
+          onClose={() => setEditingMapper(false)}
+        />
+      )}
+      {editingSubGroup && (
+        <SubGroupEditorDrawer
+          groupName={editingSubGroup}
+          mapperName={mapper.name}
+          entityName={entity.name}
+          onClose={() => setEditingSubGroup(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// Sub-groups diverger — visual mirror of Converger but spreads one input
+// across N outputs. Used when the mapper writes to multiple sub-groups.
+function Diverger({ count }: { count: number }) {
+  const height = count * 38
+  return (
+    <div className="shrink-0 flex items-center" style={{ height }}>
+      <svg width="24" height={height} viewBox={`0 0 24 ${height}`} className="text-muted-foreground/40">
+        {Array.from({ length: count }).map((_, i) => {
+          const y = (i + 0.5) * (height / count)
+          const midY = height / 2
+          return (
+            <path
+              key={i}
+              d={`M0 ${midY} L12 ${midY} L12 ${y} L24 ${y}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1"
+            />
+          )
+        })}
+      </svg>
     </div>
   )
 }
@@ -1045,12 +1106,84 @@ function ExtractorDrawer({
   )
 }
 
-// VG-297 — Mapper sub-group editor. Sub-groups are RowGroup entries
-// inside a mapper YAML; this editor opens the whole mapper for now
-// (per-sub-group structural editing is a follow-up). Admin → direct
-// PUT mapper; member → POST proposal with artifact_kind=sub_group so
-// the audit trail records *which* sub-group was being edited.
-function MapperSubGroupEditor({
+// MapperEditorDrawer — whole-mapper YAML edit. Use this to add/remove
+// sub-groups or change the mapper's sources + targets. Admin → direct
+// PUT mapper; member → propose with artifact_kind=mapper.
+function MapperEditorDrawer({
+  mapperName, entityName, onClose,
+}: {
+  mapperName: string
+  entityName: string
+  onClose: () => void
+}) {
+  const { api } = useModel()
+  const [content, setContent] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api.getMapper(mapperName)
+      .then((r) => { if (!cancelled) setContent(r.raw_yaml ?? '') })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Load failed') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [api, mapperName])
+
+  return (
+    <>
+      <div onClick={onClose} className="fixed inset-0 bg-black/30 z-40" aria-hidden />
+      <div className="fixed top-0 right-0 bottom-0 w-[40rem] max-w-[95vw] bg-card border-l z-50 flex flex-col shadow-xl">
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3 border-b">
+          <div>
+            <div className="flex items-center gap-2">
+              <Shuffle className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-base font-semibold tracking-tight">{mapperName}</h2>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Mapper · whole YAML (add/remove sub-groups here)
+            </p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {loading
+            ? <Loading />
+            : error
+            ? <p className="text-xs text-red-600">{error}</p>
+            : (
+              <GovernedYamlEditor
+                title={`Mapper: ${mapperName}`}
+                initialContent={content ?? ''}
+                onDirectSave={async (yaml) => { await api.saveMapper(mapperName, yaml) }}
+                onProposeChange={async (yaml, reason) => {
+                  await api.createProposal({
+                    artifact_kind: 'mapper',
+                    artifact_name: mapperName,
+                    entity_name: entityName,
+                    reason,
+                    before_yaml: content ?? '',
+                    after_yaml: yaml,
+                  })
+                }}
+                onClose={onClose}
+              />
+            )
+          }
+        </div>
+      </div>
+    </>
+  )
+}
+
+// SubGroupEditorDrawer — same persistence story (saves the whole mapper)
+// but the proposal records WHICH sub-group was edited via
+// artifact_kind=sub_group + artifact_name=<group name>. Pulled into a
+// side drawer for consistency with the extractor + mapper editors.
+function SubGroupEditorDrawer({
   groupName, mapperName, entityName, onClose,
 }: {
   groupName: string
@@ -1074,33 +1207,50 @@ function MapperSubGroupEditor({
   }, [api, mapperName])
 
   return (
-    <div className="border-t bg-background px-5 py-4">
-      {loading
-        ? <Loading />
-        : error
-        ? <p className="text-xs text-red-600">{error}</p>
-        : (
-          <GovernedYamlEditor
-            title={`Sub-group: ${groupName} (inside mapper ${mapperName})`}
-            initialContent={content ?? ''}
-            onDirectSave={async (yaml) => { await api.saveMapper(mapperName, yaml) }}
-            onProposeChange={async (yaml, reason) => {
-              await api.createProposal({
-                artifact_kind: 'sub_group',
-                // Names the sub-group, not the mapper, so reviewers
-                // can see exactly which row group is being changed.
-                artifact_name: groupName,
-                entity_name: entityName,
-                reason,
-                before_yaml: content ?? '',
-                after_yaml: yaml,
-              })
-            }}
-            onClose={onClose}
-          />
-        )
-      }
-    </div>
+    <>
+      <div onClick={onClose} className="fixed inset-0 bg-black/30 z-40" aria-hidden />
+      <div className="fixed top-0 right-0 bottom-0 w-[40rem] max-w-[95vw] bg-card border-l z-50 flex flex-col shadow-xl">
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3 border-b">
+          <div>
+            <div className="flex items-center gap-2">
+              <Shuffle className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-base font-semibold tracking-tight font-mono">{groupName}</h2>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Sub-group inside mapper <span className="font-mono">{mapperName}</span>
+            </p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {loading
+            ? <Loading />
+            : error
+            ? <p className="text-xs text-red-600">{error}</p>
+            : (
+              <GovernedYamlEditor
+                title={`Sub-group: ${groupName} (inside mapper ${mapperName})`}
+                initialContent={content ?? ''}
+                onDirectSave={async (yaml) => { await api.saveMapper(mapperName, yaml) }}
+                onProposeChange={async (yaml, reason) => {
+                  await api.createProposal({
+                    artifact_kind: 'sub_group',
+                    artifact_name: groupName,
+                    entity_name: entityName,
+                    reason,
+                    before_yaml: content ?? '',
+                    after_yaml: yaml,
+                  })
+                }}
+                onClose={onClose}
+              />
+            )
+          }
+        </div>
+      </div>
+    </>
   )
 }
 
