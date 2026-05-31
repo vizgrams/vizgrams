@@ -46,11 +46,19 @@ def find_duplicate_target_mappers(model_dir: Path) -> dict[str, list[str]]:
 
 
 def get_mapper_by_name(model_dir: Path, mapper_name: str) -> dict:
-    """Get full mapper detail by mapper name (not entity name)."""
+    """Get full mapper detail by mapper name (not entity name).
+
+    Returns the same shape as ``get_mapper(entity_name)`` so the endpoint
+    response matches ``MapperOut``. Previously this returned the richer
+    ``_mapper_full_detail`` dict (description / grain / enums) which was
+    missing ``file`` and ``raw_yaml`` — the response_model validation
+    raised, the route 500'd, and the UI's Sub-group editor (which loads
+    by mapper name) couldn't open.
+    """
     mappers_dir = model_dir / "mappers"
     for mc in YAMLAdapter.load_mappers(mappers_dir):
         if mc.name == mapper_name:
-            return _mapper_full_detail(mc)
+            return _mapper_to_dict(mc, model_dir)
     raise KeyError(f"Mapper '{mapper_name}' not found.")
 
 
