@@ -942,16 +942,31 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
   )
 }
 
+// Lineage geometry — kept in one place so chips, columns and the SVG
+// connectors all agree. Bumping CHIP_PX (e.g. to fit longer labels)
+// keeps the converger / diverger paths centred on chip midpoints.
+const CHIP_PX = 56
+const ROW_GAP_PX = 8
+
+function laneHeight(count: number): number {
+  if (count <= 0) return CHIP_PX
+  return count * CHIP_PX + (count - 1) * ROW_GAP_PX
+}
+
+function chipMidY(i: number): number {
+  return CHIP_PX / 2 + i * (CHIP_PX + ROW_GAP_PX)
+}
+
 // Sub-groups diverger — visual mirror of Converger but spreads one input
 // across N outputs. Used when the mapper writes to multiple sub-groups.
 function Diverger({ count }: { count: number }) {
-  const height = count * 38
+  const height = laneHeight(count)
+  const midY = height / 2
   return (
     <div className="shrink-0 flex items-center" style={{ height }}>
       <svg width="24" height={height} viewBox={`0 0 24 ${height}`} className="text-muted-foreground/40">
         {Array.from({ length: count }).map((_, i) => {
-          const y = (i + 0.5) * (height / count)
-          const midY = height / 2
+          const y = chipMidY(i)
           return (
             <path
               key={i}
@@ -981,12 +996,16 @@ function LineageChip({
   muted?: boolean
   onClick?: () => void
 }) {
+  // Fixed height matches CHIP_PX so the Converger / Diverger SVG paths
+  // land on chip centres regardless of label length. Truncate long
+  // names with ellipsis rather than letting the chip grow.
   return (
     <button
       onClick={onClick}
       disabled={!onClick}
+      style={{ height: CHIP_PX }}
       className={cn(
-        'shrink-0 inline-flex flex-col items-start px-3 py-2 rounded border transition-colors text-left',
+        'shrink-0 inline-flex flex-col items-start justify-center px-3 rounded border transition-colors text-left w-44',
         active     ? 'border-foreground/40 bg-primary/8'
         : highlight ? 'border-foreground/20 bg-card'
         : muted     ? 'border-dashed bg-muted/30'
@@ -1000,10 +1019,10 @@ function LineageChip({
         {kind}
       </div>
       <div className={cn(
-        'text-xs mt-0.5',
+        'text-xs mt-0.5 truncate w-full',
         mono && 'font-mono',
         muted && 'text-muted-foreground/60 italic',
-      )}>
+      )} title={name}>
         {name}
       </div>
     </button>
@@ -1011,17 +1030,23 @@ function LineageChip({
 }
 
 function LineageArrow() {
-  return <span className="shrink-0 text-muted-foreground/40 select-none">→</span>
+  // Self-center so we line up with the chip / converger midpoints
+  // (parent uses items-stretch so a bare span would float to the top).
+  return (
+    <span className="shrink-0 self-center text-muted-foreground/40 select-none">
+      →
+    </span>
+  )
 }
 
 function Converger({ count }: { count: number }) {
-  const height = count * 38
+  const height = laneHeight(count)
+  const midY = height / 2
   return (
     <div className="shrink-0 flex items-center" style={{ height }}>
       <svg width="24" height={height} viewBox={`0 0 24 ${height}`} className="text-muted-foreground/40">
         {Array.from({ length: count }).map((_, i) => {
-          const y = (i + 0.5) * (height / count)
-          const midY = height / 2
+          const y = chipMidY(i)
           return (
             <path
               key={i}
