@@ -48,7 +48,7 @@ describe('ChartDetailDrawer', () => {
     render(<MemoryRouter><ChartDetailDrawer viewName="x" onClose={() => {}} /></MemoryRouter>)
     await waitFor(() => expect(screen.getByTestId('view-content')).toHaveTextContent('type:chart'))
     expect(getView).toHaveBeenCalledWith('x')
-    expect(executeView).toHaveBeenCalledWith('x', 1000)
+    expect(executeView).toHaveBeenCalledWith('x', 1000, 0, {})
     expect(getQuery).toHaveBeenCalledWith('x')
   })
 

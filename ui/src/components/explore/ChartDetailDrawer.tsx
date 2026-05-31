@@ -17,13 +17,14 @@
  * to a follow-up — for now Edit is an admin-only direct-save.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Eye, Pencil, X } from 'lucide-react'
 
 import type { QueryDetail, ViewDetail, ViewResult } from '@/api/client'
 import { DrilldownOverlay } from '@/components/explore/DrilldownOverlay'
 import { ViewContent } from '@/components/view/ViewContent'
-import type { DrillFrame } from '@/components/view/drilldown'
+import { ViewParamBar } from '@/components/view/ViewParamBar'
+import type { DrillFrame, ViewDrilldownConfig } from '@/components/view/drilldown'
 import { useModel } from '@/context/ModelContext'
 
 interface Props {
@@ -41,8 +42,15 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
   const [query, setQuery] = useState<QueryDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [executing, setExecuting] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
   const [nested, setNested] = useState<DrillFrame | null>(null)
+
+  // Param values the user is editing — start empty, the ViewParamBar's
+  // placeholders show the defaults from the view. On Apply we re-execute
+  // with these values. Reset whenever we switch to a different view.
+  const [paramValues, setParamValues] = useState<Record<string, string>>({})
+  useEffect(() => { setParamValues({}) }, [viewName])
 
   useEffect(() => {
     let cancelled = false
@@ -50,7 +58,7 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
     setError(null)
     Promise.all([
       api.getView(viewName),
-      api.executeView(viewName, 1000),
+      api.executeView(viewName, 1000, 0, paramValues),
     ])
       .then(([d, r]) => {
         if (cancelled) return
@@ -71,7 +79,33 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
+    // paramValues changes go through applyParams(), not this effect — the
+    // initial load uses whatever empty/default state is current.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, viewName, refreshTick])
+
+  // Re-execute with new param values (Apply button in ViewParamBar).
+  // Keeps the detail + query already fetched — just refreshes the data.
+  async function applyParams() {
+    setExecuting(true)
+    setError(null)
+    try {
+      const r = await api.executeView(viewName, 1000, 0, paramValues)
+      setResult(r)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to execute')
+    } finally {
+      setExecuting(false)
+    }
+  }
+
+  // Row-click drilldown — the config lives in the view's viz spec under
+  // `row_drilldown`. Used to be passed as undefined which silently
+  // disabled drilldowns for every table view in /explore.
+  const rowDrilldown = useMemo<ViewDrilldownConfig | undefined>(() => {
+    const viz = result?.visualization as Record<string, unknown> | undefined
+    return (viz?.row_drilldown ?? viz?.app_drilldown) as ViewDrilldownConfig | undefined
+  }, [result])
 
   return (
     <>
@@ -105,12 +139,23 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
           {error && <p className="text-xs text-red-600">{error}</p>}
 
           {!loading && !error && mode === 'preview' && result && (
-            <ViewContent
-              result={result}
-              rowDrilldown={undefined}
-              paramValues={{}}
-              onNavigate={(frame) => setNested(frame)}
-            />
+            <>
+              {detail?.params && detail.params.length > 0 && (
+                <ViewParamBar
+                  params={detail.params}
+                  values={paramValues}
+                  onChange={setParamValues}
+                  onApply={applyParams}
+                />
+              )}
+              {executing && <p className="text-xs text-muted-foreground">Updating…</p>}
+              <ViewContent
+                result={result}
+                rowDrilldown={rowDrilldown}
+                paramValues={paramValues}
+                onNavigate={(frame) => setNested(frame)}
+              />
+            </>
           )}
 
           {!loading && !error && mode === 'edit' && (
