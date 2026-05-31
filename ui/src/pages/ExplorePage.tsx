@@ -957,13 +957,18 @@ function chipMidY(i: number): number {
   return CHIP_PX / 2 + i * (CHIP_PX + ROW_GAP_PX)
 }
 
-// Sub-groups diverger — visual mirror of Converger but spreads one input
-// across N outputs. Used when the mapper writes to multiple sub-groups.
+// Sub-groups diverger — visual mirror of Converger but spreads one
+// input across N outputs.
+//
+// self-center is critical: the parent row uses items-stretch, but this
+// container has an explicit height. Without self-center it'd hug the
+// top of the parent while the chip column next to it is justify-center
+// — the SVG paths would land above the actual chip midpoints.
 function Diverger({ count }: { count: number }) {
   const height = laneHeight(count)
   const midY = height / 2
   return (
-    <div className="shrink-0 flex items-center" style={{ height }}>
+    <div className="shrink-0 self-center flex items-center" style={{ height }}>
       <svg width="24" height={height} viewBox={`0 0 24 ${height}`} className="text-muted-foreground/40">
         {Array.from({ length: count }).map((_, i) => {
           const y = chipMidY(i)
@@ -1043,7 +1048,11 @@ function Converger({ count }: { count: number }) {
   const height = laneHeight(count)
   const midY = height / 2
   return (
-    <div className="shrink-0 flex items-center" style={{ height }}>
+    // self-center keeps the SVG aligned with the chip column on the
+    // left even when the parent row stretches to a taller lane
+    // (e.g. sources=2 and sub-groups=4 → parent height = laneHeight(4),
+    // this converger is laneHeight(2)).
+    <div className="shrink-0 self-center flex items-center" style={{ height }}>
       <svg width="24" height={height} viewBox={`0 0 24 ${height}`} className="text-muted-foreground/40">
         {Array.from({ length: count }).map((_, i) => {
           const y = chipMidY(i)
