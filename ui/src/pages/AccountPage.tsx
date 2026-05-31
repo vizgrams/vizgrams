@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
-import { LogOut, Shield, Pencil, Eye, Bell, UserRound } from 'lucide-react'
+import { LogOut, Shield, Pencil, Bell, UserRound } from 'lucide-react'
 import { getMe, type MeResponse, type PlatformRole } from '@/api/client'
 import { cn } from '@/lib/utils'
 
@@ -70,17 +70,19 @@ export function AccountPage() {
   const roleConfig = me?.role && me.role !== 'viewer' ? ROLE_CONFIG[me.role] : null
   const providerLabel = me?.provider ? (PROVIDER_LABELS[me.provider] ?? me.provider) : '—'
 
-  // Soft sign-out: clears the oauth2-proxy cookie, Auth0 session stays alive
-  // so the next visit is a single click.
-  const softLogoutUrl = '/oauth2/sign_out'
-
-  // Hard sign-out: cookie cleared AND Auth0 session terminated. Constructed
-  // via the rd= param so oauth2-proxy clears its cookie first, then redirects
-  // to the IdP logout page. Only available when the API provides the URL
-  // (set via VZ_HARD_LOGOUT_URL env var in production).
-  const hardLogoutUrl = me?.hard_logout_url
+  // Sign-out has to terminate BOTH the oauth2-proxy cookie AND the IdP
+  // (Auth0) session — otherwise oauth2-proxy bounces straight back to
+  // Auth0, sees a live SSO session, and silently re-authenticates the
+  // same user. Indistinguishable from "the button didn't work".
+  //
+  // We construct it as a soft sign-out URL with rd= pointing at the IdP
+  // logout endpoint, so oauth2-proxy clears its cookie *first* and then
+  // redirects to terminate the IdP session. Falls back to soft-only if
+  // the API hasn't supplied a hard-logout URL (e.g. local dev with no
+  // VZ_HARD_LOGOUT_URL).
+  const logoutUrl = me?.hard_logout_url
     ? `/oauth2/sign_out?rd=${encodeURIComponent(me.hard_logout_url)}`
-    : null
+    : '/oauth2/sign_out'
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 space-y-5">
@@ -143,30 +145,16 @@ export function AccountPage() {
 
       {/* ── Session ────────────────────────────────────────────────────── */}
       <SectionCard title="Session" icon={LogOut}>
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <a
-            href={softLogoutUrl}
-            className="inline-flex items-center gap-2 text-sm text-destructive hover:text-destructive/80 transition-colors"
-          >
-            <LogOut className="h-4 w-4" />
-            Sign out
-          </a>
-          {hardLogoutUrl && (
-            <>
-              <span className="text-border hidden sm:block">|</span>
-              <a
-                href={hardLogoutUrl}
-                className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-destructive transition-colors"
-              >
-                <Eye className="h-4 w-4" />
-                Sign out of all devices
-              </a>
-            </>
-          )}
-        </div>
+        <a
+          href={logoutUrl}
+          className="inline-flex items-center gap-2 text-sm text-destructive hover:text-destructive/80 transition-colors"
+        >
+          <LogOut className="h-4 w-4" />
+          Sign out
+        </a>
         <p className="text-xs text-muted-foreground/60 mt-3">
-          "Sign out" clears this browser session. "Sign out of all devices" also
-          terminates your identity provider session, requiring a full re-login next time.
+          Signs you out of vizgrams and your identity provider — you'll need to
+          re-enter your credentials next time you visit.
         </p>
       </SectionCard>
 
