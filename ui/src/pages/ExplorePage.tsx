@@ -802,12 +802,18 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
             <div className="flex flex-col gap-2">
               {pipeline.sources.map((src, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <LineageChip icon={<Wrench className="h-3 w-3" />} kind="Tool" name={src.tool ?? '—'} />
+                  <LineageChip
+                    icon={<Wrench className="h-3 w-3" />}
+                    kind="Tool"
+                    name={src.tool ?? '(not in catalog)'}
+                    muted={!src.tool}
+                  />
                   <LineageArrow />
                   <LineageChip
                     icon={<Download className="h-3 w-3" />}
                     kind="Extractor"
-                    name={src.extractor ?? '—'}
+                    name={src.extractor ?? '(not in catalog)'}
+                    muted={!src.extractor}
                     onClick={src.extractor ? () => setOpenExtractor(src.extractor) : undefined}
                   />
                   <LineageArrow />
@@ -901,7 +907,7 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
 }
 
 function LineageChip({
-  icon, kind, name, mono, highlight, active, onClick,
+  icon, kind, name, mono, highlight, active, muted, onClick,
 }: {
   icon: React.ReactNode
   kind: string
@@ -909,6 +915,9 @@ function LineageChip({
   mono?: boolean
   highlight?: boolean
   active?: boolean
+  // Visually de-emphasise — used when the chip stands in for missing
+  // data (e.g. raw table has no extractor in the catalog).
+  muted?: boolean
   onClick?: () => void
 }) {
   return (
@@ -919,6 +928,7 @@ function LineageChip({
         'shrink-0 inline-flex flex-col items-start px-3 py-2 rounded border transition-colors text-left',
         active     ? 'border-foreground/40 bg-primary/8'
         : highlight ? 'border-foreground/20 bg-card'
+        : muted     ? 'border-dashed bg-muted/30'
         :             'bg-card',
         onClick && 'hover:bg-muted cursor-pointer',
         !onClick && 'cursor-default',
@@ -928,7 +938,13 @@ function LineageChip({
         {icon}
         {kind}
       </div>
-      <div className={cn('text-xs mt-0.5', mono && 'font-mono')}>{name}</div>
+      <div className={cn(
+        'text-xs mt-0.5',
+        mono && 'font-mono',
+        muted && 'text-muted-foreground/60 italic',
+      )}>
+        {name}
+      </div>
     </button>
   )
 }

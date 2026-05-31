@@ -3,6 +3,7 @@
 
 """Entity service: ontology inspection and validation."""
 
+import logging
 import re
 from pathlib import Path
 
@@ -11,6 +12,8 @@ import yaml
 from core import metadata_db
 from semantic.types import EntityDef
 from semantic.yaml_adapter import YAMLAdapter
+
+_log = logging.getLogger(__name__)
 
 
 def _to_snake(name: str) -> str:
@@ -268,20 +271,57 @@ def _build_extractor_table_index(model_dir: Path) -> dict[str, dict]:
 
     Built by walking every extractor's tasks and indexing their outputs.
     Last writer wins if two extractors claim the same table (shouldn't
-    happen in practice — extractors are 1:1 with tools and tables)."""
+    happen in practice — extractors are 1:1 with tools and tables).
+
+    Parse failures and tasks with no outputs are logged at WARN with the
+    extractor name and a sample of what's wrong. The /explore Pipeline
+    tab silently rendered "—" for raw tables whose producing extractor
+    wasn't indexed; logging here surfaces the actual cause so fixes are
+    targeted instead of guesswork.
+    """
     from engine.extractor import parse_yaml_config_from_content
     idx: dict[str, dict] = {}
-    for name in metadata_db.list_artifact_names(model_dir, "extractor"):
+    extractor_names = metadata_db.list_artifact_names(model_dir, "extractor")
+    _log.info(
+        "Building extractor→table index for model %s: %d extractor(s) in catalog",
+        model_dir.name, len(extractor_names),
+    )
+    for name in extractor_names:
         content = metadata_db.get_current_content(model_dir, "extractor", name)
         if not content:
+            _log.warning("Extractor %r: no content in metadata DB — skipped", name)
             continue
         try:
             tasks = parse_yaml_config_from_content(content)
-        except Exception:
+        except Exception as exc:
+            _log.warning(
+                "Extractor %r: parse failed (%s: %s) — skipped",
+                name, type(exc).__name__, exc,
+            )
+            continue
+        if not tasks:
+            _log.warning("Extractor %r: parsed but contains no tasks — skipped", name)
             continue
         for task in tasks:
+            if not task.outputs:
+                _log.warning(
+                    "Extractor %r task %r (tool=%s): no outputs declared — "
+                    "raw table will appear as 'not in catalog' in the UI",
+                    name, task.name, task.tool,
+                )
+                continue
             for output in task.outputs:
+                if not output.table:
+                    _log.warning(
+                        "Extractor %r task %r: output has no table name",
+                        name, task.name,
+                    )
+                    continue
                 idx[output.table] = {"name": name, "tool": task.tool}
+    _log.info(
+        "Extractor→table index for model %s: %d raw table(s) mapped",
+        model_dir.name, len(idx),
+    )
     return idx
 
 
