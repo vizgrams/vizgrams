@@ -1,5 +1,5 @@
 id: dora_metrics_compound
-model: iagai
+model: example
 prompt: "Show me DORA metrics"
 expectations:
   query: |

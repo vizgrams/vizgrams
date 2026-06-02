@@ -24,9 +24,9 @@ def load_config_yaml(model_dir: Path) -> dict:
         so env-specific entries take priority (first-match wins in RBAC).
       - All other top-level keys from the env file overwrite the base value.
 
-    This lets you keep production access rules in ``config.yaml`` and add Dex
-    test accounts or relaxed permissions in ``config.dev.yaml`` without editing
-    the production file.
+    This lets you keep production access rules in ``config.yaml`` and add
+    test accounts or relaxed permissions in ``config.dev.yaml`` without
+    editing the production file.
     """
     model_dir = Path(model_dir)
     base_path = model_dir / "config.yaml"

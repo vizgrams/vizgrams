@@ -39,10 +39,10 @@ def test_resolve_user_different_providers_different_ids(tmp_path):
 
 def test_resolve_user_updates_email(tmp_path):
     db = tmp_path / "vg.db"
-    resolve_user("dex", "sub-123", email="old@example.com", db_path=db)
-    resolve_user("dex", "sub-123", email="new@example.com", db_path=db)
+    resolve_user("auth0", "sub-123", email="old@example.com", db_path=db)
+    resolve_user("auth0", "sub-123", email="new@example.com", db_path=db)
     # Display name should still resolve without error
-    uid = resolve_user("dex", "sub-123", db_path=db)
+    uid = resolve_user("auth0", "sub-123", db_path=db)
     assert uid is not None
 
 
@@ -53,13 +53,13 @@ def test_resolve_user_updates_email(tmp_path):
 
 def test_display_name_from_explicit_name(tmp_path):
     db = tmp_path / "vg.db"
-    uid = resolve_user("dex", "u1", display_name="Alice Smith", db_path=db)
+    uid = resolve_user("auth0", "u1", display_name="Alice Smith", db_path=db)
     assert get_user_display_name(uid, db_path=db) == "Alice Smith"
 
 
 def test_display_name_falls_back_to_email_prefix(tmp_path):
     db = tmp_path / "vg.db"
-    uid = resolve_user("dex", "u2", email="bob@example.com", db_path=db)
+    uid = resolve_user("auth0", "u2", email="bob@example.com", db_path=db)
     assert get_user_display_name(uid, db_path=db) == "bob"
 
 

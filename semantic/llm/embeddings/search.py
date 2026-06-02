@@ -4,7 +4,7 @@
 """SemanticSearch — the seam consumed by LLM tools (Epic 20 VG-230).
 
 A thin facade over a provider + store: the LLM tool calls
-``find(query="monthly PR throughput", model_id="iagai")`` and gets back
+``find(query="monthly PR throughput", model_id="example")`` and gets back
 ranked matches without knowing anything about embeddings, vectors, or
 the underlying ClickHouse table.
 

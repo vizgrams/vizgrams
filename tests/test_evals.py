@@ -36,12 +36,12 @@ def _write_case(tmp_path: Path, name: str, body: dict) -> Path:
 class TestLoadCase:
     def test_round_trips_minimum_fields(self, tmp_path):
         path = _write_case(tmp_path, "x", {
-            "id": "x", "model": "iagai", "prompt": "show me PRs",
+            "id": "x", "model": "example", "prompt": "show me PRs",
             "expectations": {"query": "Q", "chart": "C"},
         })
         c = load_case(path)
         assert c.id == "x"
-        assert c.model == "iagai"
+        assert c.model == "example"
         assert c.prompt == "show me PRs"
         assert c.query_expectation == "Q"
         assert c.chart_expectation == "C"
@@ -49,7 +49,7 @@ class TestLoadCase:
 
     def test_id_defaults_to_filename_stem_when_absent(self, tmp_path):
         path = _write_case(tmp_path, "weekly_throughput", {
-            "model": "iagai", "prompt": "x",
+            "model": "example", "prompt": "x",
         })
         assert load_case(path).id == "weekly_throughput"
 
@@ -110,7 +110,7 @@ def test_shipped_case_library_is_valid():
 
 def _case() -> EvalCase:
     return EvalCase(
-        id="t", model="iagai", prompt="how many widgets?",
+        id="t", model="example", prompt="how many widgets?",
         query_expectation="root Widget, count(widget_key)",
         chart_expectation="kpi for single scalar",
     )

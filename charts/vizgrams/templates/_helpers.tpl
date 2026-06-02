@@ -88,6 +88,10 @@ Common env shared by API + batch — auth secrets, ClickHouse, models.
 - secretRef:
     name: {{ .Values.auth.existingSecret }}
 {{- end }}
+{{- range .Values.extraSecrets }}
+- secretRef:
+    name: {{ . }}
+{{- end }}
 {{- with .Values.extraEnvFrom }}
 {{ toYaml . }}
 {{- end }}

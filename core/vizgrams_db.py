@@ -262,7 +262,7 @@ def migrate_email_ids(db_path: Path | None = None) -> int:
 
         for email in emails:
             existing = conn.execute(
-                "SELECT id FROM users WHERE provider='dex' AND external_id=?",
+                "SELECT id FROM users WHERE provider='legacy_email' AND external_id=?",
                 (email,),
             ).fetchone()
             if existing:
@@ -274,7 +274,7 @@ def migrate_email_ids(db_path: Path | None = None) -> int:
                 conn.execute(
                     """INSERT INTO users (id, provider, external_id, email, display_name, created_at, updated_at)
                        VALUES (?,?,?,?,?,?,?)""",
-                    (user_id, "dex", email, email, name, now, now),
+                    (user_id, "legacy_email", email, email, name, now, now),
                 )
             conn.execute(
                 "UPDATE vizgrams SET author_id=? WHERE author_id=?",

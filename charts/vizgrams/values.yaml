@@ -155,5 +155,14 @@ extraEnvFrom: []
 # - secretRef:
 #     name: my-extra-secrets
 
+# Shorthand for the common case of pulling extra Secrets into the api + batch
+# pods as environment variables. Each entry is rendered as `envFrom: secretRef`.
+# Use this for things like tool credentials (GitHub PAT, Jira API token, …)
+# where you've created the Secret out-of-band (sealed-secrets, external-secrets,
+# kubectl, …) and just want every key exposed as an env var.
+extraSecrets: []
+# - vizgrams-tool-creds
+# - vizgrams-extra-creds
+
 extraVolumes: []
 extraVolumeMounts: []

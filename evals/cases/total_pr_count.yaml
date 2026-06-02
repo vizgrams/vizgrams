@@ -1,5 +1,5 @@
 id: total_pr_count
-model: iagai
+model: example
 prompt: "How many pull requests have there been in total?"
 expectations:
   query: |

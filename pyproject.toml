@@ -43,6 +43,9 @@ pytest = "*"
 pytest-cov = "*"
 ruff = "^0.15.8"
 
+[tool.poetry.scripts]
+vzctl = "tools.vzctl:cli"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

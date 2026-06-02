@@ -35,7 +35,7 @@ def _resolve_identity(request: Request) -> tuple[str, str, str | None, str | Non
       2. X-Auth-Request-Email (fallback for proxies that don't forward User)
       3. DEV_USER env var      (local development only)
 
-    Provider is taken from VZ_AUTH_PROVIDER env var (default "dex").
+    Provider is taken from VZ_AUTH_PROVIDER env var (default "auth0").
     DEV_USER requests always use provider "dev".
     """
     external_id = request.headers.get("X-Auth-Request-User")

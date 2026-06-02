@@ -28,11 +28,11 @@ from core.chat_history_db import (
 
 class TestCreateAndGetSession:
     def test_create_round_trips(self):
-        sid = create_session(user_id="alice", model_id="iagai", title="DORA chat")
+        sid = create_session(user_id="alice", model_id="example", title="DORA chat")
         s = get_session(sid, user_id="alice")
         assert s is not None
         assert s["user_id"] == "alice"
-        assert s["model_id"] == "iagai"
+        assert s["model_id"] == "example"
         assert s["title"] == "DORA chat"
         assert s["created_at"]
         assert s["updated_at"]
@@ -40,7 +40,7 @@ class TestCreateAndGetSession:
 
     def test_get_returns_none_for_wrong_owner(self):
         """Owner-scoped — never leak another user's session existence."""
-        sid = create_session(user_id="alice", model_id="iagai")
+        sid = create_session(user_id="alice", model_id="example")
         assert get_session(sid, user_id="bob") is None
 
     def test_get_returns_none_for_missing(self):
@@ -49,39 +49,39 @@ class TestCreateAndGetSession:
 
 class TestListSessions:
     def test_returns_user_sessions_newest_first(self):
-        s1 = create_session(user_id="alice", model_id="iagai", title="first")
-        s2 = create_session(user_id="alice", model_id="iagai", title="second")
-        out = list_sessions_for_user(user_id="alice", model_id="iagai")
+        s1 = create_session(user_id="alice", model_id="example", title="first")
+        s2 = create_session(user_id="alice", model_id="example", title="second")
+        out = list_sessions_for_user(user_id="alice", model_id="example")
         # Updated_at is identical at insert time — secondary order is
         # implementation-defined. Just assert both come back.
         assert {s["id"] for s in out} == {s1, s2}
 
     def test_isolates_users(self):
-        create_session(user_id="alice", model_id="iagai")
-        create_session(user_id="bob", model_id="iagai")
-        assert len(list_sessions_for_user(user_id="alice", model_id="iagai")) == 1
-        assert len(list_sessions_for_user(user_id="bob", model_id="iagai")) == 1
+        create_session(user_id="alice", model_id="example")
+        create_session(user_id="bob", model_id="example")
+        assert len(list_sessions_for_user(user_id="alice", model_id="example")) == 1
+        assert len(list_sessions_for_user(user_id="bob", model_id="example")) == 1
 
     def test_filters_by_model(self):
-        create_session(user_id="alice", model_id="iagai")
+        create_session(user_id="alice", model_id="example")
         create_session(user_id="alice", model_id="openflights")
-        out = list_sessions_for_user(user_id="alice", model_id="iagai")
+        out = list_sessions_for_user(user_id="alice", model_id="example")
         assert len(out) == 1
-        assert out[0]["model_id"] == "iagai"
+        assert out[0]["model_id"] == "example"
 
     def test_hides_ended_sessions_by_default(self):
-        sid = create_session(user_id="alice", model_id="iagai")
+        sid = create_session(user_id="alice", model_id="example")
         end_session(sid, user_id="alice")
-        assert list_sessions_for_user(user_id="alice", model_id="iagai") == []
+        assert list_sessions_for_user(user_id="alice", model_id="example") == []
         # include_ended=True surfaces them again.
         out = list_sessions_for_user(
-            user_id="alice", model_id="iagai", include_ended=True,
+            user_id="alice", model_id="example", include_ended=True,
         )
         assert len(out) == 1
 
     def test_pagination(self):
         for _ in range(5):
-            create_session(user_id="alice", model_id="iagai")
+            create_session(user_id="alice", model_id="example")
         assert len(list_sessions_for_user(user_id="alice", limit=2)) == 2
         assert len(list_sessions_for_user(user_id="alice", limit=2, offset=2)) == 2
         assert len(list_sessions_for_user(user_id="alice", limit=2, offset=4)) == 1
@@ -89,32 +89,32 @@ class TestListSessions:
 
 class TestUpdateSessionTitle:
     def test_updates_title_for_owner(self):
-        sid = create_session(user_id="alice", model_id="iagai", title="old")
+        sid = create_session(user_id="alice", model_id="example", title="old")
         assert update_session_title(sid, user_id="alice", title="new") is True
         assert get_session(sid, user_id="alice")["title"] == "new"
 
     def test_wrong_owner_is_noop(self):
-        sid = create_session(user_id="alice", model_id="iagai", title="old")
+        sid = create_session(user_id="alice", model_id="example", title="old")
         assert update_session_title(sid, user_id="bob", title="hack") is False
         assert get_session(sid, user_id="alice")["title"] == "old"
 
 
 class TestEndSession:
     def test_marks_ended_at(self):
-        sid = create_session(user_id="alice", model_id="iagai")
+        sid = create_session(user_id="alice", model_id="example")
         assert end_session(sid, user_id="alice") is True
         s = get_session(sid, user_id="alice")
         assert s["ended_at"] is not None
 
     def test_ending_twice_is_noop(self):
-        sid = create_session(user_id="alice", model_id="iagai")
+        sid = create_session(user_id="alice", model_id="example")
         end_session(sid, user_id="alice")
         # Second call returns False because the WHERE clause guards on
         # ``ended_at IS NULL``.
         assert end_session(sid, user_id="alice") is False
 
     def test_wrong_owner_is_noop(self):
-        sid = create_session(user_id="alice", model_id="iagai")
+        sid = create_session(user_id="alice", model_id="example")
         assert end_session(sid, user_id="bob") is False
         assert get_session(sid, user_id="alice")["ended_at"] is None
 
@@ -126,7 +126,7 @@ class TestEndSession:
 
 @pytest.fixture
 def session_id():
-    return create_session(user_id="alice", model_id="iagai", title="t")
+    return create_session(user_id="alice", model_id="example", title="t")
 
 
 class TestAppendTurn:
@@ -211,8 +211,8 @@ class TestSetFeedback:
 class TestRetentionByAge:
     def test_ends_old_sessions(self, monkeypatch):
         """Sessions inactive longer than the TTL get auto-ended."""
-        sid_old = create_session(user_id="alice", model_id="iagai")
-        sid_new = create_session(user_id="alice", model_id="iagai")
+        sid_old = create_session(user_id="alice", model_id="example")
+        sid_new = create_session(user_id="alice", model_id="example")
         # Backdate the old session's updated_at by editing the DB directly.
         import sqlite3
 
@@ -232,8 +232,8 @@ class TestRetentionByAge:
         assert get_session(sid_new, user_id="alice")["ended_at"] is None
 
     def test_scoped_to_one_user_when_user_id_supplied(self):
-        sid_a = create_session(user_id="alice", model_id="iagai")
-        sid_b = create_session(user_id="bob", model_id="iagai")
+        sid_a = create_session(user_id="alice", model_id="example")
+        sid_b = create_session(user_id="bob", model_id="example")
         import sqlite3
 
         from core.metadata_db import get_api_db_path
@@ -256,7 +256,7 @@ class TestRetentionByCap:
         import time
         sids = []
         for _ in range(5):
-            sids.append(create_session(user_id="alice", model_id="iagai"))
+            sids.append(create_session(user_id="alice", model_id="example"))
             time.sleep(0.001)  # ensure distinct updated_at
 
         ended = end_oldest_sessions_above_cap(user_id="alice", max_active=3)
@@ -270,13 +270,13 @@ class TestRetentionByCap:
 
     def test_under_cap_is_noop(self):
         for _ in range(2):
-            create_session(user_id="alice", model_id="iagai")
+            create_session(user_id="alice", model_id="example")
         assert end_oldest_sessions_above_cap(user_id="alice", max_active=10) == 0
 
     def test_already_ended_dont_count(self):
         # 5 sessions: end 2 manually, cap at 3 → no additional ends needed
         # because only 3 are still active.
-        sids = [create_session(user_id="alice", model_id="iagai") for _ in range(5)]
+        sids = [create_session(user_id="alice", model_id="example") for _ in range(5)]
         end_session(sids[0], user_id="alice")
         end_session(sids[1], user_id="alice")
         assert end_oldest_sessions_above_cap(user_id="alice", max_active=3) == 0

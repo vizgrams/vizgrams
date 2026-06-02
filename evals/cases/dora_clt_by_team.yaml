@@ -1,5 +1,5 @@
 id: dora_clt_by_team
-model: iagai
+model: example
 prompt: "Show me dora clt by team"
 expectations:
   query: |
