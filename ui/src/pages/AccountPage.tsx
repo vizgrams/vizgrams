@@ -26,6 +26,9 @@ const ROLE_CONFIG: Record<Exclude<PlatformRole, 'viewer'>, { label: string; icon
 const PROVIDER_LABELS: Record<string, string> = {
   auth0: 'Auth0',
   google: 'Google',
+  entra: 'Microsoft Entra ID',
+  okta: 'Okta',
+  dex: 'Dex',
   dev: 'Local dev',
 }
 
