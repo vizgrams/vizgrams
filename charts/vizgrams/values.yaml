@@ -161,8 +161,8 @@ extraEnvFrom: []
 # where you've created the Secret out-of-band (sealed-secrets, external-secrets,
 # kubectl, …) and just want every key exposed as an env var.
 extraSecrets: []
-# - vizgrams-iagai-tool-creds
-# - vizgrams-iagai-extra-creds
+# - vizgrams-tool-creds
+# - vizgrams-extra-creds
 
 extraVolumes: []
 extraVolumeMounts: []

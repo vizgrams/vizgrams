@@ -28,7 +28,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   google: 'Google',
   entra: 'Microsoft Entra ID',
   okta: 'Okta',
-  dex: 'Dex',
   dev: 'Local dev',
 }
 
