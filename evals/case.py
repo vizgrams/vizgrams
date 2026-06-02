@@ -11,7 +11,7 @@ This keeps the dataset readable + lets the judge weigh shades of
 YAML shape:
 
     id: weekly_pr_throughput
-    model: iagai
+    model: example
     prompt: "Show me weekly PR throughput"
     expectations:
       query: |

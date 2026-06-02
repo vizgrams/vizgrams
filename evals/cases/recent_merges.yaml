@@ -1,5 +1,5 @@
 id: recent_merges
-model: iagai
+model: example
 prompt: "Show me the most recent 20 merged PRs"
 expectations:
   query: |

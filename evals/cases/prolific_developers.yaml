@@ -1,11 +1,11 @@
 id: prolific_developers
-model: iagai
+model: example
 prompt: "Show me the most prolific developers"
 expectations:
   query: |
     No exact saved view matches — should build a fresh query.
     Root: Person (or whatever entity represents authors / developers
-    in the iagai model). Measure: count of pull_request_key (or
+    in the example model). Measure: count of pull_request_key (or
     commits, both acceptable) grouped by author. Order by count DESC,
     limit 10-20 for a top-N. Should NOT root on PullRequest with a
     group_by author — that's the same shape but reads worse from

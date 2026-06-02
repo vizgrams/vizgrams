@@ -19,13 +19,13 @@ def _seed(store, provider, model_id, kind, name, description):
 
 
 def test_find_returns_hits_sorted_by_distance(fake_provider, fake_store):
-    _seed(fake_store, fake_provider, "iagai", "query", "pr_throughput",
+    _seed(fake_store, fake_provider, "example", "query", "pr_throughput",
           "weekly count of merged pull requests")
-    _seed(fake_store, fake_provider, "iagai", "query", "deploy_count",
+    _seed(fake_store, fake_provider, "example", "query", "deploy_count",
           "deployment volume by service")
 
     search = SemanticSearch(provider=fake_provider, store=fake_store)
-    hits = search.find("weekly count of merged pull requests", model_id="iagai")
+    hits = search.find("weekly count of merged pull requests", model_id="example")
 
     assert len(hits) == 2
     assert all(isinstance(h, SearchHit) for h in hits)
@@ -37,12 +37,12 @@ def test_find_returns_hits_sorted_by_distance(fake_provider, fake_store):
 
 
 def test_find_filters_by_kind(fake_provider, fake_store):
-    _seed(fake_store, fake_provider, "iagai", "query", "x", "foo")
-    _seed(fake_store, fake_provider, "iagai", "view", "y", "foo")
-    _seed(fake_store, fake_provider, "iagai", "feature", "z", "foo")
+    _seed(fake_store, fake_provider, "example", "query", "x", "foo")
+    _seed(fake_store, fake_provider, "example", "view", "y", "foo")
+    _seed(fake_store, fake_provider, "example", "feature", "z", "foo")
 
     search = SemanticSearch(provider=fake_provider, store=fake_store)
-    hits = search.find("foo", model_id="iagai", kinds=["query", "view"])
+    hits = search.find("foo", model_id="example", kinds=["query", "view"])
     kinds = {h.kind for h in hits}
     assert kinds == {"query", "view"}
 

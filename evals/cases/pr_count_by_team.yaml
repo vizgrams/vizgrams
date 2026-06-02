@@ -1,11 +1,11 @@
 id: pr_count_by_team
-model: iagai
+model: example
 prompt: "PR count by team"
 expectations:
   query: |
     Root: PullRequest. Measure: count of pull_request_key. Group by:
     team name (via the author → team relation or whichever path the
-    iagai ontology exposes — must be a real relation, not a guess).
+    example ontology exposes — must be a real relation, not a guess).
     No time filter implied.
   chart: |
     Categorical x + numeric y → bar chart. Top-N optional but order

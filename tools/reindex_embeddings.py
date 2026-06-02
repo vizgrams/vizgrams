@@ -11,9 +11,9 @@ The indexer fires on save; this CLI handles backfill and recovery:
 
 Usage::
 
-    poetry run python -m tools.reindex_embeddings --model iagai
+    poetry run python -m tools.reindex_embeddings --model example
     poetry run python -m tools.reindex_embeddings --all
-    poetry run python -m tools.reindex_embeddings --model iagai --kinds query view --force
+    poetry run python -m tools.reindex_embeddings --model example --kinds query view --force
 
 ``--force`` re-embeds even artifacts whose content hash is unchanged
 (used after swapping the text builder so previously-skipped rows get

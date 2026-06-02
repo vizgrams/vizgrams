@@ -1,5 +1,5 @@
 id: weekly_pr_throughput
-model: iagai
+model: example
 prompt: "Show me weekly PR throughput"
 expectations:
   query: |
