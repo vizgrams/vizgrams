@@ -16,7 +16,7 @@
 
 import { useState } from 'react'
 import {
-  BarChart2, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown,
+  BarChart2, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, LayoutDashboard,
 } from 'lucide-react'
 
 import type { ViewResult } from '@/api/client'
@@ -41,11 +41,13 @@ function formatValue(value: string | number | null, fmt?: { type: string; unit?:
 export function ViewContent({
   result,
   rowDrilldown,
+  appDrilldown,
   paramValues,
   onNavigate,
 }: {
   result: ViewResult
   rowDrilldown?: ViewDrilldownConfig
+  appDrilldown?: ViewDrilldownConfig
   paramValues: Record<string, string>
   onNavigate: (frame: DrillFrame) => void
 }) {
@@ -82,6 +84,9 @@ export function ViewContent({
     const colIndices = columns.map((c) => result.columns.indexOf(c)).filter((i) => i >= 0)
     const displayCols = colIndices.map((i) => result.columns[i])
     const isDrillable = !!rowDrilldown
+    const hasAppDrill = !!appDrilldown
+    const appDrillTitle = appDrilldown?.label
+      ?? (appDrilldown?.app ? `Open ${appDrilldown.app}` : undefined)
 
     const sortedRows = sort ? [...result.rows].sort((a, b) => {
       const idx = result.columns.indexOf(sort.col)
@@ -129,6 +134,7 @@ export function ViewContent({
                     </button>
                   </th>
                 ))}
+                {hasAppDrill && <th className="w-6" />}
                 {isDrillable && <th className="w-6" />}
               </tr>
             </thead>
@@ -155,6 +161,22 @@ export function ViewContent({
                       </td>
                     )
                   })}
+                  {hasAppDrill && (
+                    <td className="pr-2">
+                      <button
+                        type="button"
+                        title={appDrillTitle}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const frame = resolveViewDrilldown(appDrilldown!, row, result.columns, paramValues)
+                          if (frame) onNavigate(frame)
+                        }}
+                        className="p-1 rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted/60 transition-colors"
+                      >
+                        <LayoutDashboard className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  )}
                   {isDrillable && (
                     <td className="pr-3">
                       <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30 group-hover:text-muted-foreground transition-colors" />
