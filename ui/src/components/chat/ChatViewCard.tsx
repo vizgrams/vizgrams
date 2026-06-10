@@ -168,7 +168,8 @@ function ChatViewBody({ response }: { response: ChatResponse }) {
   }
 
   const viz = (result.visualization as Record<string, unknown>) || {}
-  const rowDrilldown = (viz.row_drilldown ?? viz.app_drilldown) as Parameters<typeof ViewContent>[0]['rowDrilldown']
+  const rowDrilldown = viz.row_drilldown as Parameters<typeof ViewContent>[0]['rowDrilldown']
+  const appDrilldown = viz.app_drilldown as Parameters<typeof ViewContent>[0]['appDrilldown']
 
   return (
     <div className="space-y-3">
@@ -201,6 +202,7 @@ function ChatViewBody({ response }: { response: ChatResponse }) {
       <ViewContent
         result={result}
         rowDrilldown={rowDrilldown}
+        appDrilldown={appDrilldown}
         paramValues={paramValues}
         onNavigate={handleNavigate}
       />

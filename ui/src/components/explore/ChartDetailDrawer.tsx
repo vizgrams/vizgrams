@@ -99,12 +99,19 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
     }
   }
 
-  // Row-click drilldown — the config lives in the view's viz spec under
-  // `row_drilldown`. Used to be passed as undefined which silently
-  // disabled drilldowns for every table view in /explore.
+  // Row-click vs. app drilldown — both come from the view's viz spec.
+  // The row drilldown drives the click-on-row navigation (typically to a
+  // detail view); the app drilldown surfaces a secondary affordance per row
+  // that hops to a related application. Previously these were collapsed
+  // into a single slot via ??, which silently dropped app_drilldown when
+  // row_drilldown was also present (the dora_clt_by_team → team_health case).
   const rowDrilldown = useMemo<ViewDrilldownConfig | undefined>(() => {
     const viz = result?.visualization as Record<string, unknown> | undefined
-    return (viz?.row_drilldown ?? viz?.app_drilldown) as ViewDrilldownConfig | undefined
+    return viz?.row_drilldown as ViewDrilldownConfig | undefined
+  }, [result])
+  const appDrilldown = useMemo<ViewDrilldownConfig | undefined>(() => {
+    const viz = result?.visualization as Record<string, unknown> | undefined
+    return viz?.app_drilldown as ViewDrilldownConfig | undefined
   }, [result])
 
   return (
@@ -152,6 +159,7 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
               <ViewContent
                 result={result}
                 rowDrilldown={rowDrilldown}
+                appDrilldown={appDrilldown}
                 paramValues={paramValues}
                 onNavigate={(frame) => setNested(frame)}
               />
