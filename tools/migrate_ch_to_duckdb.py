@@ -13,9 +13,9 @@ Phase 8 flips the model config from `backend: clickhouse` to
 Usage:
 
   poetry run python tools/migrate_ch_to_duckdb.py \\
-    --model-dir models/iagai \\
-    --ch-database iagai \\
-    --ch-raw-database iagai_raw
+    --model-dir models/example \\
+    --ch-database example \\
+    --ch-raw-database example_raw
 
 Aborts on row-count mismatch by default. Null-count mismatches are
 reported as warnings unless --strict is set.

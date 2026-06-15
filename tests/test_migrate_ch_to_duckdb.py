@@ -104,16 +104,16 @@ def ch():
 
 
 def test_list_user_tables_returns_sorted_names(ch: FakeCHClient):
-    ch.add("iagai", "team", pa.table({"team_key": ["a"]}))
-    ch.add("iagai", "person", pa.table({"person_key": ["p1"]}))
-    assert _list_user_tables(ch, "iagai") == ["person", "team"]
+    ch.add("example", "team", pa.table({"team_key": ["a"]}))
+    ch.add("example", "person", pa.table({"person_key": ["p1"]}))
+    assert _list_user_tables(ch, "example") == ["person", "team"]
 
 
 def test_list_user_tables_scopes_by_database(ch: FakeCHClient):
-    ch.add("iagai", "person", pa.table({"k": ["a"]}))
-    ch.add("iagai_raw", "jira_users", pa.table({"k": ["a"]}))
-    assert _list_user_tables(ch, "iagai") == ["person"]
-    assert _list_user_tables(ch, "iagai_raw") == ["jira_users"]
+    ch.add("example", "person", pa.table({"k": ["a"]}))
+    ch.add("example_raw", "jira_users", pa.table({"k": ["a"]}))
+    assert _list_user_tables(ch, "example") == ["person"]
+    assert _list_user_tables(ch, "example_raw") == ["jira_users"]
 
 
 # ---------------------------------------------------------------------------
@@ -126,9 +126,9 @@ def test_migrate_one_table_copies_rows_and_columns(ch: FakeCHClient, duck_conn):
         "id": [1, 2, 3],
         "name": ["a", "b", "c"],
     })
-    ch.add("iagai", "widget", src)
+    ch.add("example", "widget", src)
     report = _migrate_one_table(
-        ch_client=ch, duck=duck_conn, ch_database="iagai",
+        ch_client=ch, duck=duck_conn, ch_database="example",
         table="widget", check_nulls=True,
     )
     assert report.parity_ok
@@ -141,9 +141,9 @@ def test_migrate_one_table_copies_rows_and_columns(ch: FakeCHClient, duck_conn):
 def test_migrate_one_table_drops_stale_target(ch: FakeCHClient, duck_conn):
     duck_conn.execute("CREATE TABLE widget (legacy INTEGER)")
     duck_conn.execute("INSERT INTO widget VALUES (99)")
-    ch.add("iagai", "widget", pa.table({"id": [1]}))
+    ch.add("example", "widget", pa.table({"id": [1]}))
     report = _migrate_one_table(
-        ch_client=ch, duck=duck_conn, ch_database="iagai",
+        ch_client=ch, duck=duck_conn, ch_database="example",
         table="widget", check_nulls=False,
     )
     assert report.parity_ok
@@ -155,7 +155,7 @@ def test_migrate_one_table_drops_stale_target(ch: FakeCHClient, duck_conn):
 def test_migrate_one_table_records_load_errors(ch: FakeCHClient, duck_conn):
     # No table → query_arrow KeyError surfaces as report.error
     report = _migrate_one_table(
-        ch_client=ch, duck=duck_conn, ch_database="iagai",
+        ch_client=ch, duck=duck_conn, ch_database="example",
         table="nope", check_nulls=False,
     )
     assert not report.parity_ok
@@ -171,9 +171,9 @@ def test_migrate_one_table_null_warnings_only_when_count_differs(
         "id": pa.array([1, 2, None]),
         "name": pa.array(["a", None, "c"]),
     })
-    ch.add("iagai", "widget", src)
+    ch.add("example", "widget", src)
     report = _migrate_one_table(
-        ch_client=ch, duck=duck_conn, ch_database="iagai",
+        ch_client=ch, duck=duck_conn, ch_database="example",
         table="widget", check_nulls=True,
     )
     assert report.parity_ok
@@ -186,26 +186,26 @@ def test_migrate_one_table_null_warnings_only_when_count_differs(
 
 
 def test_migrate_walks_sem_then_raw(ch: FakeCHClient, duck_conn):
-    ch.add("iagai", "person", pa.table({"k": ["p1"]}))
-    ch.add("iagai_raw", "jira_users", pa.table({"k": ["u1"]}))
+    ch.add("example", "person", pa.table({"k": ["p1"]}))
+    ch.add("example_raw", "jira_users", pa.table({"k": ["u1"]}))
     reports = migrate(
         ch_client=ch, duck=duck_conn,
-        ch_sem_database="iagai", ch_raw_database="iagai_raw",
+        ch_sem_database="example", ch_raw_database="example_raw",
         check_nulls=False,
     )
     assert [(r.source_db, r.table) for r in reports] == [
-        ("iagai", "person"),
-        ("iagai_raw", "jira_users"),
+        ("example", "person"),
+        ("example_raw", "jira_users"),
     ]
     assert all(r.parity_ok for r in reports)
 
 
 def test_migrate_only_tables_filter(ch: FakeCHClient, duck_conn):
-    ch.add("iagai", "person", pa.table({"k": ["p1"]}))
-    ch.add("iagai", "team", pa.table({"k": ["t1"]}))
+    ch.add("example", "person", pa.table({"k": ["p1"]}))
+    ch.add("example", "team", pa.table({"k": ["t1"]}))
     reports = migrate(
         ch_client=ch, duck=duck_conn,
-        ch_sem_database="iagai", ch_raw_database="iagai_raw",
+        ch_sem_database="example", ch_raw_database="example_raw",
         only_tables={"team"}, check_nulls=False,
     )
     assert [r.table for r in reports] == ["team"]
@@ -214,11 +214,11 @@ def test_migrate_only_tables_filter(ch: FakeCHClient, duck_conn):
 def test_migrate_detects_name_collision_across_dbs(ch: FakeCHClient, duck_conn):
     # A table named the same in both CH databases — second occurrence is
     # flagged as a collision rather than clobbering the first.
-    ch.add("iagai", "_task_runs", pa.table({"k": ["sem-1"]}))
-    ch.add("iagai_raw", "_task_runs", pa.table({"k": ["raw-1", "raw-2"]}))
+    ch.add("example", "_task_runs", pa.table({"k": ["sem-1"]}))
+    ch.add("example_raw", "_task_runs", pa.table({"k": ["raw-1", "raw-2"]}))
     reports = migrate(
         ch_client=ch, duck=duck_conn,
-        ch_sem_database="iagai", ch_raw_database="iagai_raw",
+        ch_sem_database="example", ch_raw_database="example_raw",
         check_nulls=False,
     )
     assert len(reports) == 2
