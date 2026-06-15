@@ -233,3 +233,70 @@ def test_api_client_constructs_urls():
 def test_api_client_strips_trailing_slash_from_base():
     client = ApiClient("https://vizgrams.com/", "k", "m")
     assert "//api/" not in client._url("/x")
+
+
+# ---------------------------------------------------------------------------
+# vzctl backup / restore — Phase 6 of CH→DuckDB migration
+# ---------------------------------------------------------------------------
+
+def _write_model_config(model_dir: Path, backend: str) -> None:
+    """Materialise a minimal config.yaml so get_backend() can resolve."""
+    (model_dir / "data").mkdir(parents=True, exist_ok=True)
+    (model_dir / "config.yaml").write_text(
+        f"database:\n  backend: {backend}\n  path: data/data.duckdb\n"
+    )
+
+
+def test_backup_round_trip_via_cli(tmp_path: Path, monkeypatch):
+    """vzctl backup + vzctl restore round-trip on the same DuckDB model."""
+    from click.testing import CliRunner
+
+    from tools.vzctl import cli
+
+    model_dir = tmp_path / "model"
+    _write_model_config(model_dir, "duckdb")
+    monkeypatch.setenv("VZ_DATABASE_BACKEND", "duckdb")
+
+    # Seed the source DB with some rows.
+    from core.db import DuckDBBackend
+    seed = DuckDBBackend(db_path=model_dir / "data" / "data.duckdb")
+    seed.connect()
+    seed.create_table("widget", {"id": "INTEGER", "name": "TEXT"}, primary_keys=["id"])
+    seed.bulk_upsert("widget", [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}])
+    seed.close()
+
+    dump = tmp_path / "dump"
+
+    runner = CliRunner()
+    res = runner.invoke(cli, ["backup", str(dump), "--model-dir", str(model_dir)])
+    assert res.exit_code == 0, res.output
+
+    # Wipe the local DB and restore from the dump.
+    (model_dir / "data" / "data.duckdb").unlink()
+    res = runner.invoke(cli, ["restore", str(dump), "--model-dir", str(model_dir)])
+    assert res.exit_code == 0, res.output
+
+    restored = DuckDBBackend(db_path=model_dir / "data" / "data.duckdb")
+    restored.connect()
+    try:
+        rows = restored.execute("SELECT id, name FROM widget ORDER BY id")
+        assert rows == [[1, "Alice"], [2, "Bob"]]
+    finally:
+        restored.close()
+
+
+def test_backup_refuses_non_duckdb_backend(tmp_path: Path, monkeypatch):
+    """vzctl backup is duckdb-only; sqlite/clickhouse models should bail out
+    with a clear error rather than silently doing nothing."""
+    from click.testing import CliRunner
+
+    from tools.vzctl import cli
+
+    model_dir = tmp_path / "model"
+    _write_model_config(model_dir, "sqlite")
+    monkeypatch.setenv("VZ_DATABASE_BACKEND", "sqlite")
+
+    runner = CliRunner()
+    res = runner.invoke(cli, ["backup", str(tmp_path / "dump"), "--model-dir", str(model_dir)])
+    assert res.exit_code == 2
+    assert "DuckDB" in res.output

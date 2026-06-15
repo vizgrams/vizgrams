@@ -17,6 +17,17 @@ def _now_utc() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _sql_escape(s: str) -> str:
+    """Escape single quotes for embedding in a SQL string literal.
+
+    DuckDB SQL uses '' to escape an embedded single quote inside a
+    single-quoted literal. Used for the S3-plumbing helpers where
+    parameterised binding isn't an option (CREATE SECRET, EXPORT
+    DATABASE, ATTACH all require literal strings, not bind parameters).
+    """
+    return s.replace("'", "''")
+
+
 class BackendUnavailableError(Exception):
     """Raised when a database backend cannot be reached (connection refused, auth failure, etc.).
 
@@ -605,6 +616,110 @@ class DuckDBBackend(DBBackend):
     def truncate(self, table: str) -> None:
         assert self._conn is not None, "Not connected"
         self._conn.execute(f"DELETE FROM {table}")
+
+    # ------------------------------------------------------------------
+    # S3 plumbing — httpfs extension + EXPORT/ATTACH against s3:// URIs
+    # ------------------------------------------------------------------
+
+    def enable_s3(self) -> None:
+        """Install + load the httpfs extension so s3:// URIs work.
+
+        Safe to call multiple times. INSTALL is a no-op when the extension
+        is already present; LOAD is per-connection state and must be
+        called on every fresh connection that wants S3 access.
+        """
+        assert self._conn is not None, "Not connected"
+        self._conn.execute("INSTALL httpfs; LOAD httpfs")
+
+    def configure_s3_credentials(
+        self,
+        *,
+        key_id: str | None = None,
+        secret: str | None = None,
+        session_token: str | None = None,
+        region: str | None = None,
+        endpoint: str | None = None,
+        use_credential_chain: bool = False,
+        secret_name: str = "vizgrams_s3",
+    ) -> None:
+        """Create or replace a DuckDB SECRET for S3 access.
+
+        Two modes:
+          - ``use_credential_chain=True``: defer to the standard AWS
+            credential chain (env vars → ~/.aws/credentials → instance
+            profile → ECS task role). Right for EC2 / ECS / Lambda /
+            IRSA on EKS where rotating long-lived keys is undesirable.
+          - Explicit ``key_id`` + ``secret`` (+ optional
+            ``session_token``): inline keys, useful for local dev or a
+            limited-scope CI key.
+
+        ``endpoint`` is for S3-compatible stores (minio, R2) — leave None
+        for AWS S3.
+        """
+        assert self._conn is not None, "Not connected"
+        self.enable_s3()
+        # Build a single CREATE SECRET statement. CREATE OR REPLACE is
+        # the canonical form for idempotent setup; older DuckDB versions
+        # may need DROP SECRET first, but 1.0+ supports OR REPLACE.
+        parts: list[str] = ["TYPE S3"]
+        if use_credential_chain:
+            parts.append("PROVIDER credential_chain")
+        else:
+            if not key_id or not secret:
+                raise ValueError(
+                    "configure_s3_credentials needs either use_credential_chain=True "
+                    "or explicit key_id + secret"
+                )
+            parts.append(f"KEY_ID '{_sql_escape(key_id)}'")
+            parts.append(f"SECRET '{_sql_escape(secret)}'")
+            if session_token:
+                parts.append(f"SESSION_TOKEN '{_sql_escape(session_token)}'")
+        if region:
+            parts.append(f"REGION '{_sql_escape(region)}'")
+        if endpoint:
+            parts.append(f"ENDPOINT '{_sql_escape(endpoint)}'")
+        self._conn.execute(
+            f"CREATE OR REPLACE SECRET {secret_name} ({', '.join(parts)})"
+        )
+
+    def export_database(self, uri: str, *, format: str = "PARQUET") -> None:
+        """Dump every schema/table to ``uri`` as parquet (or csv).
+
+        ``uri`` can be a local path (created if missing) or an ``s3://...``
+        prefix. For S3, ``enable_s3()`` and credentials must already be
+        configured. The output is a directory containing per-table parquet
+        files plus a ``schema.sql`` + ``load.sql`` for ``IMPORT DATABASE``.
+        """
+        assert self._conn is not None, "Not connected"
+        if not uri.startswith("s3://") and not uri.startswith("http"):
+            Path(uri).mkdir(parents=True, exist_ok=True)
+        self._conn.execute(
+            f"EXPORT DATABASE '{_sql_escape(uri)}' (FORMAT {format})"
+        )
+
+    def import_database(self, uri: str) -> None:
+        """Restore tables from a previous ``export_database`` dump.
+
+        Counterpart to export_database. The dump location can be local or
+        ``s3://...``; ``enable_s3()`` and credentials must be configured
+        for the latter.
+        """
+        assert self._conn is not None, "Not connected"
+        self._conn.execute(f"IMPORT DATABASE '{_sql_escape(uri)}'")
+
+    def attach_readonly(self, uri: str, alias: str) -> None:
+        """ATTACH a remote (or local) DuckDB file as a read-only database.
+
+        Used by api containers that query a shared ``s3://...`` dump
+        without owning the writer side. ``alias`` is the schema name to
+        reference attached tables (``SELECT * FROM alias.tbl``).
+        """
+        assert self._conn is not None, "Not connected"
+        if uri.startswith("s3://") or uri.startswith("http"):
+            self.enable_s3()
+        self._conn.execute(
+            f"ATTACH '{_sql_escape(uri)}' AS {alias} (READ_ONLY)"
+        )
 
     # ------------------------------------------------------------------
     # _task_runs metadata

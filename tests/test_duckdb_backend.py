@@ -511,3 +511,155 @@ def test_bulk_scd2_transaction_rolls_back_on_error(db: DuckDBBackend):
     # The closed row should NOT be visible — transaction rolled back.
     rows = db.execute("SELECT team, valid_to FROM person")
     assert rows == [["platform", None]]
+
+
+# ---------------------------------------------------------------------------
+# S3 plumbing (Phase 6) — local-file round-trip + SQL-shape checks for s3://
+#
+# Live S3 integration is gated behind VZ_TEST_S3_BUCKET (skipped in CI).
+# The local-file tests fully exercise EXPORT/IMPORT DATABASE; the s3://
+# tests below verify the SQL we'd send rather than reaching the network.
+# ---------------------------------------------------------------------------
+
+def test_enable_s3_installs_and_loads_httpfs(db: DuckDBBackend):
+    db.enable_s3()
+    # If httpfs is loaded we can call its catalog function without erroring.
+    loaded = db.execute(
+        "SELECT extension_name FROM duckdb_extensions() "
+        "WHERE extension_name = 'httpfs' AND loaded"
+    )
+    assert loaded == [["httpfs"]]
+
+
+def test_configure_s3_credentials_credential_chain(db: DuckDBBackend, monkeypatch):
+    # DuckDB's credential_chain provider validates at CREATE SECRET time —
+    # it tries every link in the chain and fails if none resolves. CI has
+    # no AWS creds, so seed fake values for the env_aws link to satisfy.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKEFAKEFAKE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fakesecret/fakesecret/fakesecret")
+    db.configure_s3_credentials(
+        use_credential_chain=True, region="eu-west-1",
+        secret_name="vz_test_chain",
+    )
+    rows = db.execute(
+        "SELECT name, type, provider FROM duckdb_secrets() "
+        "WHERE name = 'vz_test_chain'"
+    )
+    assert rows == [["vz_test_chain", "s3", "credential_chain"]]
+
+
+def test_configure_s3_credentials_inline(db: DuckDBBackend):
+    db.configure_s3_credentials(
+        key_id="AKIAFAKE", secret="secret-shh",
+        region="us-east-1", secret_name="vz_test_inline",
+    )
+    rows = db.execute(
+        "SELECT name, type FROM duckdb_secrets() WHERE name = 'vz_test_inline'"
+    )
+    assert rows == [["vz_test_inline", "s3"]]
+
+
+def test_configure_s3_credentials_requires_key_or_chain(db: DuckDBBackend):
+    with pytest.raises(ValueError, match="key_id"):
+        db.configure_s3_credentials(region="eu-west-1")
+
+
+def test_export_then_import_round_trip(tmp_path: Path):
+    src = DuckDBBackend(db_path=tmp_path / "src.duckdb")
+    src.connect()
+    src.create_table("widget", {"id": "INTEGER", "name": "TEXT"}, primary_keys=["id"])
+    src.bulk_upsert("widget", [
+        {"id": 1, "name": "Alice"},
+        {"id": 2, "name": "Bob"},
+    ])
+    dump = tmp_path / "dump"
+    src.export_database(str(dump))
+    src.close()
+
+    # New DB, restore from the export.
+    dst = DuckDBBackend(db_path=tmp_path / "dst.duckdb")
+    dst.connect()
+    try:
+        dst.import_database(str(dump))
+        rows = dst.execute("SELECT id, name FROM widget ORDER BY id")
+        assert rows == [[1, "Alice"], [2, "Bob"]]
+    finally:
+        dst.close()
+
+
+def test_attach_readonly_local_file(tmp_path: Path):
+    """ATTACH to a local .duckdb file with READ_ONLY semantics."""
+    writer = DuckDBBackend(db_path=tmp_path / "writer.duckdb")
+    writer.connect()
+    writer.create_table("widget", {"id": "INTEGER"}, primary_keys=["id"])
+    writer.bulk_upsert("widget", [{"id": 1}, {"id": 2}])
+    writer.close()
+
+    reader = DuckDBBackend(db_path=tmp_path / "reader.duckdb")
+    reader.connect()
+    try:
+        reader.attach_readonly(str(tmp_path / "writer.duckdb"), alias="src")
+        rows = reader.execute("SELECT COUNT(*) FROM src.widget")
+        assert rows == [[2]]
+        # Read-only — writes against the attached schema must fail.
+        duckdb_mod = pytest.importorskip("duckdb")
+        with pytest.raises(duckdb_mod.Error):
+            reader.execute("INSERT INTO src.widget VALUES (3)")
+    finally:
+        reader.close()
+
+
+class _SQLCaptureConn:
+    """Tiny shim that records every execute() SQL string. Used to inspect
+    what the backend would send for ops we can't easily run live (S3)."""
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    def execute(self, sql, params=None):
+        self.sent.append(sql)
+        class _Cursor:
+            description = None
+            def fetchall(self_inner): return []
+        return _Cursor()
+
+    def close(self) -> None:
+        pass
+
+
+def test_export_database_to_s3_uri_emits_expected_sql(db: DuckDBBackend):
+    """For s3:// targets we can't easily round-trip locally, but we can
+    verify the SQL the backend would send — guards against quoting and
+    parameter-binding bugs even when nobody runs against a live bucket.
+    """
+    fake = _SQLCaptureConn()
+    db._conn.close()
+    db._conn = fake  # type: ignore[assignment]
+    db.export_database("s3://my-bucket/snapshots/2026-06-15")
+    assert any(
+        "EXPORT DATABASE 's3://my-bucket/snapshots/2026-06-15'" in s
+        and "FORMAT PARQUET" in s
+        for s in fake.sent
+    )
+
+
+def test_export_database_escapes_single_quotes_in_uri(db: DuckDBBackend):
+    """A URI containing a single quote shouldn't break out of the literal."""
+    fake = _SQLCaptureConn()
+    db._conn.close()
+    db._conn = fake  # type: ignore[assignment]
+    db.export_database("/tmp/it's-fine")
+    assert any("/tmp/it''s-fine" in s for s in fake.sent)
+
+
+def test_attach_readonly_to_s3_uri_emits_expected_sql(db: DuckDBBackend):
+    """ATTACH 's3://...' (READ_ONLY) — verify SQL shape without live S3."""
+    fake = _SQLCaptureConn()
+    db._conn.close()
+    db._conn = fake  # type: ignore[assignment]
+    db.attach_readonly("s3://my-bucket/db.duckdb", alias="src")
+    # First call loads httpfs; second issues the ATTACH.
+    assert any("INSTALL httpfs; LOAD httpfs" in s for s in fake.sent)
+    assert any(
+        "ATTACH 's3://my-bucket/db.duckdb' AS src (READ_ONLY)" in s
+        for s in fake.sent
+    )
