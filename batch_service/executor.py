@@ -355,3 +355,114 @@ def _run_materialize_job(model_dir: Path, job_id: str, entity_name: str | None) 
         )
     except Exception:
         _log.debug("pipeline_checkpoint audit skipped (registry unavailable)")
+
+
+def submit_reconcile(
+    model_dir: Path,
+    job_id: str,
+    entity_name: str | None,
+    feature_id: str | None,
+) -> None:
+    """Schedule a feature-reconcile job on the thread pool and return immediately."""
+    _pool.submit(_run_reconcile_job, model_dir, job_id, entity_name, feature_id)
+
+
+def _run_reconcile_job(
+    model_dir: Path,
+    job_id: str,
+    entity_name: str | None,
+    feature_id: str | None,
+) -> None:
+    """Validate + reconcile feature definitions in the sem backend.
+
+    Scope:
+      - feature_id set → reconcile only that feature
+      - entity_name set, feature_id None → reconcile all features for the entity
+      - both None → reconcile everything
+
+    Uses the same model_write_lock as materialize so writes from api +
+    batch can't collide on single-writer backends (DuckDB).
+    """
+    from batch_service import db as jobdb
+
+    _log.info(
+        "Reconcile job starting",
+        extra={
+            "job_id": job_id, "model": model_dir.name,
+            "entity": entity_name or "all", "feature_id": feature_id or "*",
+        },
+    )
+
+    def _progress(msg: str) -> None:
+        try:
+            with jobdb.get_connection(model_dir) as con:
+                jobdb.append_progress(con, job_id, _now_utc(), msg)
+        except Exception:
+            _log.debug("Progress write failed for job %s", job_id, exc_info=True)
+
+    t0 = time.time()
+    n_reconciled = 0
+
+    try:
+        from batch.lock import LockTimeoutError, model_write_lock
+        with model_write_lock(model_dir):
+            from core.db import get_backend
+            from semantic.feature import reconcile_with_backend
+            from semantic.yaml_adapter import YAMLAdapter
+
+            all_entities = YAMLAdapter.load_entities(model_dir / "ontology")
+            entities_map = {e.name: e for e in all_entities}
+            all_feature_defs = YAMLAdapter.load_features(model_dir / "features")
+            if not all_feature_defs:
+                _progress("no features defined — nothing to reconcile")
+            else:
+                # Build materialize_ids filter from scope.
+                if feature_id is not None:
+                    materialize_ids: set[str] | None = {feature_id}
+                elif entity_name is not None:
+                    materialize_ids = {
+                        fd.feature_id for fd in all_feature_defs
+                        if fd.entity_type == entity_name
+                    }
+                else:
+                    materialize_ids = None
+
+                n_reconciled = (
+                    len(materialize_ids) if materialize_ids is not None
+                    else len(all_feature_defs)
+                )
+                _progress(f"reconciling {n_reconciled} feature(s)")
+                backend = get_backend(model_dir, namespace="sem")
+                backend.connect()
+                try:
+                    reconcile_with_backend(
+                        all_feature_defs, entities_map, backend,
+                        materialize_ids=materialize_ids,
+                    )
+                    _progress("features reconciled")
+                finally:
+                    backend.close()
+
+    except LockTimeoutError as exc:
+        _log.error("Write lock timeout for reconcile job %s: %s", job_id, exc,
+                   extra={"job_id": job_id, "model": model_dir.name})
+        with jobdb.get_connection(model_dir) as con:
+            jobdb.update_job(con, job_id, status="failed",
+                             completed_at=_now_utc(), error=str(exc))
+        return
+    except Exception as exc:
+        _log.exception("Unexpected error in reconcile job %s", job_id)
+        with jobdb.get_connection(model_dir) as con:
+            jobdb.update_job(con, job_id, status="failed",
+                             completed_at=_now_utc(), error=str(exc))
+        return
+
+    elapsed = round(time.time() - t0, 1)
+    with jobdb.get_connection(model_dir) as con:
+        jobdb.update_job(con, job_id, status="completed", completed_at=_now_utc(),
+                         records=n_reconciled, duration_s=elapsed)
+    _log.info(
+        "Reconcile job completed",
+        extra={"job_id": job_id, "model": model_dir.name,
+               "features": n_reconciled, "duration_s": elapsed},
+    )

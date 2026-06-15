@@ -150,6 +150,37 @@ def submit_mapper_job(
         raise BatchServiceError(f"Batch service unreachable: {exc}") from exc
 
 
+def submit_reconcile_job(
+    model: str,
+    entity: str | None = None,
+    feature_id: str | None = None,
+    triggered_by: str = "api",
+) -> dict:
+    """Submit a feature-reconcile job and return the job dict.
+
+    Scope (most specific wins):
+      ``feature_id`` set → reconcile one feature
+      ``entity`` set     → reconcile all features for that entity
+      neither            → reconcile every feature in the model
+    """
+    try:
+        resp = _client().post(
+            "/api/v1/jobs",
+            json={
+                "model": model,
+                "operation": "reconcile",
+                "entity": entity,
+                "feature_id": feature_id,
+                "triggered_by": triggered_by,
+            },
+        )
+        return _raise_for_status(resp)
+    except BatchServiceError:
+        raise
+    except Exception as exc:
+        raise BatchServiceError(f"Batch service unreachable: {exc}") from exc
+
+
 def get_job(job_id: str, model: str) -> dict:
     """Get a job by ID, including live progress if running."""
     try:

@@ -182,3 +182,114 @@ def test_get_feature_pascal_case_entity_with_lowercase_feature_id_prefix(model_d
 def test_get_feature_raw_sql_included(model_dir_with_both_entities):
     result = get_feature(model_dir_with_both_entities, "Issue", "resolved_at")
     assert "raw_sql" in result or "definition" in result or result.get("feature_type") == "raw_sql"
+
+
+# ---------------------------------------------------------------------------
+# Reconcile delegation (Phase 5 of CH→DuckDB migration)
+#
+# When VZ_DELEGATE_API_WRITES_TO_BATCH=true, feature reconcile calls are
+# routed through batch_client.submit_reconcile_job instead of running on the
+# api process's thread pool. Required for single-writer backends (DuckDB).
+# ---------------------------------------------------------------------------
+
+class _StubJobService:
+    """Minimal stand-in for JobService — captures whether create was called."""
+    def __init__(self):
+        self.created = False
+        self.submitted = False
+
+    def create(self, **kwargs):
+        self.created = True
+        class _J:
+            job_id = "local-job"
+            model = kwargs.get("model")
+            operation = kwargs.get("operation")
+            status = "running"
+            started_at = "2026-06-15T00:00:00Z"
+            entity = kwargs.get("entity")
+            extractor = None
+            task = None
+            completed_at = None
+            result = None
+            error = None
+            progress: list = []
+            warnings: list = []
+        return _J()
+
+    def submit(self, _fn):
+        self.submitted = True
+
+    def update_progress(self, _id, _msg):
+        pass
+
+    def complete(self, _id, _result):
+        pass
+
+    def fail(self, _id, _err):
+        pass
+
+    def get(self, _model, _job_id):
+        return None
+
+
+def test_reconcile_all_features_uses_job_service_when_flag_unset(
+    monkeypatch, model_dir_with_widget_feature, fake_batch_client,
+):
+    monkeypatch.delenv("VZ_DELEGATE_API_WRITES_TO_BATCH", raising=False)
+    from api.services.feature_service import reconcile_all_features
+    js = _StubJobService()
+    job = reconcile_all_features(model_dir_with_widget_feature, None, js)
+    assert js.created is True       # in-process path took it
+    assert js.submitted is True
+    assert job.operation == "reconcile"
+    # No batch job created.
+    assert fake_batch_client.list_jobs_fn(model_dir_with_widget_feature.name) == []
+
+
+def test_reconcile_all_features_delegates_to_batch_when_flag_set(
+    monkeypatch, model_dir_with_widget_feature, fake_batch_client,
+):
+    monkeypatch.setenv("VZ_DELEGATE_API_WRITES_TO_BATCH", "true")
+    from api.services.feature_service import reconcile_all_features
+    js = _StubJobService()
+    job = reconcile_all_features(model_dir_with_widget_feature, None, js)
+    assert js.created is False      # in-process path NOT taken
+    assert js.submitted is False
+    # Batch job exists with the right scope.
+    jobs = fake_batch_client.list_jobs_fn(model_dir_with_widget_feature.name)
+    assert len(jobs) == 1
+    assert jobs[0]["operation"] == "reconcile"
+    assert jobs[0]["tool"] == "__all__"
+    # JobOut quacks the same way the in-process job did.
+    assert job.operation == "reconcile"
+    assert job.job_id == jobs[0]["job_id"]
+
+
+def test_reconcile_entity_feature_delegates_to_batch_when_flag_set(
+    monkeypatch, model_dir_with_widget_feature, fake_batch_client,
+):
+    monkeypatch.setenv("VZ_DELEGATE_API_WRITES_TO_BATCH", "true")
+    from api.services.feature_service import reconcile_entity_feature
+    js = _StubJobService()
+    job = reconcile_entity_feature(
+        model_dir_with_widget_feature, "Widget", "score_doubled", js,
+    )
+    assert js.created is False
+    jobs = fake_batch_client.list_jobs_fn(model_dir_with_widget_feature.name)
+    assert len(jobs) == 1
+    # Single-feature scope: the batch job's tool column carries the feature_id.
+    assert jobs[0]["tool"] == "widget.score_doubled"
+    assert job.job_id == jobs[0]["job_id"]
+
+
+def test_reconcile_entity_feature_star_delegates_with_entity_scope(
+    monkeypatch, model_dir_with_widget_feature, fake_batch_client,
+):
+    monkeypatch.setenv("VZ_DELEGATE_API_WRITES_TO_BATCH", "true")
+    from api.services.feature_service import reconcile_entity_feature
+    js = _StubJobService()
+    reconcile_entity_feature(model_dir_with_widget_feature, "Widget", "*", js)
+    jobs = fake_batch_client.list_jobs_fn(model_dir_with_widget_feature.name)
+    assert len(jobs) == 1
+    # Entity-wide scope: tool column is "entity:Widget".
+    assert jobs[0]["tool"] == "entity:Widget"

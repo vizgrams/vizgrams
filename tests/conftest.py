@@ -255,6 +255,46 @@ class FakeBatchStore:
         self._jobs[job_id] = job
         return dict(job)
 
+    def submit_reconcile_job_fn(
+        self,
+        model: str,
+        entity: str | None = None,
+        feature_id: str | None = None,
+        triggered_by: str = "api",
+    ) -> dict:
+        from api.batch_client import BatchServiceError
+
+        scope_key = feature_id or (f"entity:{entity}" if entity else "__all__")
+        running = [
+            j for j in self._jobs.values()
+            if j["model"] == model and j["operation"] == "reconcile"
+            and j["tool"] == scope_key
+            and j["status"] in ("running", "cancelling")
+        ]
+        if running:
+            raise BatchServiceError(
+                f"Reconcile job '{running[0]['job_id']}' is already running for "
+                f"model '{model}' scope '{scope_key}'. Cancel it first.",
+                status_code=409,
+            )
+        job_id = str(uuid.uuid4())
+        job: dict = {
+            "job_id": job_id,
+            "model": model,
+            "operation": "reconcile",
+            "tool": scope_key,
+            "status": "running",
+            "started_at": _now(),
+            "completed_at": None,
+            "records": None,
+            "duration_s": None,
+            "error": None,
+            "triggered_by": triggered_by,
+            "progress": [],
+        }
+        self._jobs[job_id] = job
+        return dict(job)
+
     def submit_mapper_job_fn(
         self,
         model: str,
@@ -442,6 +482,7 @@ def fake_batch_client(monkeypatch, tmp_path):
     monkeypatch.setattr(bc, "submit_job", store.submit_job_fn)
     monkeypatch.setattr(bc, "submit_mapper_job", store.submit_mapper_job_fn)
     monkeypatch.setattr(bc, "submit_materialize_job", store.submit_materialize_job_fn)
+    monkeypatch.setattr(bc, "submit_reconcile_job", store.submit_reconcile_job_fn)
     monkeypatch.setattr(bc, "get_job", store.get_job_fn)
     monkeypatch.setattr(bc, "list_jobs", store.list_jobs_fn)
     monkeypatch.setattr(bc, "cancel_job", store.cancel_job_fn)

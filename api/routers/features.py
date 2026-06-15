@@ -102,7 +102,7 @@ def reconcile_feature(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return JobOut(**job.__dict__)
+    return job if isinstance(job, JobOut) else JobOut(**job.__dict__)
 
 
 @model_feature_router.put("/{feature_id}/yaml", response_model=FeatureSummary)
@@ -182,7 +182,7 @@ def reconcile_all_features(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return JobOut(**job.__dict__)
+    return job if isinstance(job, JobOut) else JobOut(**job.__dict__)
 
 
 model_feature_router.include_router(make_version_routes("feature", tags=["features"]))
