@@ -531,7 +531,12 @@ def test_enable_s3_installs_and_loads_httpfs(db: DuckDBBackend):
     assert loaded == [["httpfs"]]
 
 
-def test_configure_s3_credentials_credential_chain(db: DuckDBBackend):
+def test_configure_s3_credentials_credential_chain(db: DuckDBBackend, monkeypatch):
+    # DuckDB's credential_chain provider validates at CREATE SECRET time —
+    # it tries every link in the chain and fails if none resolves. CI has
+    # no AWS creds, so seed fake values for the env_aws link to satisfy.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKEFAKEFAKE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fakesecret/fakesecret/fakesecret")
     db.configure_s3_credentials(
         use_credential_chain=True, region="eu-west-1",
         secret_name="vz_test_chain",
