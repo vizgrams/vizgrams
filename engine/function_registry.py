@@ -320,3 +320,88 @@ register(
     lambda args, _: f"JSONHas({args[0]}, {args[1]})",
     arity_min=2, arity_max=2,
 )
+
+
+# ---------------------------------------------------------------------------
+# DuckDB implementations
+#
+# DuckDB has standard SQL semantics with a Python-style ``strftime(ts, fmt)``
+# argument order (timestamp first, format second — opposite of SQLite).
+# Strings shaped like "2024-10-15T08:50:18Z" cast directly to TIMESTAMP, but
+# the trailing "Z" is rejected, so we strip it with substr(...,1,19) before
+# casting. ISO year tokens (%G) are used to match SQLite's week-based format
+# behaviour at year boundaries.
+# ---------------------------------------------------------------------------
+
+_DUCKDB_DIFF_UNITS = {
+    "seconds": "second",
+    "minutes": "minute",
+    "hours":   "hour",
+    "days":    "day",
+    "years":   "year",
+}
+
+
+def _duckdb_ts(s: str) -> str:
+    """Wrap an ISO-8601 string column reference in a TIMESTAMP cast."""
+    return f"CAST(substr({s}, 1, 19) AS TIMESTAMP)"
+
+
+def _render_datetime_diff_duckdb(args: list[str], kwargs: dict) -> str:
+    a_sql, b_sql = args
+    unit = _DUCKDB_DIFF_UNITS[str(kwargs["unit"])]
+    return f"date_diff('{unit}', {_duckdb_ts(a_sql)}, {_duckdb_ts(b_sql)})"
+
+
+register("datetime_diff", "duckdb", _render_datetime_diff_duckdb, arity_min=2, arity_max=2)
+
+
+_FORMAT_TIME_DUCKDB_TOKENS = [
+    ("YYYY", "%G"),  # ISO year — matches SQLite behaviour for week-based formats
+    ("WW",   "%V"),
+    ("MM",   "%m"),
+    ("DD",   "%d"),
+    ("HH",   "%H"),
+]
+
+
+def _render_format_time_duckdb(args: list[str], kwargs: dict) -> str:
+    col_sql = args[0]
+    fmt = str(kwargs["pattern"])
+    for token, directive in _FORMAT_TIME_DUCKDB_TOKENS:
+        fmt = fmt.replace(token, directive)
+    return f"strftime({_duckdb_ts(col_sql)}, '{fmt}')"
+
+
+register("format_time", "duckdb", _render_format_time_duckdb, arity_min=1, arity_max=1)
+
+
+# DuckDB strftime uses POSIX directives, identical to the ClickHouse mapping
+# of Java tokens — reuse the table from above.
+def _render_format_date_duckdb(args: list[str], kwargs: dict) -> str:
+    col_sql = args[0]
+    pattern = str(kwargs["pattern"])
+    fmt = ""
+    i = 0
+    while i < len(pattern):
+        for token, directive in _JAVA_TOKENS_CH:
+            if pattern[i:i + len(token)] == token:
+                fmt += directive
+                i += len(token)
+                break
+        else:
+            fmt += pattern[i]
+            i += 1
+    return f"strftime({_duckdb_ts(col_sql)}, '{fmt}')"
+
+
+register("format_date", "duckdb", _render_format_date_duckdb, arity_min=1, arity_max=1)
+
+
+# json_extract returns NULL when the path doesn't resolve, so an IS NOT NULL
+# check is equivalent to "key exists". Same shape as the SQLite renderer.
+register(
+    "json_has_key", "duckdb",
+    lambda args, _: f"json_extract({args[0]}, '$.' || {args[1]}) IS NOT NULL",
+    arity_min=2, arity_max=2,
+)
