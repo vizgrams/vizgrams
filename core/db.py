@@ -434,6 +434,36 @@ class DuckDBBackend(DBBackend):
         self._pk_cache[table] = pks
         return pks
 
+    def _serialise(self, v):
+        """JSON-encode dict/list values; pass everything else through."""
+        if isinstance(v, (dict, list)):
+            return json.dumps(v)
+        return v
+
+    def _upsert_sql(self, table: str, col_names: list[str]) -> str:
+        """Build an INSERT...ON CONFLICT statement for ``col_names``.
+
+        Falls back to a plain INSERT when the table has no PRIMARY KEY.
+        When the table's columns are all PK, uses DO NOTHING (nothing to
+        update). Shared between upsert and bulk_upsert.
+        """
+        col_str = ", ".join(col_names)
+        placeholders = ", ".join("?" for _ in col_names)
+        pks = self._get_primary_keys(table)
+        if not pks:
+            return f"INSERT INTO {table} ({col_str}) VALUES ({placeholders})"
+        update_cols = [c for c in col_names if c not in pks]
+        if update_cols:
+            set_clause = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
+            return (
+                f"INSERT INTO {table} ({col_str}) VALUES ({placeholders}) "
+                f"ON CONFLICT ({', '.join(pks)}) DO UPDATE SET {set_clause}"
+            )
+        return (
+            f"INSERT INTO {table} ({col_str}) VALUES ({placeholders}) "
+            f"ON CONFLICT ({', '.join(pks)}) DO NOTHING"
+        )
+
     def upsert(self, table: str, row: dict) -> None:
         """INSERT ... ON CONFLICT DO UPDATE for dimension tables.
 
@@ -443,31 +473,120 @@ class DuckDBBackend(DBBackend):
         """
         assert self._conn is not None, "Not connected"
         cols = list(row.keys())
-        placeholders = ", ".join("?" for _ in cols)
-        col_names = ", ".join(cols)
-        values = [
-            json.dumps(v) if isinstance(v, (dict, list)) else v
-            for v in row.values()
+        values = [self._serialise(v) for v in row.values()]
+        self._conn.execute(self._upsert_sql(table, cols), values)
+
+    def bulk_upsert(self, table: str, rows: list[dict]) -> None:
+        """Multi-row INSERT...ON CONFLICT — single statement, much faster than
+        repeated upsert(). Tolerates heterogeneous key sets: multi-group
+        mappers can produce candidate dicts where one group sets one
+        relation and another group sets a different relation, with the
+        unset column simply absent. We compute the union of keys across
+        all rows and write every row with that full shape, defaulting
+        missing values to None so DuckDB's nullable columns store NULL.
+        """
+        if not rows:
+            return
+        assert self._conn is not None, "Not connected"
+        # Pass 1: union of all keys, preserving first-seen order so column
+        # ordering is stable across runs (helpful when reading test output).
+        all_keys: dict[str, None] = {}
+        for row in rows:
+            for k in row:
+                all_keys.setdefault(k, None)
+        col_names = list(all_keys.keys())
+        # Pass 2: project each row onto col_names, serialising JSON values.
+        data = [
+            [self._serialise(row.get(k)) for k in col_names]
+            for row in rows
         ]
-        pks = self._get_primary_keys(table)
-        if pks:
-            # Update every non-PK column to the new value on conflict.
-            update_cols = [c for c in cols if c not in pks]
-            if update_cols:
-                set_clause = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
-                sql = (
-                    f"INSERT INTO {table} ({col_names}) VALUES ({placeholders}) "
-                    f"ON CONFLICT ({', '.join(pks)}) DO UPDATE SET {set_clause}"
+        self._conn.executemany(self._upsert_sql(table, col_names), data)
+
+    def bulk_scd2(self, table: str, candidates: list[dict], ctx) -> tuple[int, int]:
+        """SCD2 write: close changed open rows + insert new open rows.
+
+        Reads currently-open rows (``valid_to IS NULL``) for the entity in
+        one query, then per candidate:
+          - New key: insert open row (``valid_from = initial_valid_from``
+            or now, ``valid_to = NULL``).
+          - Existing key, no tracked-col change: skip.
+          - Existing key, tracked-col change: UPDATE the open row's
+            ``valid_to = now`` (closes it), then INSERT a new open row
+            with ``valid_from = now``.
+
+        The close + open pair runs inside a single DuckDB transaction so
+        either both land or neither does. Composite PK (key_col,
+        valid_from) means the new open row can never collide with the
+        row we just closed (different valid_from).
+
+        Returns (inserted_new, inserted_scd2) as ClickHouseBackend does.
+        """
+        if not candidates:
+            return 0, 0
+        assert self._conn is not None, "Not connected"
+
+        key_col = ctx.key_col
+        tracked_cols = ctx.tracked_cols or []
+
+        # Read open rows for diffing — empty-string valid_to is treated as
+        # NULL too, matching ClickHouseBackend's convention.
+        cursor = self._conn.execute(
+            f"SELECT * FROM {table} WHERE valid_to IS NULL OR valid_to = ''"
+        )
+        col_names = [d[0] for d in cursor.description]
+        existing: dict = {}
+        for row in cursor.fetchall():
+            row_dict = dict(zip(col_names, row))
+            existing[row_dict.get(key_col)] = row_dict
+
+        now = _now_utc()
+        inserts: list[dict] = []
+        closes: list[tuple] = []  # (key_value, prev_valid_from)
+        inserted_new = 0
+        inserted_scd2 = 0
+
+        for candidate in candidates:
+            key_value = candidate.get(key_col)
+            current = existing.get(key_value)
+            new_row = {k: v for k, v in candidate.items() if k not in ctx.managed_cols}
+
+            if current is None:
+                new_row["valid_from"] = ctx.initial_valid_from or now
+                new_row["valid_to"] = None
+                inserts.append(new_row)
+                inserted_new += 1
+                continue
+
+            changed = any(
+                str(current.get(col, "")) != str(candidate.get(col, ""))
+                for col in tracked_cols
+            )
+            if not changed:
+                continue
+            closes.append((key_value, current["valid_from"]))
+            new_row["valid_from"] = now
+            new_row["valid_to"] = None
+            inserts.append(new_row)
+            inserted_scd2 += 1
+
+        # Atomic close + insert. DuckDB throws on nested BEGIN; we own the
+        # transaction lifecycle here.
+        self._conn.execute("BEGIN")
+        try:
+            for key_value, prev_vf in closes:
+                self._conn.execute(
+                    f"UPDATE {table} SET valid_to = ? "
+                    f"WHERE {key_col} = ? AND valid_from = ?",
+                    [now, key_value, prev_vf],
                 )
-            else:
-                # All columns are PK — nothing to update, just skip duplicates.
-                sql = (
-                    f"INSERT INTO {table} ({col_names}) VALUES ({placeholders}) "
-                    f"ON CONFLICT ({', '.join(pks)}) DO NOTHING"
-                )
-        else:
-            sql = f"INSERT INTO {table} ({col_names}) VALUES ({placeholders})"
-        self._conn.execute(sql, values)
+            if inserts:
+                self.bulk_upsert(table, inserts)
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+        return inserted_new, inserted_scd2
 
     def append(self, table: str, row: dict) -> None:
         """Plain INSERT for fact tables, adds inserted_at timestamp."""
