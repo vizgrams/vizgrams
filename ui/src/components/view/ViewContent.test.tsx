@@ -10,17 +10,19 @@ import type { ViewResult } from '@/api/client'
 const tableResult: ViewResult = {
   name: 'dora_clt_by_team',
   type: 'table',
+  query: 'dora_change_lead_time',
   columns: ['team', 'avg_clt'],
   rows: [['platform', 12], ['frontend', 9]],
   visualization: {
     columns: ['team', 'avg_clt'],
   } as Record<string, unknown>,
+  inputs: {},
   row_count: 2,
   total_row_count: 2,
   duration_ms: 1,
   truncated: false,
   measure: null,
-  formats: null,
+  formats: {},
   params: [],
 }
 
