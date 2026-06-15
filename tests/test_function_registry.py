@@ -161,10 +161,10 @@ class TestClickHouseDialect:
         sql = render_function("concat", ["a", "b"], {}, dialect="clickhouse")
         assert "||" in sql
 
-    def test_unknown_dialect_no_wildcard_raises(self):
-        """datetime_diff has no '*' impl — unknown dialect should raise."""
+    def test_unregistered_dialect_no_wildcard_raises(self):
+        """datetime_diff has no '*' impl — a never-registered dialect should raise."""
         with pytest.raises(DialectFunctionError, match="no implementation for dialect"):
-            render_function("datetime_diff", ["a", "b"], {"unit": "hours"}, dialect="duckdb")
+            render_function("datetime_diff", ["a", "b"], {"unit": "hours"}, dialect="postgres")
 
     def test_datetime_diff_ch_hours(self):
         sql = render_function("datetime_diff", ["t.start", "t.end"], {"unit": "hours"}, dialect="clickhouse")
@@ -214,3 +214,97 @@ class TestClickHouseDialect:
         assert "JSONHas" in sql
         assert "t.data" in sql
         assert "'mykey'" in sql
+
+    # -----------------------------------------------------------------
+    # DuckDB dialect — added in Phase 2 of the CH→DuckDB migration
+    # -----------------------------------------------------------------
+
+    def test_datetime_diff_duckdb_hours(self):
+        sql = render_function("datetime_diff", ["t.start", "t.end"], {"unit": "hours"}, dialect="duckdb")
+        assert "date_diff('hour'" in sql
+        assert "t.start" in sql and "t.end" in sql
+        # ISO-8601 strings cast to TIMESTAMP after the trailing Z is stripped.
+        assert "CAST(substr(t.start, 1, 19) AS TIMESTAMP)" in sql
+
+    def test_datetime_diff_duckdb_days(self):
+        sql = render_function("datetime_diff", ["t.a", "t.b"], {"unit": "days"}, dialect="duckdb")
+        assert "date_diff('day'" in sql
+
+    def test_datetime_diff_duckdb_seconds(self):
+        sql = render_function("datetime_diff", ["t.a", "t.b"], {"unit": "seconds"}, dialect="duckdb")
+        assert "date_diff('second'" in sql
+
+    def test_format_time_duckdb_year_week(self):
+        sql = render_function("format_time", ["t.col"], {"pattern": "YYYY-WW"}, dialect="duckdb")
+        # Timestamp-first argument order (Python-style strftime).
+        assert sql.startswith("strftime(CAST(")
+        # ISO year + ISO week — matches SQLite's behaviour at year boundaries.
+        assert "%G-%V" in sql
+
+    def test_format_time_duckdb_year_month(self):
+        sql = render_function("format_time", ["t.col"], {"pattern": "YYYY-MM"}, dialect="duckdb")
+        assert "%G-%m" in sql
+
+    def test_format_date_duckdb_yyyy_mm_dd(self):
+        sql = render_function("format_date", ["d.col"], {"pattern": "yyyy-MM-dd"}, dialect="duckdb")
+        assert sql.startswith("strftime(CAST(")
+        assert "%Y-%m-%d" in sql
+
+    def test_format_date_duckdb_full_month_name(self):
+        sql = render_function("format_date", ["d.col"], {"pattern": "MMMM yyyy"}, dialect="duckdb")
+        assert "%B" in sql and "%Y" in sql
+
+    def test_format_date_duckdb_abbr_month_name(self):
+        sql = render_function("format_date", ["d.col"], {"pattern": "MMM yyyy"}, dialect="duckdb")
+        assert "%b" in sql
+
+    def test_format_date_duckdb_day_name(self):
+        sql = render_function("format_date", ["d.col"], {"pattern": "EEEE"}, dialect="duckdb")
+        assert "%A" in sql
+
+    def test_json_has_key_duckdb(self):
+        sql = render_function("json_has_key", ["t.data", "'mykey'"], {}, dialect="duckdb")
+        assert "json_extract(t.data" in sql
+        assert "IS NOT NULL" in sql
+        assert "'$.'" in sql
+
+    def test_concat_works_for_duckdb(self):
+        """concat is dialect-agnostic ('*') so should produce || on duckdb too."""
+        sql = render_function("concat", ["a", "b"], {}, dialect="duckdb")
+        assert sql == "(a || b)"
+
+    def test_duckdb_rendered_sql_executes(self):
+        """End-to-end: every rendered duckdb fragment must run against a live
+        in-memory DuckDB. Catches dialect mismatches the string assertions
+        above can miss (wrong argument order, unknown functions, etc.).
+        """
+        duckdb = pytest.importorskip("duckdb")
+        con = duckdb.connect(":memory:")
+        try:
+            datetime_diff = render_function(
+                "datetime_diff",
+                ["'2026-01-15T08:00:00Z'", "'2026-01-15T11:30:00Z'"],
+                {"unit": "hours"}, dialect="duckdb",
+            )
+            assert con.execute(f"SELECT {datetime_diff}").fetchone() == (3,)
+
+            format_time = render_function(
+                "format_time", ["'2026-12-30T08:00:00Z'"],
+                {"pattern": "YYYY-WW"}, dialect="duckdb",
+            )
+            assert con.execute(f"SELECT {format_time}").fetchone() == ("2026-53",)
+
+            format_date = render_function(
+                "format_date", ["'2026-12-30'"],
+                {"pattern": "MMMM yyyy"}, dialect="duckdb",
+            )
+            assert con.execute(f"SELECT {format_date}").fetchone() == ("December 2026",)
+
+            con.execute("INSTALL json; LOAD json")
+            json_has_key = render_function(
+                "json_has_key", ["'{\"name\":\"a\"}'", "'name'"],
+                {}, dialect="duckdb",
+            )
+            assert con.execute(f"SELECT {json_has_key}").fetchone() == (True,)
+        finally:
+            con.close()
