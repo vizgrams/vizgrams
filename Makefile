@@ -67,22 +67,20 @@ gen-batch-secret: ## Generate a value for BATCH_SERVICE_SECRET
 # ── Local development (no containers) ─────────────────────────────────────────
 ## Local development
 
-dev: ## Start API + batch service + UI locally with hot-reload (requires a running ClickHouse instance)
+dev: ## Start API + batch service + UI locally with hot-reload
 	@echo ""
 	@echo "  API:    http://localhost:8000/docs"
 	@echo "  Batch:  http://localhost:8001/docs"
 	@echo "  UI:     http://localhost:5173"
 	@echo ""
-	@echo "  Requires ClickHouse — run 'make clickhouse' in the vizgrams/ops repo first."
-	@echo ""
 	@trap 'kill 0' EXIT; \
-	  poetry run watchfiles --filter python "poetry run uvicorn api.main:app --port 8000" api core engine semantic tools batch & \
+	  VZ_DELEGATE_API_WRITES_TO_BATCH=true poetry run watchfiles --filter python "poetry run uvicorn api.main:app --port 8000" api core engine semantic tools batch & \
 	  poetry run watchfiles --filter python "poetry run uvicorn batch_service.main:app --port 8001" batch_service batch core engine semantic tools & \
 	  npm run dev --prefix ui & \
 	  wait
 
 dev-api: ## Start API server only
-	poetry run watchfiles --filter python "poetry run uvicorn api.main:app --port 8000" api core engine semantic tools batch
+	VZ_DELEGATE_API_WRITES_TO_BATCH=true poetry run watchfiles --filter python "poetry run uvicorn api.main:app --port 8000" api core engine semantic tools batch
 
 dev-batch: ## Start batch service only
 	poetry run watchfiles --filter python "poetry run uvicorn batch_service.main:app --port 8001" batch_service batch core engine semantic tools
