@@ -39,6 +39,9 @@ class JobSubmit(BaseModel):
     task: str | None = None
     mapper: str | None = None
     entity: str | None = None
+    # feature_id scopes a "reconcile" job to a single feature; entity scopes
+    # to all features for that entity; neither = reconcile everything.
+    feature_id: str | None = None
     full_refresh: bool = False
     since: str | None = None
     triggered_by: str = "api"
@@ -113,6 +116,8 @@ def submit_job(body: JobSubmit):
         return _submit_mapper_job(body, model_dir)
     if body.operation == "materialize":
         return _submit_materialize_job(body, model_dir)
+    if body.operation == "reconcile":
+        return _submit_reconcile_job(body, model_dir)
     return _submit_extract_job(body, model_dir)
 
 
@@ -259,6 +264,59 @@ def _submit_materialize_job(body: JobSubmit, model_dir) -> JobResponse:
             "job_id": job_id,
             "model": body.model,
             "entity": body.entity or "all",
+            "triggered_by": body.triggered_by,
+        },
+    )
+    return _to_response(job)
+
+
+def _submit_reconcile_job(body: JobSubmit, model_dir) -> JobResponse:
+    """Reconcile feature definitions + materialise values.
+
+    Scope is controlled by:
+      - body.feature_id  → reconcile one feature
+      - body.entity      → reconcile all features for that entity
+      - neither          → reconcile every feature in the model
+    """
+    # tool column is used for the running-job dedup check; build a key that
+    # captures the scope so two non-overlapping scopes can run concurrently.
+    scope_key = body.feature_id or f"entity:{body.entity}" if body.entity else "__all__"
+    with jobdb.get_connection(model_dir) as con:
+        running = [
+            j for j in jobdb.list_jobs(con, body.model, status="running", limit=50)
+            if j.get("operation") == "reconcile" and j.get("tool") == scope_key
+        ]
+        if running:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Reconcile job '{running[0]['job_id']}' is already running for "
+                    f"model '{body.model}' scope '{scope_key}'. Cancel it first."
+                ),
+            )
+
+        job_id = str(uuid.uuid4())
+        jobdb.insert_job(
+            con,
+            job_id=job_id,
+            model=body.model,
+            operation="reconcile",
+            tool=scope_key,
+            status="running",
+            started_at=_now(),
+            triggered_by=body.triggered_by,
+        )
+        job = jobdb.get_job(con, job_id)
+
+    jobexec.submit_reconcile(model_dir, job_id, body.entity, body.feature_id)
+
+    _log.info(
+        "Reconcile job submitted",
+        extra={
+            "job_id": job_id,
+            "model": body.model,
+            "entity": body.entity or "all",
+            "feature_id": body.feature_id or "*",
             "triggered_by": body.triggered_by,
         },
     )

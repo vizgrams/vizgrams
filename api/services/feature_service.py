@@ -244,6 +244,18 @@ def reconcile_features(model_dir: Path, dry_run: bool = False) -> dict:
     return {"count": len(feature_defs), "dry_run": dry_run}
 
 
+def _delegate_writes_to_batch() -> bool:
+    """When set, reconcile jobs are submitted to the batch service instead of
+    running on the api process's thread pool.
+
+    Required for single-writer backends (DuckDB) where concurrent api + batch
+    writes to the same data DB would collide. ClickHouse and SQLite-WAL
+    tolerate the legacy in-process path so this flag defaults off.
+    """
+    import os
+    return os.environ.get("VZ_DELEGATE_API_WRITES_TO_BATCH", "").lower() in ("1", "true", "yes")
+
+
 def reconcile_all_features(
     model_dir: Path,
     entity_name: str | None,
@@ -263,6 +275,12 @@ def reconcile_all_features(
             raise KeyError(f"No features found for entity '{entity_name}'.")
     else:
         materialize_ids = None
+
+    if _delegate_writes_to_batch():
+        from api.batch_client import submit_reconcile_job
+        from api.routers.jobs import _to_job_out
+        job_dict = submit_reconcile_job(model_dir.name, entity=entity_name)
+        return _to_job_out(job_dict)
 
     scope = entity_name or "all entities"
     n = len(materialize_ids) if materialize_ids is not None else len(all_feature_defs)
@@ -343,6 +361,7 @@ def reconcile_entity_feature(
 
     if feature_name == "*":
         materialize_ids = entity_feature_ids
+        delegated_feature_id: str | None = None
     else:
         matching = {
             fd.feature_id
@@ -352,6 +371,19 @@ def reconcile_entity_feature(
         if not matching:
             raise KeyError(f"Feature '{feature_name}' not found for entity '{entity_name}'.")
         materialize_ids = matching
+        # The first (and only) id when scoped to a single feature; passed to
+        # batch so the reconcile job runs against just that feature.
+        delegated_feature_id = next(iter(matching))
+
+    if _delegate_writes_to_batch():
+        from api.batch_client import submit_reconcile_job
+        from api.routers.jobs import _to_job_out
+        job_dict = submit_reconcile_job(
+            model_dir.name,
+            entity=entity_name if delegated_feature_id is None else None,
+            feature_id=delegated_feature_id,
+        )
+        return _to_job_out(job_dict)
 
     job = job_service.create(
         model=model_dir.name,
