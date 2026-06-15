@@ -261,6 +261,281 @@ class SQLiteBackend(DBBackend):
 
 
 # ---------------------------------------------------------------------------
+# DuckDBBackend
+# ---------------------------------------------------------------------------
+
+
+class DuckDBBackend(DBBackend):
+    """DuckDB implementation — embedded analytic backend, single-file storage.
+
+    Targets the same shape as ``SQLiteBackend`` (single file, no separate
+    server) but with column-store storage and OLAP-grade query execution.
+    Used for models that have outgrown SQLite's row-store performance but
+    don't justify ClickHouse's operational overhead.
+
+    Storage semantics:
+      - One ``.duckdb`` file per backend instance (sem and raw can share a
+        file or live in separate ones — controlled by config).
+      - DuckDB's WAL is on by default; the file is consistent across
+        process restarts.
+      - PRIMARY KEY enforcement is real (unlike SQLite without UNIQUE
+        indexes). FOREIGN KEY is also enforced.
+
+    Concurrency:
+      - DuckDB is single-writer per database file. Concurrent readers are
+        fine; concurrent writers will block. Phase 5 of the CH→DuckDB
+        migration moves api-side writes into batch to remove the
+        api/batch write contention.
+    """
+
+    dialect = "duckdb"
+
+    # DuckDB SQL type mapping from the generic column-type strings used by
+    # the semantic layer. DuckDB columns are nullable by default so the
+    # mapping does not wrap in Nullable(...) the way ClickHouse does.
+    _TYPE_MAP: dict[str, str] = {
+        "text":    "VARCHAR",
+        "string":  "VARCHAR",
+        "varchar": "VARCHAR",
+        "integer": "BIGINT",
+        "int":     "BIGINT",
+        "bigint":  "BIGINT",
+        "float":   "DOUBLE",
+        "real":    "DOUBLE",
+        "double":  "DOUBLE",
+        "numeric": "DOUBLE",
+        "boolean": "BOOLEAN",
+        "bool":    "BOOLEAN",
+    }
+
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        """Initialize with a file path, or None for an in-memory database."""
+        self.db_path = str(db_path) if db_path else ":memory:"
+        self._conn = None
+        # Cache PK columns per table so upsert can build ON CONFLICT clauses
+        # without a round-trip to information_schema each time.
+        self._pk_cache: dict[str, list[str]] = {}
+
+    # ------------------------------------------------------------------
+    # Connection
+    # ------------------------------------------------------------------
+
+    def connect(self) -> None:
+        try:
+            import duckdb  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "duckdb is required for DuckDBBackend. "
+                "Install it with: poetry add duckdb"
+            ) from exc
+        if self.db_path != ":memory:":
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._conn = duckdb.connect(self.db_path)
+        except duckdb.Error as exc:
+            raise BackendUnavailableError(
+                f"DuckDB unavailable at {self.db_path}: {exc}"
+            ) from exc
+
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    # ------------------------------------------------------------------
+    # Query execution
+    # ------------------------------------------------------------------
+
+    def execute(self, sql: str, params: tuple | list = ()) -> list:
+        """Execute SQL and return rows as lists.
+
+        DuckDB uses ``?`` positional parameters (same as SQLite) so callers
+        that build parameterised queries against SQLiteBackend can pass them
+        unchanged. ``last_columns`` is populated for SELECT statements so the
+        higher-level query layer can build column-named results; for DDL/DML
+        the field is cleared (DuckDB exposes a synthetic ``Count`` column for
+        those that would otherwise leak into ``last_columns``).
+        """
+        assert self._conn is not None, "Not connected"
+        cursor = self._conn.execute(sql, list(params) if params else None)
+        if sql.lstrip()[:6].upper() == "SELECT" and cursor.description:
+            self.last_columns = [d[0] for d in cursor.description]
+        else:
+            self.last_columns = []
+        # DuckDB returns tuples; mirror the list-of-lists shape used by the
+        # ClickHouse backend so downstream code can treat both identically.
+        return [list(row) for row in cursor.fetchall()]
+
+    def table_exists(self, table: str) -> bool:
+        assert self._conn is not None, "Not connected"
+        row = self._conn.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'main' AND table_name = ?",
+            [table],
+        ).fetchone()
+        return row is not None
+
+    def get_columns(self, table: str) -> list[str]:
+        assert self._conn is not None, "Not connected"
+        rows = self._conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'main' AND table_name = ? "
+            "ORDER BY ordinal_position",
+            [table],
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def create_table(
+        self,
+        table: str,
+        columns: dict[str, str],
+        primary_keys: list[str],
+        foreign_keys: dict[str, str] | None = None,
+        order_by: list[str] | None = None,
+    ) -> None:
+        # order_by is meaningful for ClickHouse's MergeTree ORDER BY; DuckDB
+        # ignores it (column-store ordering is decided at write time).
+        del order_by
+        assert self._conn is not None, "Not connected"
+        col_defs = [
+            f"{name} {self._TYPE_MAP.get(typ.lower(), typ)}"
+            for name, typ in columns.items()
+        ]
+        if primary_keys:
+            col_defs.append(f"PRIMARY KEY ({', '.join(primary_keys)})")
+        if foreign_keys:
+            for col_name, ref in foreign_keys.items():
+                col_defs.append(f"FOREIGN KEY ({col_name}) REFERENCES {ref}")
+        sql = f"CREATE TABLE IF NOT EXISTS {table} ({', '.join(col_defs)})"
+        self._conn.execute(sql)
+        if primary_keys:
+            self._pk_cache[table] = list(primary_keys)
+
+    def add_columns(self, table: str, columns: dict[str, str]) -> None:
+        assert self._conn is not None, "Not connected"
+        existing = set(self.get_columns(table))
+        for name, typ in columns.items():
+            if name not in existing:
+                sql_type = self._TYPE_MAP.get(typ.lower(), typ)
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+
+    def _get_primary_keys(self, table: str) -> list[str]:
+        """Look up PK columns for a table, caching results."""
+        if table in self._pk_cache:
+            return self._pk_cache[table]
+        assert self._conn is not None, "Not connected"
+        # DuckDB exposes PKs through duckdb_constraints() — query by table.
+        rows = self._conn.execute(
+            "SELECT constraint_column_names FROM duckdb_constraints() "
+            "WHERE table_name = ? AND constraint_type = 'PRIMARY KEY'",
+            [table],
+        ).fetchall()
+        pks = list(rows[0][0]) if rows and rows[0][0] else []
+        self._pk_cache[table] = pks
+        return pks
+
+    def upsert(self, table: str, row: dict) -> None:
+        """INSERT ... ON CONFLICT DO UPDATE for dimension tables.
+
+        When the table has no PRIMARY KEY (rare, but possible for pure
+        append tables), this falls back to a plain INSERT — there's no
+        conflict to resolve.
+        """
+        assert self._conn is not None, "Not connected"
+        cols = list(row.keys())
+        placeholders = ", ".join("?" for _ in cols)
+        col_names = ", ".join(cols)
+        values = [
+            json.dumps(v) if isinstance(v, (dict, list)) else v
+            for v in row.values()
+        ]
+        pks = self._get_primary_keys(table)
+        if pks:
+            # Update every non-PK column to the new value on conflict.
+            update_cols = [c for c in cols if c not in pks]
+            if update_cols:
+                set_clause = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
+                sql = (
+                    f"INSERT INTO {table} ({col_names}) VALUES ({placeholders}) "
+                    f"ON CONFLICT ({', '.join(pks)}) DO UPDATE SET {set_clause}"
+                )
+            else:
+                # All columns are PK — nothing to update, just skip duplicates.
+                sql = (
+                    f"INSERT INTO {table} ({col_names}) VALUES ({placeholders}) "
+                    f"ON CONFLICT ({', '.join(pks)}) DO NOTHING"
+                )
+        else:
+            sql = f"INSERT INTO {table} ({col_names}) VALUES ({placeholders})"
+        self._conn.execute(sql, values)
+
+    def append(self, table: str, row: dict) -> None:
+        """Plain INSERT for fact tables, adds inserted_at timestamp."""
+        assert self._conn is not None, "Not connected"
+        row_with_ts = {**row, "inserted_at": _now_utc()}
+        cols = list(row_with_ts.keys())
+        placeholders = ", ".join("?" for _ in cols)
+        col_names = ", ".join(cols)
+        values = [
+            json.dumps(v) if isinstance(v, (dict, list)) else v
+            for v in row_with_ts.values()
+        ]
+        sql = f"INSERT INTO {table} ({col_names}) VALUES ({placeholders})"
+        self._conn.execute(sql, values)
+
+    def truncate(self, table: str) -> None:
+        assert self._conn is not None, "Not connected"
+        self._conn.execute(f"DELETE FROM {table}")
+
+    # ------------------------------------------------------------------
+    # _task_runs metadata
+    # ------------------------------------------------------------------
+
+    def ensure_meta_table(self) -> None:
+        assert self._conn is not None, "Not connected"
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS _task_runs ("
+            "  task_name VARCHAR NOT NULL,"
+            "  started_at VARCHAR NOT NULL,"
+            "  completed_at VARCHAR NOT NULL,"
+            "  record_count BIGINT NOT NULL,"
+            "  status VARCHAR NOT NULL,"
+            "  param_key VARCHAR"
+            ")"
+        )
+        # Migrate older tables missing the param_key column (mirrors SQLite path).
+        if "param_key" not in self.get_columns("_task_runs"):
+            self._conn.execute("ALTER TABLE _task_runs ADD COLUMN param_key VARCHAR")
+
+    def get_last_run(self, task_name: str, param_key: str | None = None) -> str | None:
+        assert self._conn is not None, "Not connected"
+        if param_key is not None:
+            row = self._conn.execute(
+                "SELECT MAX(started_at) FROM _task_runs "
+                "WHERE task_name = ? AND param_key = ? AND status = 'success'",
+                [task_name, param_key],
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT MAX(started_at) FROM _task_runs "
+                "WHERE task_name = ? AND param_key IS NULL AND status = 'success'",
+                [task_name],
+            ).fetchone()
+        return row[0] if row and row[0] else None
+
+    def record_run(
+        self, task_name: str, started_at: str, completed_at: str,
+        record_count: int, status: str, param_key: str | None = None,
+    ) -> None:
+        assert self._conn is not None, "Not connected"
+        self._conn.execute(
+            "INSERT INTO _task_runs (task_name, started_at, completed_at, record_count, status, param_key) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [task_name, started_at, completed_at, record_count, status, param_key],
+        )
+
+
+# ---------------------------------------------------------------------------
 # ClickHouseBackend
 # ---------------------------------------------------------------------------
 
@@ -845,6 +1120,10 @@ def get_backend(model_dir: Path, namespace: str = "sem") -> DBBackend:
     if backend == "sqlite":
         db_path = cfg.get("path", "data/data.db")
         return SQLiteBackend(db_path=Path(model_dir) / db_path)
+
+    if backend == "duckdb":
+        db_path = cfg.get("path", "data/data.duckdb")
+        return DuckDBBackend(db_path=Path(model_dir) / db_path)
 
     if backend == "clickhouse":
         base_db = cfg.get("database", model_dir.name)
