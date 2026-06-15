@@ -357,5 +357,102 @@ def sync(
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# Backup / restore — DuckDB-backed models only
+# ---------------------------------------------------------------------------
+
+def _load_duckdb_backend(model_dir_path: Path):
+    """Return a connected DuckDBBackend for the model at ``model_dir_path``.
+
+    Raises SystemExit with a useful message if the model is configured for
+    a different backend.
+    """
+    from core.db import DuckDBBackend, get_backend
+    backend = get_backend(model_dir_path)
+    if not isinstance(backend, DuckDBBackend):
+        click.echo(
+            f"ERROR: model at {model_dir_path} uses backend "
+            f"{type(backend).__name__}, not DuckDB. Backup / restore via "
+            "vzctl is only implemented for DuckDB-backed models.",
+            err=True,
+        )
+        sys.exit(2)
+    backend.connect()
+    return backend
+
+
+def _maybe_configure_s3(backend, region: str | None) -> None:
+    """Wire up the AWS credential chain on the backend when URI is s3://.
+
+    Explicit key/secret aren't accepted on the CLI; if you need them, set
+    AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the env and the
+    credential-chain provider picks them up.
+    """
+    backend.configure_s3_credentials(
+        use_credential_chain=True,
+        region=region,
+    )
+
+
+@cli.command()
+@click.argument("uri")
+@click.option(
+    "--model-dir", default=".", show_default=True,
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    help="Local directory containing the model's config.yaml.",
+)
+@click.option(
+    "--region", envvar="AWS_REGION",
+    help="AWS region for the S3 bucket. Env: AWS_REGION.",
+)
+def backup(uri: str, model_dir: str, region: str | None) -> None:
+    """Back up a DuckDB-backed model to URI (local path or s3://bucket/prefix).
+
+    Exports every table in the model's data DB as parquet via DuckDB's
+    EXPORT DATABASE. On S3, expects credentials available via the standard
+    AWS credential chain (env vars, ~/.aws/credentials, or instance/task role).
+
+    Restore later with: vzctl restore URI
+    """
+    backend = _load_duckdb_backend(Path(model_dir))
+    try:
+        if uri.startswith("s3://"):
+            _maybe_configure_s3(backend, region)
+        click.echo(f"Backing up to {uri} …", err=True)
+        backend.export_database(uri)
+        click.echo("Backup complete.", err=True)
+    finally:
+        backend.close()
+
+
+@cli.command()
+@click.argument("uri")
+@click.option(
+    "--model-dir", default=".", show_default=True,
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    help="Local directory containing the model's config.yaml.",
+)
+@click.option(
+    "--region", envvar="AWS_REGION",
+    help="AWS region for the S3 bucket. Env: AWS_REGION.",
+)
+def restore(uri: str, model_dir: str, region: str | None) -> None:
+    """Restore a DuckDB-backed model from URI (the output of vzctl backup).
+
+    Re-runs IMPORT DATABASE against the backend, recreating every table
+    captured at backup time. Existing tables of the same name are
+    replaced — back up first if you need to keep them.
+    """
+    backend = _load_duckdb_backend(Path(model_dir))
+    try:
+        if uri.startswith("s3://"):
+            _maybe_configure_s3(backend, region)
+        click.echo(f"Restoring from {uri} …", err=True)
+        backend.import_database(uri)
+        click.echo("Restore complete.", err=True)
+    finally:
+        backend.close()
+
+
 if __name__ == "__main__":
     cli()
