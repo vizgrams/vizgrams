@@ -475,3 +475,87 @@ class TestCollectFilterColumnRefs:
         # now() has no field refs — just the left side
         refs = collect_filter_column_refs("created_at > now()")
         assert "created_at" in refs
+
+
+# ===========================================================================
+# Group E — DuckDB dialect (Phase 3 of CH→DuckDB migration)
+# ===========================================================================
+
+class TestDuckDBDialect:
+    """DuckDB has no json_each but has list_contains + list_has_any + the
+    JSON extension's json_extract_string with '$[*]' path expansion.
+    """
+
+    def test_like_escape_unchanged(self):
+        # DuckDB supports LIKE...ESCAPE the same way SQLite does — falls through.
+        sql = compile_filter_yaml('key.startswith("AD-")', alias="s", dialect="duckdb")
+        assert sql == "s.key LIKE 'AD-%' ESCAPE '\\'"
+
+    def test_contains(self):
+        sql = compile_filter_yaml('labels.contains("bug")', alias="s", dialect="duckdb")
+        assert sql == (
+            "list_contains(json_extract_string(coalesce(s.labels, '[]'), '$[*]'), 'bug')"
+        )
+
+    def test_contains_any_list(self):
+        sql = compile_filter_yaml(
+            'labels.containsAny(["bug","defect"])', alias="s", dialect="duckdb",
+        )
+        assert sql == (
+            "list_has_any(json_extract_string(coalesce(s.labels, '[]'), '$[*]'), ['bug', 'defect'])"
+        )
+
+    def test_contains_any_singleton(self):
+        # A bare scalar is wrapped as a singleton list for list_has_any.
+        sql = compile_filter_yaml('labels.containsAny("bug")', alias="s", dialect="duckdb")
+        assert sql == (
+            "list_has_any(json_extract_string(coalesce(s.labels, '[]'), '$[*]'), ['bug'])"
+        )
+
+    def test_json_any(self):
+        sql = compile_filter_yaml(
+            'items.json_any("fieldId","status")', alias="sc", dialect="duckdb",
+        )
+        assert sql == (
+            "list_contains(json_extract_string(coalesce(sc.items, '[]'), '$[*].fieldId'), 'status')"
+        )
+
+    def test_duckdb_sql_executes(self):
+        """End-to-end: every duckdb fragment runs against a live in-memory DB
+        and returns the expected booleans against representative data.
+        """
+        duckdb = pytest.importorskip("duckdb")
+        con = duckdb.connect(":memory:")
+        try:
+            con.execute("INSTALL json; LOAD json")
+            con.execute("CREATE TABLE t (labels VARCHAR)")
+            con.execute(
+                "INSERT INTO t VALUES (?), (?), (?)",
+                ['["bug","perf"]', '["docs"]', None],
+            )
+            sql = compile_filter_yaml('labels.contains("bug")', dialect="duckdb")
+            results = [r[0] for r in con.execute(f"SELECT {sql} FROM t").fetchall()]
+            assert results == [True, False, False]
+
+            sql = compile_filter_yaml(
+                'labels.containsAny(["docs","bug"])', dialect="duckdb",
+            )
+            results = [r[0] for r in con.execute(f"SELECT {sql} FROM t").fetchall()]
+            assert results == [True, True, False]
+
+            con.execute("CREATE TABLE u (items VARCHAR)")
+            con.execute(
+                "INSERT INTO u VALUES (?), (?), (?)",
+                [
+                    '[{"fieldId":"status","value":"open"}, {"fieldId":"prio","value":"hi"}]',
+                    '[{"fieldId":"prio","value":"lo"}]',
+                    None,
+                ],
+            )
+            sql = compile_filter_yaml(
+                'items.json_any("fieldId","status")', dialect="duckdb",
+            )
+            results = [r[0] for r in con.execute(f"SELECT {sql} FROM u").fetchall()]
+            assert results == [True, False, False]
+        finally:
+            con.close()

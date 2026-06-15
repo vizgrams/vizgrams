@@ -876,10 +876,11 @@ def compile_feature_to_sql(
 
     if _has_aggregation(feat.expression):
         group_by = [f"{root_alias}.{feat.entity_key}"]
-        if dialect == "clickhouse":
-            # ClickHouse does not allow non-aggregate column refs in SELECT alongside
-            # aggregates (unlike SQLite).  Collect root-entity columns that appear
-            # outside any AggExpr and add them to GROUP BY.
+        if dialect in ("clickhouse", "duckdb"):
+            # ClickHouse and DuckDB both enforce the SQL standard: non-aggregate
+            # column refs in SELECT must appear in GROUP BY. SQLite is permissive
+            # here. Collect root-entity columns that appear outside any AggExpr
+            # and add them to GROUP BY.
             root_col_names = {a.name for a in root_entity.all_base_columns}
             for col in sorted(_collect_non_agg_root_refs(feat.expression) & root_col_names):
                 if col != feat.entity_key:
