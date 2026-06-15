@@ -856,6 +856,43 @@ class TestCompileFeatureToSql:
         assert "GROUP BY" in sql
         assert "team_sprint_key" in sql
 
+    def test_strict_group_by_extends_to_non_agg_cols_on_duckdb(self):
+        """DuckDB enforces SQL-standard GROUP BY (like ClickHouse, unlike SQLite).
+        A feature like ``sum(score) - days_offset`` references ``days_offset``
+        outside the aggregate and must therefore appear in GROUP BY on duckdb.
+        """
+        entity = EntityDef(
+            name="TeamSprint",
+            identity=[AttributeDef("team_sprint_key", ColumnType.STRING, SemanticHint.PRIMARY_KEY)],
+            attributes=[
+                AttributeDef("score", ColumnType.FLOAT),
+                AttributeDef("days_offset", ColumnType.FLOAT),
+            ],
+        )
+        feat = ExpressionFeatureDef(
+            feature_id="team_sprint.adjusted_total",
+            name="Adjusted Total",
+            entity_type="TeamSprint",
+            entity_key="team_sprint_key",
+            data_type="FLOAT",
+            materialization_mode="materialized",
+            expression=BinOp(
+                op="-",
+                left=AggExpr(func=AggFunc.SUM, expr=FieldRef(["score"])),
+                right=FieldRef(["days_offset"]),
+            ),
+        )
+        sqlite_sql = compile_feature_to_sql(feat, {"TeamSprint": entity}, dialect="sqlite")
+        duckdb_sql = compile_feature_to_sql(feat, {"TeamSprint": entity}, dialect="duckdb")
+        ch_sql = compile_feature_to_sql(feat, {"TeamSprint": entity}, dialect="clickhouse")
+
+        # SQLite is permissive — only the entity key appears in GROUP BY.
+        assert "GROUP BY" in sqlite_sql
+        assert "days_offset" not in sqlite_sql.split("GROUP BY", 1)[1]
+        # DuckDB matches ClickHouse: non-agg cols added to GROUP BY.
+        assert "days_offset" in duckdb_sql.split("GROUP BY", 1)[1]
+        assert "days_offset" in ch_sql.split("GROUP BY", 1)[1]
+
     def test_traversal_join_emitted(self):
         sprint = _sprint_entity()
         ts = _team_sprint_entity()

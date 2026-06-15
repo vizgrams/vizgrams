@@ -236,6 +236,12 @@ def compile_filter_expr(expr, ctx: FilterCompileContext) -> str:
             val_sql = compile_filter_expr(expr.args[0], ctx)
             if ctx.dialect == "clickhouse":
                 return f"has(JSONExtract(ifNull({col_sql}, '[]'), 'Array(String)'), {val_sql})"
+            if ctx.dialect == "duckdb":
+                # json_extract_string on '$[*]' returns LIST<VARCHAR>; list_contains
+                # gives FALSE (not NULL) on empty lists.  COALESCE handles NULL cols.
+                return (
+                    f"list_contains(json_extract_string(coalesce({col_sql}, '[]'), '$[*]'), {val_sql})"
+                )
             return f"EXISTS (SELECT 1 FROM json_each({col_sql}) WHERE value = {val_sql})"
 
         if method == "containsAny":
@@ -250,6 +256,17 @@ def compile_filter_expr(expr, ctx: FilterCompileContext) -> str:
                 else:
                     val_sql = compile_filter_expr(arg, ctx)
                     return f"has(JSONExtract(ifNull({col_sql}, '[]'), 'Array(String)'), {val_sql})"
+            if ctx.dialect == "duckdb":
+                if isinstance(arg, ListLit):
+                    vals_list = [compile_filter_expr(v, ctx) for v in arg.values]
+                    list_lit = f"[{', '.join(vals_list)}]"
+                else:
+                    val_sql = compile_filter_expr(arg, ctx)
+                    # Single value behaves as a singleton list for list_has_any.
+                    list_lit = f"[{val_sql}]"
+                return (
+                    f"list_has_any(json_extract_string(coalesce({col_sql}, '[]'), '$[*]'), {list_lit})"
+                )
             if isinstance(arg, ListLit):
                 vals_sql = ", ".join(compile_filter_expr(v, ctx) for v in arg.values)
             else:
@@ -274,6 +291,13 @@ def compile_filter_expr(expr, ctx: FilterCompileContext) -> str:
                 return (
                     f"arrayExists(x -> JSONExtractString(x, '{field_str}') = {val_sql}, "
                     f"JSONExtractArrayRaw(ifNull({col_sql}, '[]')))"
+                )
+            if ctx.dialect == "duckdb":
+                # json_extract_string with $[*].field returns LIST<VARCHAR> of every
+                # element's matching attribute. Same string-coerced comparison as the
+                # ClickHouse JSONExtractString path.
+                return (
+                    f"list_contains(json_extract_string(coalesce({col_sql}, '[]'), '$[*].{field_str}'), {val_sql})"
                 )
             return (
                 f"EXISTS (SELECT 1 FROM json_each({col_sql}) "
@@ -327,7 +351,7 @@ def compile_filter_yaml(
         alias: If provided, prefix bare column references with this alias.
         path_resolver: Optional callable(parts: list[str]) -> str for traversal refs.
         field_override_map: Optional mapping of bare field name -> SQL expression override.
-        dialect: SQL dialect ("sqlite" or "clickhouse").
+        dialect: SQL dialect ("sqlite", "clickhouse", or "duckdb").
     """
     if isinstance(filter_data, str):
         expr = parse_expression_str(filter_data)
