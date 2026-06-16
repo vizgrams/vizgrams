@@ -82,8 +82,12 @@ def _migrate_one_table(
     """
     report = TableReport(table=table, source_db=ch_database)
     try:
+        # FINAL collapses ReplacingMergeTree duplicates so the count matches
+        # what the FINAL SELECT below actually loads. Without FINAL, count()
+        # returns every pre-merge row and parity always fails on a table
+        # that's seen even one upsert.
         ch_count_rows = ch_client.query(
-            f"SELECT count() FROM `{ch_database}`.`{table}`"
+            f"SELECT count() FROM `{ch_database}`.`{table}` FINAL"
         ).result_rows
         report.ch_row_count = int(ch_count_rows[0][0]) if ch_count_rows else 0
 
