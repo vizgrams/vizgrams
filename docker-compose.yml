@@ -58,14 +58,11 @@ services:
       # DEV_USER provides a synthetic identity when auth layer is not active.
       # Set in .env for local container testing. Never set in production.
       DEV_USER: "${DEV_USER:-}"
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_PORT: "8123"
-      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
-      VZ_DATABASE_BACKEND: "${VZ_DATABASE_BACKEND:-}"
-      # Required when the data backend is DuckDB (single-writer): api delegates
+      VZ_DATABASE_BACKEND: "${VZ_DATABASE_BACKEND:-duckdb}"
+      # Required for the DuckDB backend (single-writer): api delegates
       # materialize + feature reconcile to the batch service instead of writing
-      # the data DB itself. Safe to leave on for ClickHouse / SQLite-WAL too.
-      VZ_DELEGATE_API_WRITES_TO_BATCH: "${VZ_DELEGATE_API_WRITES_TO_BATCH:-}"
+      # the data DB itself. Safe to leave on for SQLite-WAL too.
+      VZ_DELEGATE_API_WRITES_TO_BATCH: "${VZ_DELEGATE_API_WRITES_TO_BATCH:-true}"
       VZ_TOOLS_DIR: "${VZ_TOOLS_DIR:-}"
     volumes:
       - ${VZ_MODELS_DIR:-./models}:/models
@@ -84,8 +81,6 @@ services:
       - internal
     depends_on:
       batch:
-        condition: service_healthy
-      clickhouse:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
@@ -108,14 +103,11 @@ services:
       LOG_FORMAT: json
       BATCH_WORKERS: "${BATCH_WORKERS:-4}"
       BATCH_SERVICE_SECRET: "${BATCH_SERVICE_SECRET:-}"
-      CLICKHOUSE_HOST: clickhouse
-      CLICKHOUSE_PORT: "8123"
-      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
-      VZ_DATABASE_BACKEND: "${VZ_DATABASE_BACKEND:-}"
-      # Required when the data backend is DuckDB (single-writer): api delegates
+      VZ_DATABASE_BACKEND: "${VZ_DATABASE_BACKEND:-duckdb}"
+      # Required for the DuckDB backend (single-writer): api delegates
       # materialize + feature reconcile to the batch service instead of writing
-      # the data DB itself. Safe to leave on for ClickHouse / SQLite-WAL too.
-      VZ_DELEGATE_API_WRITES_TO_BATCH: "${VZ_DELEGATE_API_WRITES_TO_BATCH:-}"
+      # the data DB itself. Safe to leave on for SQLite-WAL too.
+      VZ_DELEGATE_API_WRITES_TO_BATCH: "${VZ_DELEGATE_API_WRITES_TO_BATCH:-true}"
       VZ_TOOLS_DIR: "${VZ_TOOLS_DIR:-}"
     volumes:
       - ${VZ_MODELS_DIR:-./models}:/models
@@ -125,9 +117,6 @@ services:
       - /tmp:size=64m,mode=1777
     networks:
       - internal
-    depends_on:
-      clickhouse:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
       interval: 30s
