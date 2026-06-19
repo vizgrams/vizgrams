@@ -822,7 +822,15 @@ def _join_clauses_from_steps(join_steps: list[dict]) -> list[str]:
                 f" = {step['from_alias']}.{step['from_col']}"
             )
             if step["has_history"]:
-                cond += f" AND {step['target_alias']}.valid_to IS NULL"
+                # SCD2 "open row" encoding diverges by backend: SQLite/DuckDB
+                # write NULL; ClickHouse stores '' on String columns. Cover
+                # both so a CH→DuckDB migrated dataset (where the empty
+                # strings ride along unchanged) still joins to current
+                # rows only. Matches query_runner.py's filter pattern.
+                cond += (
+                    f" AND ({step['target_alias']}.valid_to IS NULL"
+                    f" OR {step['target_alias']}.valid_to = '')"
+                )
             clauses.append(
                 f"LEFT JOIN {step['target_table']} AS {step['target_alias']} ON {cond}"
             )
