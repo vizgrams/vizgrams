@@ -127,7 +127,6 @@ up: docker-check env-check ## Build and start containers (no auth)
 	@echo "  UI:                http://localhost"
 	@echo "  API docs:          http://localhost/api/docs"
 	@echo "  Traefik dashboard: http://localhost:8080"
-	@echo "  Connect to CH:     docker exec -it vizgrams-clickhouse-1 clickhouse-client"
 	@echo ""
 	@echo "Run 'make logs' to follow output, 'make down' to stop."
 
