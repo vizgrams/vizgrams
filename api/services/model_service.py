@@ -302,14 +302,29 @@ def _get_config_summary(model_dir: Path) -> dict | None:
 
 
 def _get_db_stats(model_dir: Path) -> dict:
-    db_path = model_dir / "data" / "data.db"
+    """Surface backend / row-count info for the model status endpoint.
+
+    Reads the model's database config to pick the right backend + file path
+    (was hardcoded to data/data.db + sqlite3 before, so DuckDB-backed models
+    appeared as "0 tables" in the UI even when the file was populated).
+    Tables are classified as raw / sem by name prefix on SQLite (legacy
+    convention) and by absence-of-prefix on backends that don't carry it.
+    """
+    from core.model_config import load_database_config
+
+    cfg = load_database_config(model_dir)
+    backend = cfg.get("backend", "sqlite")
+    default_path = "data/data.duckdb" if backend == "duckdb" else "data/data.db"
+    rel_path = cfg.get("path", default_path)
+    db_path = (model_dir / rel_path).resolve()
     try:
         display_path = str(db_path.relative_to(model_dir.parent.parent))
     except ValueError:
         display_path = str(db_path)
     stats: dict = {
+        "backend": backend,
         "path": display_path,
-        "present": db_path.exists(),
+        "present": db_path.exists() if backend in ("sqlite", "duckdb") else True,
         "raw_tables": 0,
         "raw_row_count": 0,
         "semantic_tables": 0,
@@ -317,35 +332,16 @@ def _get_db_stats(model_dir: Path) -> dict:
         "last_extract_at": None,
         "last_map_at": None,
     }
-    if not db_path.exists():
+    if backend in ("sqlite", "duckdb") and not db_path.exists():
         return stats
 
     try:
-        with sqlite3.connect(str(db_path)) as conn:
-            tables = [
-                r[0] for r in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            ]
-            raw = [t for t in tables if t.startswith("raw_")]
-            sem = [t for t in tables if t.startswith("sem_")]
-            stats["raw_tables"] = len(raw)
-            stats["semantic_tables"] = len(sem)
-            for t in raw:
-                stats["raw_row_count"] += conn.execute(
-                    f"SELECT COUNT(*) FROM [{t}]"
-                ).fetchone()[0]
-            for t in sem:
-                stats["semantic_row_count"] += conn.execute(
-                    f"SELECT COUNT(*) FROM [{t}]"
-                ).fetchone()[0]
-            # Last extract / map timestamps from meta table
-            if "_wt_runs" in tables:
-                row = conn.execute(
-                    "SELECT MAX(completed_at) FROM _wt_runs WHERE status='ok'"
-                ).fetchone()
-                if row and row[0]:
-                    stats["last_extract_at"] = row[0]
+        if backend == "sqlite":
+            _populate_stats_sqlite(stats, db_path)
+        elif backend == "duckdb":
+            _populate_stats_duckdb(stats, db_path)
+        # Other backends (e.g. clickhouse): skip — those models predate
+        # this endpoint being useful for them.
     except Exception:
         pass
 
@@ -357,6 +353,73 @@ def _get_db_stats(model_dir: Path) -> dict:
         stats["last_map_at"] = map_entries[-1]["timestamp"]
 
     return stats
+
+
+def _populate_stats_sqlite(stats: dict, db_path: Path) -> None:
+    """Per-backend stats helper for legacy SQLite-backed models."""
+    with sqlite3.connect(str(db_path)) as conn:
+        tables = [
+            r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        ]
+        raw = [t for t in tables if t.startswith("raw_")]
+        sem = [t for t in tables if t.startswith("sem_")]
+        stats["raw_tables"] = len(raw)
+        stats["semantic_tables"] = len(sem)
+        for t in raw:
+            stats["raw_row_count"] += conn.execute(
+                f"SELECT COUNT(*) FROM [{t}]"
+            ).fetchone()[0]
+        for t in sem:
+            stats["semantic_row_count"] += conn.execute(
+                f"SELECT COUNT(*) FROM [{t}]"
+            ).fetchone()[0]
+        if "_wt_runs" in tables:
+            row = conn.execute(
+                "SELECT MAX(completed_at) FROM _wt_runs WHERE status='ok'"
+            ).fetchone()
+            if row and row[0]:
+                stats["last_extract_at"] = row[0]
+
+
+def _populate_stats_duckdb(stats: dict, db_path: Path) -> None:
+    """Per-backend stats helper for DuckDB-backed models.
+
+    DuckDB-backed models don't carry the raw_ / sem_ prefix on table names
+    (the prefix is a SQLite-era convention that the CH+DuckDB compilers
+    rewrite away). We classify by checking the entity ontology: tables
+    whose name matches an entity.table_name are sem; others are raw.
+
+    Opens the file read-only with allow_unsigned_extensions so this can
+    happen even while batch is mid-mapper.
+    """
+    import duckdb
+
+    # Try read-only first so we don't conflict with the batch writer; fall
+    # back to read-write if read-only is unsupported (older duckdb).
+    try:
+        conn = duckdb.connect(str(db_path), read_only=True)
+    except Exception:
+        return
+    try:
+        tables = [
+            r[0] for r in conn.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'main' AND table_name NOT LIKE '\\_%' ESCAPE '\\'"
+            ).fetchall()
+        ]
+        # No raw_/sem_ prefix on DuckDB tables — surface the union under
+        # semantic_* (the UI cares about the totals, not the split).
+        stats["semantic_tables"] = len(tables)
+        total = 0
+        for t in tables:
+            total += conn.execute(
+                f'SELECT COUNT(*) FROM "{t}"'
+            ).fetchone()[0]
+        stats["semantic_row_count"] = total
+    finally:
+        conn.close()
 
 
 def _scrub_credentials(cfg: dict) -> dict:
