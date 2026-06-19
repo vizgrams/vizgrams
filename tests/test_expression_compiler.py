@@ -924,6 +924,40 @@ class TestCompileFeatureToSql:
         with pytest.raises(ValueError, match="Unknown entity type"):
             compile_feature_to_sql(feat, {})
 
+    def test_scd2_join_handles_empty_string_valid_to(self):
+        """SCD2 'open row' encoding diverges by backend: SQLite + DuckDB
+        write NULL; ClickHouse stores ''. The join must cover both so a
+        CH→DuckDB migrated dataset (where the empty strings ride along
+        unchanged) still filters to current rows only.
+        """
+        from semantic.types import HistoryDef, HistoryType
+        sprint = _sprint_entity()
+        ts = _team_sprint_entity()
+        # Give Sprint a HistoryDef so it's treated as SCD2.
+        sprint.history = HistoryDef(
+            history_type=HistoryType.SCD2,
+            columns=[
+                AttributeDef("valid_from", ColumnType.STRING, SemanticHint.SCD_FROM),
+                AttributeDef("valid_to", ColumnType.STRING, SemanticHint.SCD_TO),
+            ],
+            initial_valid_from="2025-01-01",
+        )
+        feat = ExpressionFeatureDef(
+            feature_id="team_sprint.start_date",
+            name="Start Date",
+            entity_type="TeamSprint",
+            entity_key="team_sprint_key",
+            data_type="STRING",
+            materialization_mode="materialized",
+            expression=FieldRef(["Sprint", "start_date"]),
+        )
+        sql = compile_feature_to_sql(feat, {"TeamSprint": ts, "Sprint": sprint})
+        # The join clause MUST include both encodings so CH-migrated rows
+        # (valid_to = '') and natively-DuckDB rows (valid_to IS NULL) both
+        # filter to current state.
+        assert "valid_to IS NULL" in sql
+        assert "valid_to = ''" in sql
+
 
 # ---------------------------------------------------------------------------
 # argmax aggregate function
