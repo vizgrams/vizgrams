@@ -37,6 +37,7 @@ class ConfigSummary(BaseModel):
 
 
 class DbStats(BaseModel):
+    backend: str | None = None
     path: str
     present: bool
     raw_tables: int = 0
