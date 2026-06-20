@@ -572,6 +572,33 @@ def _prefix_raw_tables(sql: str, raw_tables: set) -> str:
     return sql
 
 
+def _strip_namespace_prefixes_in_from_join(sql: str) -> str:
+    """Strip ``raw_`` / ``sem_`` prefixes from FROM/JOIN table names.
+
+    On ClickHouse the prefixes are meaningful (they route to the
+    raw_database / sem_database split via _maybe_add_final). On single-
+    database backends (SQLite, DuckDB) the tables live with bare names
+    — the raw extractor writes ``file_products`` and the sem mapper
+    writes ``person`` — so any YAML that references ``raw_file_products``
+    must be rewritten to ``file_products`` before execution.
+
+    Mirrors the ``_maybe_add_final`` behaviour for ClickHouse's
+    single-db mode (``always_final=False``) but applied at the mapper
+    layer because mappers run before the SQL hits a backend that knows
+    about FINAL semantics.
+
+    Only FROM/JOIN positions are touched so a column literally named
+    ``raw_text`` or ``sem_version`` doesn't get mangled.
+    """
+    import re  # noqa: PLC0415
+    return re.sub(
+        r'(\b(?:FROM|JOIN)\s+)(?:raw_|sem_)(\w+)',
+        r'\1\2',
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
@@ -645,8 +672,11 @@ def run_mapper(
 
                 for group in target.rows:
                     rg_backend, raw_tbls = _resolve_source_backend(config, source_backend, backend)
-                    query = _build_row_group_query(group, config, dialect=getattr(rg_backend, "dialect", "sqlite"))
+                    rg_dialect = getattr(rg_backend, "dialect", "sqlite")
+                    query = _build_row_group_query(group, config, dialect=rg_dialect)
                     query = _prefix_raw_tables(query, raw_tbls)
+                    if rg_dialect != "clickhouse":
+                        query = _strip_namespace_prefixes_in_from_join(query)
                     row_dicts = _fetch_rows(rg_backend, query)
 
                     result.total_grain_rows += len(row_dicts)
@@ -770,6 +800,13 @@ def run_mapper(
     source_dialect = getattr(read_backend, "dialect", "sqlite")
     query = _build_source_query(config, dialect=source_dialect)
     query = _prefix_raw_tables(query, raw_tbls)
+    # Single-database backends (sqlite, duckdb) store tables under bare
+    # names. ClickHouse handles the raw_/sem_ → raw_db./sem_db. rewrite
+    # inside its own execute() via _maybe_add_final; everything else
+    # needs the mapper layer to strip the prefixes so the YAML's
+    # raw_file_products → existing-table file_products.
+    if source_dialect != "clickhouse":
+        query = _strip_namespace_prefixes_in_from_join(query)
     row_dicts = _fetch_rows(read_backend, query)
     result.total_grain_rows = len(row_dicts)
 

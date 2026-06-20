@@ -21,6 +21,7 @@ from engine.mapper import (
     _build_source_query,
     _detect_fan_out,
     _resolve_write_context,
+    _strip_namespace_prefixes_in_from_join,
     run_mapper,
     topological_sort,
 )
@@ -1682,3 +1683,41 @@ class TestMergeDuplicateCandidates:
         ]
         out = _merge_duplicate_candidates(cands, "person_key")
         assert len(out) == 2  # don't collapse None keys
+
+
+class TestStripNamespacePrefixesInFromJoin:
+    """The mapper must strip raw_/sem_ prefixes from FROM/JOIN tables when
+    the backend is single-database (sqlite/duckdb). On ClickHouse those
+    prefixes are meaningful and get rewritten by the backend itself."""
+
+    def test_strips_raw_prefix_from_from(self):
+        sql = "SELECT * FROM raw_file_products"
+        assert _strip_namespace_prefixes_in_from_join(sql) == \
+            "SELECT * FROM file_products"
+
+    def test_strips_sem_prefix_from_from(self):
+        sql = "SELECT * FROM sem_identity"
+        assert _strip_namespace_prefixes_in_from_join(sql) == \
+            "SELECT * FROM identity"
+
+    def test_strips_prefix_from_join(self):
+        sql = (
+            "SELECT * FROM raw_jira_issues AS ji "
+            "LEFT JOIN raw_file_products AS prod ON prod.x = ji.y"
+        )
+        assert _strip_namespace_prefixes_in_from_join(sql) == (
+            "SELECT * FROM jira_issues AS ji "
+            "LEFT JOIN file_products AS prod ON prod.x = ji.y"
+        )
+
+    def test_does_not_strip_column_name(self):
+        # A column literally named raw_text must NOT be touched — only
+        # FROM/JOIN positions get rewritten.
+        sql = "SELECT raw_text, sem_version FROM raw_jira_issues"
+        out = _strip_namespace_prefixes_in_from_join(sql)
+        assert "SELECT raw_text, sem_version" in out
+        assert "FROM jira_issues" in out
+
+    def test_idempotent_when_no_prefix(self):
+        sql = "SELECT * FROM jira_users LEFT JOIN identity ON identity.k = jira_users.k"
+        assert _strip_namespace_prefixes_in_from_join(sql) == sql
