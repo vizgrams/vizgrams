@@ -208,7 +208,14 @@ def _write_rows(output: OutputConfig, db: DBBackend, table_name: str, rows: list
             db.append(table_name, row)
         return
     for i in range(0, len(rows), _WRITE_BATCH_SIZE):
-        db.bulk_upsert(table_name, rows[i:i + _WRITE_BATCH_SIZE])
+        # Pass primary_keys so DuckDB can fall back to DELETE+INSERT for
+        # tables that exist without the expected PK constraint — otherwise
+        # ON CONFLICT silently degrades to plain INSERT and dupes accumulate.
+        db.bulk_upsert(
+            table_name,
+            rows[i:i + _WRITE_BATCH_SIZE],
+            primary_keys=output.primary_keys or None,
+        )
 
 
 def _explode_records(

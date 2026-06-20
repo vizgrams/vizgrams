@@ -72,10 +72,18 @@ class DBBackend(ABC):
     @abstractmethod
     def upsert(self, table: str, row: dict) -> None: ...
 
-    def bulk_upsert(self, table: str, rows: list[dict]) -> None:
+    def bulk_upsert(
+        self, table: str, rows: list[dict], primary_keys: list[str] | None = None
+    ) -> None:
         """Default fallback: per-row upsert. Backends should override for
         performance — ClickHouse in particular collapses per-row INSERTs into
-        one part each, which causes severe MergeTree state inflation."""
+        one part each, which causes severe MergeTree state inflation.
+
+        ``primary_keys`` lets callers (the extractor) declare the logical PK
+        even when the underlying table happens to not carry that constraint
+        — see ``DuckDBBackend.bulk_upsert`` for the DELETE+INSERT fallback.
+        """
+        del primary_keys
         for row in rows:
             self.upsert(table, row)
 
@@ -487,7 +495,9 @@ class DuckDBBackend(DBBackend):
         values = [self._serialise(v) for v in row.values()]
         self._conn.execute(self._upsert_sql(table, cols), values)
 
-    def bulk_upsert(self, table: str, rows: list[dict]) -> None:
+    def bulk_upsert(
+        self, table: str, rows: list[dict], primary_keys: list[str] | None = None
+    ) -> None:
         """Multi-row INSERT...ON CONFLICT — single statement, much faster than
         repeated upsert(). Tolerates heterogeneous key sets: multi-group
         mappers can produce candidate dicts where one group sets one
@@ -495,23 +505,86 @@ class DuckDBBackend(DBBackend):
         unset column simply absent. We compute the union of keys across
         all rows and write every row with that full shape, defaulting
         missing values to None so DuckDB's nullable columns store NULL.
+
+        ``primary_keys`` is the YAML-declared logical PK. When the table on
+        disk lacks a matching PRIMARY KEY constraint — common for tables
+        created before the extractor learned to attach the constraint — we
+        fall back to DELETE-by-key then INSERT inside one transaction.
+        Without this fallback ``INSERT ... ON CONFLICT`` silently degrades
+        to plain INSERT (no conflict can fire on a PK-less table) and every
+        run accumulates duplicates.
         """
         if not rows:
             return
         assert self._conn is not None, "Not connected"
-        # Pass 1: union of all keys, preserving first-seen order so column
-        # ordering is stable across runs (helpful when reading test output).
         all_keys: dict[str, None] = {}
         for row in rows:
             for k in row:
                 all_keys.setdefault(k, None)
         col_names = list(all_keys.keys())
-        # Pass 2: project each row onto col_names, serialising JSON values.
         data = [
             [self._serialise(row.get(k)) for k in col_names]
             for row in rows
         ]
+
+        # Use the explicit DELETE+INSERT fallback when the YAML supplied PKs
+        # but the on-disk table has no matching PK constraint. Cheaper than
+        # rebuilding the table mid-run and idempotent across retries.
+        if primary_keys and self._get_primary_keys(table) != primary_keys:
+            self._delete_then_insert(table, col_names, data, primary_keys)
+            return
+
         self._conn.executemany(self._upsert_sql(table, col_names), data)
+
+    def _delete_then_insert(
+        self,
+        table: str,
+        col_names: list[str],
+        data: list[list],
+        primary_keys: list[str],
+    ) -> None:
+        """DELETE rows matching the candidate PK tuples, then INSERT them.
+
+        Used when the table lacks the expected PRIMARY KEY constraint, so
+        ON CONFLICT can't fire. Runs in one transaction so a crash mid-write
+        leaves the table consistent.
+        """
+        pk_idx = [col_names.index(pk) for pk in primary_keys if pk in col_names]
+        if len(pk_idx) != len(primary_keys):
+            # Caller asked us to use PKs that aren't in the row dicts — this
+            # is a programming error, not a recoverable runtime state. Fall
+            # back to plain INSERT so the data still lands.
+            placeholders = ", ".join("?" for _ in col_names)
+            self._conn.executemany(
+                f"INSERT INTO {table} ({', '.join(col_names)}) VALUES ({placeholders})",
+                data,
+            )
+            return
+
+        pk_tuples = [tuple(row[i] for i in pk_idx) for row in data]
+        pk_cols_str = ", ".join(primary_keys)
+        # Build a parameterised tuple-IN; DuckDB accepts ``(a, b) IN ((?,?), ...)``.
+        tuple_placeholders = ", ".join(
+            "(" + ", ".join("?" for _ in primary_keys) + ")" for _ in pk_tuples
+        )
+        delete_params = [v for t in pk_tuples for v in t]
+        insert_placeholders = ", ".join("?" for _ in col_names)
+
+        self._conn.execute("BEGIN TRANSACTION")
+        try:
+            if pk_tuples:
+                self._conn.execute(
+                    f"DELETE FROM {table} WHERE ({pk_cols_str}) IN ({tuple_placeholders})",
+                    delete_params,
+                )
+            self._conn.executemany(
+                f"INSERT INTO {table} ({', '.join(col_names)}) VALUES ({insert_placeholders})",
+                data,
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
 
     def bulk_scd2(self, table: str, candidates: list[dict], ctx) -> tuple[int, int]:
         """SCD2 write: close changed open rows + insert new open rows.
@@ -1135,7 +1208,9 @@ class ClickHouseBackend(DBBackend):
         prepared = self._prepare_row(row, table=table)
         self._client.insert(table, [list(prepared.values())], column_names=list(prepared.keys()))
 
-    def bulk_upsert(self, table: str, rows: list[dict]) -> None:
+    def bulk_upsert(
+        self, table: str, rows: list[dict], primary_keys: list[str] | None = None
+    ) -> None:
         """INSERT many rows in a single call — much faster than repeated upsert().
 
         Tolerates heterogeneous key sets across rows: multi-group mappers can
@@ -1144,7 +1219,12 @@ class ClickHouseBackend(DBBackend):
         We compute the union of keys across all rows and write every row
         with that full shape, defaulting missing values to None — ClickHouse
         Nullable columns then store NULL where each row didn't supply a value.
+
+        ``primary_keys`` is accepted for cross-backend signature parity but
+        ignored — ReplacingMergeTree dedupes on (PK, _version) at merge
+        time, so PK-less tables aren't a category that exists here.
         """
+        del primary_keys
         if not rows:
             return
         assert self._client is not None, "Not connected"
