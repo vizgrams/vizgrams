@@ -190,6 +190,27 @@ def test_mapper_with_sub_groups_surfaces_them(model_dir):
 # ---------------------------------------------------------------------------
 
 
+def test_mapper_raw_prefix_matches_bare_extractor_table(model_dir):
+    """Real-world iagai shape: mapper sources reference ``raw_<table>`` (the
+    CH cross-database convention) but extractor YAMLs declare the bare
+    ``<table>`` they actually write to. Pre-fix the lookup compared the
+    literal mapper string against the extractor index and missed every
+    iagai source, so Tool + Extractor chips all rendered as "(not in
+    catalog)" in the UI."""
+    seed_artifact(model_dir, "entity", "widget", _entity("Widget"))
+    seed_artifact(model_dir, "mapper", "widget_mapper",
+                  _mapper_single_source("widget_mapper", "Widget", "raw_widgets"))
+    # Note: extractor declares the BARE table name, not raw_widgets.
+    seed_artifact(model_dir, "extractor", "widget_extractor",
+                  _extractor("widget_extractor", "github", "widgets"))
+
+    result = get_pipeline_for_entity(model_dir, "Widget")
+
+    assert result["sources"] == [
+        {"tool": "github", "extractor": "widget_extractor", "raw_table": "raw_widgets"},
+    ]
+
+
 def test_raw_table_with_no_producing_extractor_surfaces_with_null_extractor(model_dir):
     """An orphan raw table (no extractor produces it) still appears in
     sources so the UI can show the gap rather than silently dropping it."""
