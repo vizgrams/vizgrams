@@ -203,13 +203,22 @@ def load_feature_yamls(features_dir: str | Path) -> list:
 def _get_feature_sql(fd, entities: dict, all_features: dict | None = None, dialect: str = "sqlite") -> str:
     """Return the runnable SQL for a feature def.
 
-    - raw_sql features: return fd.raw_sql directly.
+    - raw_sql features: return fd.raw_sql directly. The CH-era convention
+      qualifies sem-namespace tables with a ``sem_`` prefix (and raw with
+      ``raw_``); ClickHouse's _maybe_add_final rewrites those to
+      ``<sem_db>.<table>`` at execute time. Single-database backends
+      (DuckDB, SQLite) store tables under bare names — so on those
+      dialects we strip the prefixes from FROM/JOIN positions to keep
+      pre-migration YAML running unchanged.
     - expression features: compile the expression to SQL using the given dialect.
       all_features is required for window features (feature-to-feature references).
     """
     if getattr(fd, "feature_type", "raw_sql") == "expression":
         from engine.expression_compiler import compile_feature_to_sql
         return compile_feature_to_sql(fd, entities, features=all_features, dialect=dialect)
+    if dialect != "clickhouse":
+        from engine.mapper import _strip_namespace_prefixes_in_from_join
+        return _strip_namespace_prefixes_in_from_join(fd.raw_sql)
     return fd.raw_sql
 
 

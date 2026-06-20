@@ -427,8 +427,25 @@ class DuckDBBackend(DBBackend):
                 col_defs.append(f"FOREIGN KEY ({col_name}) REFERENCES {ref}")
         sql = f"CREATE TABLE IF NOT EXISTS {table} ({', '.join(col_defs)})"
         self._conn.execute(sql)
-        if primary_keys:
-            self._pk_cache[table] = list(primary_keys)
+        # Cache the *actual* on-disk PK, not the one we asked for. CREATE
+        # TABLE IF NOT EXISTS is a no-op when the table already exists, so
+        # any pre-existing schema (most commonly: tables copied over by the
+        # CH→DuckDB migration with no PK constraint) keeps its real shape
+        # while this call wants to declare a PK. Caching the requested PK
+        # poisoned _upsert_sql into emitting ON CONFLICT (col) clauses that
+        # DuckDB rejects with "specified columns as conflict target are not
+        # referenced by a UNIQUE/PRIMARY KEY CONSTRAINT".
+        self._pk_cache[table] = self._lookup_pk_from_db(table)
+
+    def _lookup_pk_from_db(self, table: str) -> list[str]:
+        """Read the actual PRIMARY KEY column list off the on-disk schema."""
+        assert self._conn is not None, "Not connected"
+        rows = self._conn.execute(
+            "SELECT constraint_column_names FROM duckdb_constraints() "
+            "WHERE table_name = ? AND constraint_type = 'PRIMARY KEY'",
+            [table],
+        ).fetchall()
+        return list(rows[0][0]) if rows and rows[0][0] else []
 
     def add_columns(self, table: str, columns: dict[str, str]) -> None:
         assert self._conn is not None, "Not connected"
@@ -442,14 +459,9 @@ class DuckDBBackend(DBBackend):
         """Look up PK columns for a table, caching results."""
         if table in self._pk_cache:
             return self._pk_cache[table]
-        assert self._conn is not None, "Not connected"
-        # DuckDB exposes PKs through duckdb_constraints() — query by table.
-        rows = self._conn.execute(
-            "SELECT constraint_column_names FROM duckdb_constraints() "
-            "WHERE table_name = ? AND constraint_type = 'PRIMARY KEY'",
-            [table],
-        ).fetchall()
-        pks = list(rows[0][0]) if rows and rows[0][0] else []
+        # Delegates to _lookup_pk_from_db so create_table and this fall-back
+        # path agree on what counts as "the PK on disk".
+        pks = self._lookup_pk_from_db(table)
         self._pk_cache[table] = pks
         return pks
 

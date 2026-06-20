@@ -88,13 +88,25 @@ def _load_extractor_outputs(extractors_dir: Path) -> list[tuple[str, list[str]]]
     return out
 
 
+def _to_snake(name: str) -> str:
+    """Convert PascalCase to snake_case — same rule as semantic.types._to_snake.
+
+    Mirrors the materializer's table-naming convention so e.g.
+    ``PullRequest`` → ``pull_request`` and ``CryptoAsset`` →
+    ``crypto_asset``. A naive ``.lower()`` would produce
+    ``pullrequest`` / ``cryptoasset`` and miss the real tables entirely.
+    """
+    import re
+    return re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", name).lower()
+
+
 def _load_entity_pks(ontology_dir: Path) -> list[tuple[str, list[str]]]:
     """Return [(sem_table_name, [pk_col]), ...] from each entity YAML.
 
     Entity YAML uses ``identity: { <col>: ... }`` (sometimes a single
     string) — the first key under ``identity:`` is the entity's PK.
-    Sem table name is the entity ``name`` lowercased (matching the
-    materializer's convention).
+    Sem table name is ``_to_snake(entity.name)`` matching the
+    materializer's convention.
     """
     out: list[tuple[str, list[str]]] = []
     for yml in sorted(ontology_dir.glob("*.yaml")):
@@ -115,7 +127,7 @@ def _load_entity_pks(ontology_dir: Path) -> list[tuple[str, list[str]]]:
         elif isinstance(identity, str):
             pk = identity
         if ent and pk:
-            out.append((ent.lower(), [pk]))
+            out.append((_to_snake(ent), [pk]))
     return out
 
 

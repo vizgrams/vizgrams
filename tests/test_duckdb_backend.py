@@ -99,6 +99,33 @@ def test_create_table_composite_pk(db: DuckDBBackend):
     assert db._pk_cache["memberships"] == ["person_key", "team_key"]
 
 
+def test_create_table_existing_pkless_table_caches_real_state(db: DuckDBBackend):
+    # CH→DuckDB migration leaves meta tables (__feature_definition,
+    # __attribute_registry, …) on disk WITHOUT PK constraints. When code
+    # later runs ``create_table(..., primary_keys=['feature_id'])`` the
+    # CREATE TABLE IF NOT EXISTS is a no-op — but caching the requested PK
+    # would poison _upsert_sql into emitting ``ON CONFLICT (feature_id)``
+    # which DuckDB rejects with "specified columns as conflict target are
+    # not referenced by a UNIQUE/PRIMARY KEY CONSTRAINT". The cache must
+    # reflect the actual on-disk state instead.
+    db._conn.execute("CREATE TABLE pre_existing (feature_id VARCHAR, name VARCHAR)")
+    db.create_table(
+        "pre_existing",
+        {"feature_id": "VARCHAR", "name": "VARCHAR"},
+        primary_keys=["feature_id"],
+    )
+    assert db._pk_cache["pre_existing"] == []
+    # Sanity check: upsert now degrades to plain INSERT rather than the
+    # broken ON CONFLICT path.
+    db.upsert("pre_existing", {"feature_id": "f1", "name": "first"})
+    db.upsert("pre_existing", {"feature_id": "f1", "name": "second"})
+    rows = db.execute("SELECT feature_id, name FROM pre_existing ORDER BY name")
+    # Both rows land — no PK to dedup. Acceptable behaviour for this
+    # situation; the dedup script is responsible for repairing the
+    # missing constraint.
+    assert rows == [["f1", "first"], ["f1", "second"]]
+
+
 # ---------------------------------------------------------------------------
 # add_columns
 # ---------------------------------------------------------------------------
