@@ -184,6 +184,22 @@ def test_upsert_composite_pk(db: DuckDBBackend):
     assert rows == [["p1", "t1", 0]]
 
 
+def test_upsert_with_primary_keys_on_pkless_table_dedupes(db: DuckDBBackend):
+    # Sister to test_bulk_upsert_with_primary_keys_on_pkless_table_dedupes:
+    # the singular upsert() also needs the DELETE+INSERT fallback so the
+    # feature reconcile path stops leaking duplicates into PK-less meta
+    # tables like __feature_value. Pre-fix this would land 3 rows.
+    db._conn.execute("CREATE TABLE __feature_value (feature_id VARCHAR, entity_id VARCHAR, value VARCHAR)")
+    db.upsert("__feature_value", {"feature_id": "f1", "entity_id": "e1", "value": "v1"},
+              primary_keys=["feature_id", "entity_id"])
+    db.upsert("__feature_value", {"feature_id": "f1", "entity_id": "e1", "value": "v2"},
+              primary_keys=["feature_id", "entity_id"])
+    db.upsert("__feature_value", {"feature_id": "f1", "entity_id": "e1", "value": "v3"},
+              primary_keys=["feature_id", "entity_id"])
+    rows = db.execute("SELECT value FROM __feature_value")
+    assert rows == [["v3"]]
+
+
 def test_upsert_no_pk_falls_back_to_plain_insert(db: DuckDBBackend):
     db._conn.execute("CREATE TABLE log (event VARCHAR)")
     db.upsert("log", {"event": "click"})

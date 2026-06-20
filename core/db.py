@@ -70,7 +70,9 @@ class DBBackend(ABC):
     def add_columns(self, table: str, columns: dict[str, str]) -> None: ...
 
     @abstractmethod
-    def upsert(self, table: str, row: dict) -> None: ...
+    def upsert(
+        self, table: str, row: dict, primary_keys: list[str] | None = None
+    ) -> None: ...
 
     def bulk_upsert(
         self, table: str, rows: list[dict], primary_keys: list[str] | None = None
@@ -188,8 +190,13 @@ class SQLiteBackend(DBBackend):
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
         self.conn.commit()
 
-    def upsert(self, table: str, row: dict) -> None:
-        """INSERT OR REPLACE for DIMENSION tables."""
+    def upsert(
+        self, table: str, row: dict, primary_keys: list[str] | None = None
+    ) -> None:
+        """INSERT OR REPLACE for DIMENSION tables. ``primary_keys`` is accepted
+        for cross-backend signature parity and ignored — SQLite's INSERT OR
+        REPLACE already handles the PK-conflict case."""
+        del primary_keys
         assert self.conn, "Not connected"
         cols = list(row.keys())
         placeholders = ", ".join("?" for _ in cols)
@@ -495,16 +502,26 @@ class DuckDBBackend(DBBackend):
             f"ON CONFLICT ({', '.join(pks)}) DO NOTHING"
         )
 
-    def upsert(self, table: str, row: dict) -> None:
+    def upsert(
+        self, table: str, row: dict, primary_keys: list[str] | None = None
+    ) -> None:
         """INSERT ... ON CONFLICT DO UPDATE for dimension tables.
 
-        When the table has no PRIMARY KEY (rare, but possible for pure
-        append tables), this falls back to a plain INSERT — there's no
-        conflict to resolve.
+        ``primary_keys`` parallels ``bulk_upsert``: it lets the caller
+        declare the logical PK even when the on-disk table lacks the
+        constraint. Without this, the meta tables created by the CH→
+        DuckDB migration without a PK (e.g. ``__feature_value``) get a
+        fresh copy of every row on each reconcile — which fans out by
+        ~N× when query SQL LEFT JOINs to them.
         """
         assert self._conn is not None, "Not connected"
         cols = list(row.keys())
         values = [self._serialise(v) for v in row.values()]
+        if primary_keys and self._get_primary_keys(table) != primary_keys:
+            # Same fallback as bulk_upsert: explicit DELETE+INSERT in one
+            # transaction so PK-less tables still get upsert semantics.
+            self._delete_then_insert(table, cols, [values], primary_keys)
+            return
         self._conn.execute(self._upsert_sql(table, cols), values)
 
     def bulk_upsert(
@@ -1214,8 +1231,16 @@ class ClickHouseBackend(DBBackend):
         out["_version"] = self._version_now()
         return out
 
-    def upsert(self, table: str, row: dict) -> None:
-        """INSERT row — ReplacingMergeTree deduplicates on next merge."""
+    def upsert(
+        self, table: str, row: dict, primary_keys: list[str] | None = None
+    ) -> None:
+        """INSERT row — ReplacingMergeTree deduplicates on next merge.
+
+        ``primary_keys`` is accepted for cross-backend signature parity
+        and ignored — the merge tree dedupes on (PK, _version) at merge
+        time so PK-less tables aren't a category that exists here.
+        """
+        del primary_keys
         assert self._client is not None, "Not connected"
         prepared = self._prepare_row(row, table=table)
         self._client.insert(table, [list(prepared.values())], column_names=list(prepared.keys()))

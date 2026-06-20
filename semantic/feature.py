@@ -546,7 +546,13 @@ def reconcile_with_backend(
 
     now = datetime.now(UTC).isoformat()
 
-    # 5. Upsert __feature_definition for new/changed
+    # 5. Upsert __feature_definition for new/changed.
+    # Pass primary_keys explicitly so DuckDB falls back to DELETE+INSERT
+    # if the table on disk lacks the constraint — the CH→DuckDB arrow
+    # migration drops PK constraints, so without this every reconcile
+    # leaks duplicate rows into __feature_definition and __feature_value.
+    fd_pks = _FEATURE_TABLE_PKS["__feature_definition"]
+    ar_pks = _FEATURE_TABLE_PKS["__attribute_registry"]
     for fd, is_new in new_or_changed:
         new_version = 1 if is_new else (existing[fd.feature_id]["version"] + 1)
         backend.upsert("__feature_definition", {
@@ -561,7 +567,7 @@ def reconcile_with_backend(
             "ttl_seconds": fd.ttl_seconds,
             "version": new_version,
             "created_at": now,
-        })
+        }, primary_keys=fd_pks)
 
     # 6. Upsert __attribute_registry for features
     for fd in feature_defs:
@@ -572,7 +578,7 @@ def reconcile_with_backend(
             "source_type": "feature",
             "source_ref": fd.feature_id,
             "data_type": fd.data_type,
-        })
+        }, primary_keys=ar_pks)
 
     # 7. Upsert __attribute_registry for entity columns
     for entity in entities.values():
@@ -583,7 +589,7 @@ def reconcile_with_backend(
                 "source_type": "column",
                 "source_ref": attr.name,
                 "data_type": attr.col_type.value,
-            })
+            }, primary_keys=ar_pks)
 
     # 8. Topological sort
     sorted_defs = _topo_sort(feature_defs)
@@ -632,11 +638,14 @@ def reconcile_with_backend(
             }
             for row in rows
         ]
+        # See step 5 — pass primary_keys so DuckDB's DELETE+INSERT
+        # fallback fires on PK-less __feature_value tables.
+        fv_pks = _FEATURE_TABLE_PKS["__feature_value"]
         if hasattr(backend, "bulk_upsert"):
-            backend.bulk_upsert("__feature_value", feature_rows)
+            backend.bulk_upsert("__feature_value", feature_rows, primary_keys=fv_pks)
         else:
             for r in feature_rows:
-                backend.upsert("__feature_value", r)
+                backend.upsert("__feature_value", r, primary_keys=fv_pks)
         total = len(feature_rows)
         null_count = sum(1 for r in feature_rows if r["value"] is None)
         null_rate = f"{null_count / total * 100:.1f}%" if total else "N/A"
