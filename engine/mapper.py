@@ -775,7 +775,15 @@ def run_mapper(
                         stats.inserted_new += inserted
                         stats.inserted_scd2 += versioned
                     else:
-                        backend.bulk_upsert(ctx.table_name, candidates)
+                        # Pass key_col so DuckDB can fall back to DELETE+INSERT
+                        # for sem tables that exist without the PK constraint —
+                        # otherwise ON CONFLICT silently degrades to plain
+                        # INSERT and every mapper run appends a fresh copy.
+                        backend.bulk_upsert(
+                            ctx.table_name,
+                            candidates,
+                            primary_keys=[ctx.key_col] if ctx.key_col else None,
+                        )
                         stats.inserted_new += len(candidates)
                 except Exception as e:
                     if strict:
@@ -962,7 +970,14 @@ def _process_rows(backend, config, write_contexts, row_dicts,
                 stats.inserted_new += inserted
                 stats.inserted_scd2 += versioned
             else:
-                backend.bulk_upsert(ctx.table_name, candidates)
+                # See bulk_upsert call in the multi-group path above —
+                # primary_keys lets DuckDB use DELETE+INSERT on PK-less
+                # sem tables instead of accumulating dupes.
+                backend.bulk_upsert(
+                    ctx.table_name,
+                    candidates,
+                    primary_keys=[ctx.key_col] if ctx.key_col else None,
+                )
                 stats.inserted_new += len(candidates)
         except Exception as e:
             if strict:

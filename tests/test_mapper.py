@@ -1549,6 +1549,59 @@ class TestUpsertStrategy:
         assert ctx.strategy == "UPSERT"
         assert ctx.key_col == "product_key"
 
+    def test_upsert_runs_against_duckdb_pkless_table_without_dupes(self, tmp_path):
+        """End-to-end regression: a sem table that lives on DuckDB without a
+        PRIMARY KEY constraint should NOT accumulate duplicates across
+        successive mapper runs.
+
+        This is the bug that surfaced after the CH→DuckDB migration —
+        ``bulk_upsert``'s ON CONFLICT silently degraded to plain INSERT on
+        PK-less tables and 1971 cron runs of the country mapper had
+        produced 492,750 rows for 250 distinct cca3 values. The engine
+        change passes ``ctx.key_col`` so DuckDB falls back to DELETE+INSERT.
+        """
+        from core.db import DuckDBBackend
+        backend = DuckDBBackend(db_path=tmp_path / "x.duckdb")
+        backend.connect()
+        try:
+            product = _make_product_no_history_ontology()
+            _setup_db(backend, [product])
+            # Drop + recreate the sem table WITHOUT the PK constraint to
+            # reproduce the post-migration state. Preserve the full
+            # column set materialize added (incl. _version, _loaded_at)
+            # so bulk_upsert's INSERT matches.
+            cols = backend._conn.execute(
+                "SELECT column_name, data_type FROM duckdb_columns() "
+                "WHERE table_name = 'product' ORDER BY column_index"
+            ).fetchall()
+            col_defs = ", ".join(f"{n} {t}" for n, t in cols)
+            backend._conn.execute('DROP TABLE "product"')
+            backend._conn.execute(f'CREATE TABLE "product" ({col_defs})')
+            # _pk_cache was populated by materialize via create_table —
+            # invalidate so the next lookup reads the actual (PK-less) schema.
+            backend._pk_cache.pop("product", None)
+            assert backend._get_primary_keys("product") == []
+
+            # Use a non-prefixed source table name: the mapper's
+            # ``_strip_namespace_prefixes_in_from_join`` would otherwise
+            # rewrite ``FROM raw_X`` → ``FROM X`` and collide with the
+            # sem ``product`` table created by materialize.
+            self._create_raw_table(backend, "source_data", ["product_key", "display_name"], [
+                ("p1", "Product A"),
+            ])
+            yaml_dict = _minimal_mapper()
+            yaml_dict["sources"][0]["table"] = "source_data"
+            config = parse_mapper_yaml(_write_yaml(tmp_path, yaml_dict))
+            run_mapper(config, [product], backend)
+            run_mapper(config, [product], backend)
+            run_mapper(config, [product], backend)
+            rows = backend.execute(
+                'SELECT product_key, display_name FROM "product"'
+            )
+            assert rows == [["p1", "Product A"]]
+        finally:
+            backend.close()
+
     def test_resolve_write_context_scd2_with_history(self):
         """Entity with history should still resolve to SCD2."""
         from semantic.mapper_types import TargetDef
