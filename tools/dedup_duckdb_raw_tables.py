@@ -1,19 +1,24 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
-"""Dedup + add PRIMARY KEY to a model's DuckDB raw tables.
+"""Dedup + add PRIMARY KEY to a model's DuckDB raw + sem tables.
 
 Background: DuckDBBackend.create_table adds a PRIMARY KEY when the
-extractor YAML specifies ``primary_keys`` — but only when the table is
-first created. Tables that pre-date that codepath stay PK-less, so
+caller supplies ``primary_keys`` — but only when the table is first
+created. Tables that pre-date that codepath stay PK-less, so
 ``INSERT ... ON CONFLICT DO UPDATE`` in bulk_upsert silently falls back
-to plain INSERT, and every extractor run appends a fresh copy of every
-row. Mappers downstream then trip ``FanOutError`` on the LEFT JOIN to a
-duplicated raw table.
+to plain INSERT, and every extractor / mapper run appends a fresh copy
+of every row. Mappers downstream then trip ``FanOutError`` on the LEFT
+JOIN to a duplicated table.
 
-This script reads each extractor YAML in ``<model>/extractors/``,
-looks up the named output table in DuckDB, and for any output whose
-``primary_keys`` doesn't match the table's actual PK constraint:
+This script reads:
+
+  - each extractor YAML in ``<model>/extractors/`` (raw tables: PK =
+    ``primary_keys`` declared on the output)
+  - each entity YAML in ``<model>/ontology/`` (sem tables: PK = the
+    first column under ``identity:``)
+
+For any table whose declared PK doesn't match the on-disk PK constraint:
 
   1. snapshot the table
   2. keep one row per (pk) — picking the row with the highest
@@ -23,9 +28,8 @@ looks up the named output table in DuckDB, and for any output whose
      and copy the deduped snapshot back
 
 Reports per-table before/after row counts. Skips tables whose declared
-PK already matches what's on disk. Tables with no ``primary_keys`` in
-the YAML are left alone — the writer would have used plain INSERT
-anyway.
+PK already matches what's on disk. Pass ``--no-sem`` to dedup only raw
+extractor tables.
 
 Usage:
 
@@ -81,6 +85,37 @@ def _load_extractor_outputs(extractors_dir: Path) -> list[tuple[str, list[str]]]
                 pks = o.get("primary_keys") or []
                 if table and pks:
                     out.append((table, list(pks)))
+    return out
+
+
+def _load_entity_pks(ontology_dir: Path) -> list[tuple[str, list[str]]]:
+    """Return [(sem_table_name, [pk_col]), ...] from each entity YAML.
+
+    Entity YAML uses ``identity: { <col>: ... }`` (sometimes a single
+    string) — the first key under ``identity:`` is the entity's PK.
+    Sem table name is the entity ``name`` lowercased (matching the
+    materializer's convention).
+    """
+    out: list[tuple[str, list[str]]] = []
+    for yml in sorted(ontology_dir.glob("*.yaml")):
+        with yml.open() as f:
+            doc = yaml.safe_load(f)
+        if not isinstance(doc, dict):
+            continue
+        ent = doc.get("entity") or doc.get("name")
+        identity = doc.get("identity")
+        pk = None
+        if isinstance(identity, dict) and identity:
+            pk = next(iter(identity.keys()))
+        elif isinstance(identity, list) and identity:
+            first = identity[0]
+            pk = first if isinstance(first, str) else (
+                next(iter(first.keys())) if isinstance(first, dict) else None
+            )
+        elif isinstance(identity, str):
+            pk = identity
+        if ent and pk:
+            out.append((ent.lower(), [pk]))
     return out
 
 
@@ -140,7 +175,12 @@ def _rebuild_with_pk(duck, table: str, pks: list[str]) -> tuple[int, int]:
 @click.option("--model-dir", required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--duckdb-path", default=None, help="Override the model's database path")
 @click.option("--dry-run", is_flag=True, help="Report what would change, don't write")
-def main(model_dir: str, duckdb_path: str | None, dry_run: bool) -> None:
+@click.option(
+    "--include-sem/--no-sem",
+    default=True,
+    help="Also dedup sem tables using entity identity (default: on).",
+)
+def main(model_dir: str, duckdb_path: str | None, dry_run: bool, include_sem: bool) -> None:
     mdir = Path(model_dir)
     extractors_dir = mdir / "extractors"
     if not extractors_dir.is_dir():
@@ -153,7 +193,16 @@ def main(model_dir: str, duckdb_path: str | None, dry_run: bool) -> None:
         raise click.ClickException(f"DuckDB file not found: {duckdb_path}")
 
     outputs = _load_extractor_outputs(extractors_dir)
-    click.echo(f"Found {len(outputs)} extractor outputs with primary_keys declared.")
+    msg = f"Found {len(outputs)} extractor outputs with primary_keys declared."
+    if include_sem:
+        ontology_dir = mdir / "ontology"
+        if ontology_dir.is_dir():
+            sem_outputs = _load_entity_pks(ontology_dir)
+            outputs.extend(sem_outputs)
+            msg += f"  Plus {len(sem_outputs)} sem tables from ontology/."
+        else:
+            msg += "  (No ontology/ dir — sem dedup skipped.)"
+    click.echo(msg)
 
     duck = duckdb.connect(duckdb_path, read_only=dry_run)
 
