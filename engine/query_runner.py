@@ -16,7 +16,7 @@ from engine.function_registry import render_function
 from semantic.expression import BinOp, FieldRef, FuncCallExpr, InExpr, Lit, MethodCallExpr, parse_expression_str
 from semantic.feature import FeatureDef
 from semantic.query import QueryAttribute, QueryDef, QueryMetric, RatioMetric, SliceDef, WindowDef, evaluate_threshold
-from semantic.types import Cardinality, EntityDef
+from semantic.types import Cardinality, EntityDef, RelationDef
 
 # ---------------------------------------------------------------------------
 # Shared internal helpers
@@ -347,6 +347,11 @@ def build_detail_query(
     root_alias = _make_alias(root_entity.name, used)
 
     rel_path_to_alias: dict[str, str] = {}
+    # Source-side context per relation traversal prefix. Captures the
+    # (source_entity, relation_followed, source_alias) for each "A.B.C"
+    # prefix so the leaf COALESCE can inject the relation's fallback
+    # column. Populated by _ensure_join below.
+    rel_path_to_source: dict[str, tuple[EntityDef, RelationDef, str]] = {}
     join_steps_all: list[JoinStep] = []
     fv_joins: list[str] = []
     fv_counter: list[int] = [0]
@@ -394,9 +399,14 @@ def build_detail_query(
                         )
                         join_steps_all.append(step)
                         rel_path_to_alias[intermediate_key] = tgt_alias
+                        rel_path_to_source[intermediate_key] = (
+                            hop_entity, hop_rel, hop_alias,
+                        )
                     hop_alias = rel_path_to_alias[intermediate_key]
                     hop_entity = entities[hop_name]
                 rel_path_to_alias[prefix_key] = rel_path_to_alias[entity_name]
+                if entity_name in rel_path_to_source:
+                    rel_path_to_source[prefix_key] = rel_path_to_source[entity_name]
                 current_entity = entities[entity_name]
                 current_alias = rel_path_to_alias[prefix_key]
                 continue
@@ -413,6 +423,7 @@ def build_detail_query(
             )
             join_steps_all.append(step)
             rel_path_to_alias[prefix_key] = tgt_alias
+            rel_path_to_source[prefix_key] = (current_entity, rel, current_alias)
             current_entity = target_entity
             current_alias = tgt_alias
 
@@ -431,6 +442,12 @@ def build_detail_query(
             return f"{root_alias}.{parts[-1]}"
         prefix = ".".join(parts[:-1])
         tgt_alias = rel_path_to_alias.get(prefix, root_alias)
+        src = rel_path_to_source.get(prefix)
+        if src is not None:
+            src_ent, src_rel, src_alias = src
+            return _coalesce_with_fallback(
+                tgt_alias, parts[-1], src_ent, src_rel, src_alias,
+            )
         return f"COALESCE({tgt_alias}.{parts[-1]}, '(unset)')"
 
     select_parts: list[str] = []
@@ -448,7 +465,14 @@ def build_detail_query(
         if len(attr.parts) > 1 and attr.parts[0] != root_entity.name:
             prefix = ".".join(attr.parts[:-1])
             tgt_alias = rel_path_to_alias.get(prefix, root_alias)
-            col_ref = f"COALESCE({tgt_alias}.{attr.parts[-1]}, '(unset)')"
+            src = rel_path_to_source.get(prefix)
+            if src is not None:
+                src_ent, src_rel, src_alias = src
+                col_ref = _coalesce_with_fallback(
+                    tgt_alias, attr.parts[-1], src_ent, src_rel, src_alias,
+                )
+            else:
+                col_ref = f"COALESCE({tgt_alias}.{attr.parts[-1]}, '(unset)')"
         else:
             field_name = attr.parts[-1]
             col_ref = _feature_col_ref(
@@ -527,6 +551,10 @@ def _build_count_query(
     root_alias = _make_alias(root_entity.name, used)
 
     rel_path_to_alias: dict[str, str] = {}
+    # See the build_detail_query equivalent — captures the source-side
+    # context per traversal prefix so leaf COALESCEs can pick up the
+    # fallback_label declared on the source RELATION attribute.
+    rel_path_to_source: dict[str, tuple[EntityDef, RelationDef, str]] = {}
     join_steps_all: list[JoinStep] = []
     fv_joins: list[str] = []
     fv_counter: list[int] = [0]
@@ -572,9 +600,14 @@ def _build_count_query(
                         )
                         join_steps_all.append(step)
                         rel_path_to_alias[intermediate_key] = tgt_alias
+                        rel_path_to_source[intermediate_key] = (
+                            hop_entity, hop_rel, hop_alias,
+                        )
                     hop_alias = rel_path_to_alias[intermediate_key]
                     hop_entity = entities[hop_name]
                 rel_path_to_alias[prefix_key] = rel_path_to_alias[entity_name]
+                if entity_name in rel_path_to_source:
+                    rel_path_to_source[prefix_key] = rel_path_to_source[entity_name]
                 current_entity = entities[entity_name]
                 current_alias = rel_path_to_alias[prefix_key]
                 continue
@@ -590,6 +623,7 @@ def _build_count_query(
             )
             join_steps_all.append(step)
             rel_path_to_alias[prefix_key] = tgt_alias
+            rel_path_to_source[prefix_key] = (current_entity, rel, current_alias)
             current_entity = target_entity
             current_alias = tgt_alias
 
@@ -607,6 +641,12 @@ def _build_count_query(
             return f"{root_alias}.{parts[-1]}"
         prefix = ".".join(parts[:-1])
         tgt_alias = rel_path_to_alias.get(prefix, root_alias)
+        src = rel_path_to_source.get(prefix)
+        if src is not None:
+            src_ent, src_rel, src_alias = src
+            return _coalesce_with_fallback(
+                tgt_alias, parts[-1], src_ent, src_rel, src_alias,
+            )
         return f"COALESCE({tgt_alias}.{parts[-1]}, '(unset)')"
 
     from_clause = f"FROM {root_entity.table_name} AS {root_alias}"
@@ -868,6 +908,47 @@ def _attr_col_alias(attr: QueryAttribute, root_entity: EntityDef) -> str:
     return f"{attr.parts[-2]}.{attr.parts[-1]}"
 
 
+def _relation_fallback_ref(
+    source_entity: EntityDef, rel: RelationDef, source_alias: str,
+) -> str | None:
+    """Return ``<source_alias>.<fallback_label>`` when the RELATION attribute
+    on ``source_entity`` (identified by ``rel.via``) declares a
+    ``fallback_label`` column. Otherwise None.
+
+    Lets the engine emit ``COALESCE(target.X, source.fallback_label,
+    '(unset)')`` for relation traversal, so a missing target row degrades
+    to the raw upstream label instead of "(unset)". Common case: the
+    iagai metadata.product string when the alias lookup against
+    products.yaml returns nothing.
+    """
+    via = rel.via if isinstance(rel.via, str) else None
+    if not via:
+        return None
+    fk_attr = next(
+        (a for a in source_entity.all_base_columns if a.name == via),
+        None,
+    )
+    if fk_attr is None or not fk_attr.fallback_label:
+        return None
+    return f"{source_alias}.{fk_attr.fallback_label}"
+
+
+def _coalesce_with_fallback(
+    target_alias: str,
+    target_col: str,
+    source_entity: EntityDef | None,
+    rel: RelationDef | None,
+    source_alias: str | None,
+) -> str:
+    """Build the COALESCE clause for a relation traversal, with optional
+    source-side fallback when the RELATION attribute declares one."""
+    if source_entity is not None and rel is not None and source_alias is not None:
+        fb = _relation_fallback_ref(source_entity, rel, source_alias)
+        if fb is not None:
+            return f"COALESCE({target_alias}.{target_col}, {fb}, '(unset)')"
+    return f"COALESCE({target_alias}.{target_col}, '(unset)')"
+
+
 def _window_frame_sql(window: WindowDef) -> str:
     """Return the ROWS frame clause for a window definition."""
     if window.method == "cumulative":
@@ -949,6 +1030,11 @@ def _build_windowed_aggregate_query(
             current_entity = root_entity
             current_alias = root_alias
             traversal_alias = root_alias
+            # Track the previous hop so we can emit fallback_label COALESCE
+            # on the leaf — see _coalesce_with_fallback / _relation_fallback_ref.
+            parent_entity: EntityDef | None = None
+            parent_rel: RelationDef | None = None
+            parent_alias: str | None = None
             dyn_joined: dict[str, str] = {}
             dynamic_result: tuple[str, str] | None = None
 
@@ -996,6 +1082,9 @@ def _build_windowed_aggregate_query(
                     joined_entities[rel.target] = tgt_alias
 
                 traversal_alias = joined_entities[rel.target]
+                parent_entity = current_entity
+                parent_rel = rel
+                parent_alias = current_alias
                 current_entity = target_entity
                 current_alias = traversal_alias
 
@@ -1006,7 +1095,10 @@ def _build_windowed_aggregate_query(
                     col_alias = slice_def.alias
             else:
                 final_field = parts[-1]
-                col_ref = f"COALESCE({traversal_alias}.{final_field}, '(unset)')"
+                col_ref = _coalesce_with_fallback(
+                    traversal_alias, final_field,
+                    parent_entity, parent_rel, parent_alias,
+                )
                 col_alias = slice_def.alias or f"{current_entity.name}.{final_field}"
 
             base_select_parts.append(f'{col_ref} AS "{col_alias}"')
@@ -1329,6 +1421,12 @@ def build_aggregate_query(
             current_entity = root_entity
             current_alias = root_alias
             traversal_alias = root_alias
+            # Parent-hop tracking — same purpose as the non-windowed
+            # build_aggregate_query slice loop: leaf COALESCE consults
+            # the source RELATION attribute's fallback_label, if any.
+            parent_entity: EntityDef | None = None
+            parent_rel: RelationDef | None = None
+            parent_alias: str | None = None
             dyn_joined: dict[str, str] = {}
             dynamic_result: tuple[str, str] | None = None
 
@@ -1377,6 +1475,9 @@ def build_aggregate_query(
                     joined_entities[rel.target] = tgt_alias
 
                 traversal_alias = joined_entities[rel.target]
+                parent_entity = current_entity
+                parent_rel = rel
+                parent_alias = current_alias
                 current_entity = target_entity
                 current_alias = traversal_alias
 
@@ -1387,7 +1488,10 @@ def build_aggregate_query(
                     col_alias = slice_def.alias
             else:
                 final_field = parts[-1]
-                col_ref = f"COALESCE({traversal_alias}.{final_field}, '(unset)')"
+                col_ref = _coalesce_with_fallback(
+                    traversal_alias, final_field,
+                    parent_entity, parent_rel, parent_alias,
+                )
                 col_alias = slice_def.alias or f"{current_entity.name}.{final_field}"
 
             select_parts.append(f'{col_ref} AS "{col_alias}"')
