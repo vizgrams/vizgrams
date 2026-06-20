@@ -149,18 +149,25 @@ def _now_utc() -> str:
     return datetime.now(UTC).isoformat()
 
 
+_DEDUP_ANY_FN = {"clickhouse": "any", "duckdb": "any_value"}
+
+
 def _source_table_expr(src, dialect: str = "sqlite") -> str:
     """Return the FROM/JOIN table expression for a source."""
+    # SQLite is the only dialect that tolerates `SELECT * ... GROUP BY <subset>`
+    # — both ClickHouse (any) and DuckDB (any_value) require non-grouped
+    # columns to be wrapped in an aggregate.
+    any_fn = _DEDUP_ANY_FN.get(dialect)
     if src.union:
         col_list = ", ".join(src.columns)
         union_parts = [f"SELECT {col_list} FROM {table}" for table in src.union]
         union_sql = " UNION ALL ".join(union_parts)
         if src.deduplicate:
             group_cols = ", ".join(src.deduplicate)
-            if dialect == "clickhouse":
+            if any_fn:
                 dedup_set = set(src.deduplicate)
                 select_parts = [
-                    col if col in dedup_set else f"any({col}) AS {col}"
+                    col if col in dedup_set else f"{any_fn}({col}) AS {col}"
                     for col in src.columns
                 ]
                 select_expr = ", ".join(select_parts)
@@ -171,14 +178,15 @@ def _source_table_expr(src, dialect: str = "sqlite") -> str:
             inner = union_sql
         return f"({inner}) AS {src.alias}"
     if src.filter or src.deduplicate:
-        if src.deduplicate and dialect == "clickhouse" and src.columns:
-            # ClickHouse requires non-GROUP BY columns to be aggregated.
-            # When filter is also present, push it into a subquery so the WHERE
-            # runs on raw column values — not on the any()-aliased names — to
-            # avoid "Aggregate function found in WHERE" (code 184).
+        if src.deduplicate and any_fn and src.columns:
+            # Standard-SQL dialects (ClickHouse, DuckDB) require non-GROUP BY
+            # columns to be aggregated. When filter is also present, push it
+            # into a subquery so the WHERE runs on raw column values — not on
+            # the any()-aliased names — to avoid ClickHouse code 184
+            # "Aggregate function found in WHERE".
             dedup_set = set(src.deduplicate)
             select_parts = [
-                col if col in dedup_set else f"any({col}) AS {col}"
+                col if col in dedup_set else f"{any_fn}({col}) AS {col}"
                 for col in src.columns
             ]
             select_expr = ", ".join(select_parts)
@@ -329,6 +337,15 @@ def _compile_join_condition(c: JoinCondition, dialect: str = "sqlite") -> str:
             else:
                 json_col = f"JSONExtract(ifNull({c.right}, '[]'), 'Array(String)')"
             return f"has({json_col}, ifNull({lhs}, ''))"
+        if dialect == "duckdb":
+            # DuckDB rejects subqueries in non-INNER JOIN ON clauses
+            # ("Cannot perform non-inner join on subquery"). Use list_contains
+            # on the array cast instead — a pure function call the planner can
+            # use as a nested-loop predicate.
+            json_col = c.right
+            if c.json_path:
+                json_col = f"json_extract({c.right}, '{c.json_path}')"
+            return f"list_contains(CAST({json_col} AS VARCHAR[]), {lhs})"
         json_col = c.right
         if c.json_path:
             json_col = f"json_extract({c.right}, '{c.json_path}')"
@@ -340,6 +357,15 @@ def _compile_join_condition(c: JoinCondition, dialect: str = "sqlite") -> str:
             return (
                 f"({c.right} = {c.left} OR "
                 f"has(JSONExtract(ifNull({c.right}, '[]'), 'Array(String)'), ifNull({c.left}, '')))"
+            )
+        if dialect == "duckdb":
+            # See json_array_contains above — subqueries forbidden in non-INNER
+            # JOIN ON. Guard the CAST with json_valid so scalar strings don't
+            # blow up the array conversion.
+            return (
+                f"({c.right} = {c.left} OR "
+                f"(json_valid({c.right}) AND "
+                f"list_contains(CAST({c.right} AS VARCHAR[]), {c.left})))"
             )
         return (
             f"({c.right} = {c.left} OR "

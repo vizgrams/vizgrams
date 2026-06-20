@@ -1031,6 +1031,46 @@ class TestQueryBuilding:
         sql = _build_source_query(config)
         assert "(SELECT * FROM raw_details WHERE label = 'important' GROUP BY did) AS det" in sql
 
+    def test_deduplicate_duckdb_wraps_nongroup_cols_in_any_value(self, tmp_path):
+        # DuckDB rejects `SELECT * ... GROUP BY <subset>` — non-grouped cols
+        # must be wrapped in an aggregate. Mirror the ClickHouse `any()` path.
+        data = _minimal_mapper()
+        data["sources"].append(
+            {"alias": "det", "table": "raw_details", "columns": ["did", "label"],
+             "deduplicate": ["did"]}
+        )
+        data["joins"] = [{
+            "from": "src",
+            "to": "det",
+            "type": "left",
+            "on": [{"left": "src.product_key", "right": "det.did"}],
+        }]
+        config = parse_mapper_yaml(_write_yaml(tmp_path, data))
+        sql = _build_source_query(config, dialect="duckdb")
+        assert "did, any_value(label) AS label" in sql
+        assert "GROUP BY did" in sql
+        # SELECT * with bare GROUP BY would be a binder error on DuckDB.
+        assert "SELECT * FROM raw_details GROUP BY" not in sql
+
+    def test_deduplicate_with_filter_duckdb(self, tmp_path):
+        data = _minimal_mapper()
+        data["sources"].append(
+            {"alias": "det", "table": "raw_details", "columns": ["did", "label"],
+             "filter": 'label == "important"',
+             "deduplicate": ["did"]}
+        )
+        data["joins"] = [{
+            "from": "src",
+            "to": "det",
+            "type": "left",
+            "on": [{"left": "src.product_key", "right": "det.did"}],
+        }]
+        config = parse_mapper_yaml(_write_yaml(tmp_path, data))
+        sql = _build_source_query(config, dialect="duckdb")
+        # Filter pushed into _pre subquery so WHERE runs on raw columns.
+        assert "(SELECT * FROM raw_details WHERE label = 'important') AS _pre" in sql
+        assert "any_value(label) AS label" in sql
+
     def test_json_array_contains_join(self, tmp_path):
         data = _minimal_mapper()
         data["sources"].append(
@@ -1073,6 +1113,52 @@ class TestQueryBuilding:
         config = parse_mapper_yaml(_write_yaml(tmp_path, data))
         sql = _build_source_query(config)
         assert "src.display_name IN (SELECT value FROM json_each(ref.tags))" in sql
+
+    def test_json_array_contains_duckdb_uses_list_contains(self, tmp_path):
+        # DuckDB rejects subqueries in non-INNER JOIN ON
+        # ("Cannot perform non-inner join on subquery"). We rewrite as
+        # list_contains(CAST(... AS VARCHAR[]), lhs).
+        data = _minimal_mapper()
+        data["sources"].append(
+            {"alias": "ref", "table": "ref_table", "columns": ["rkey", "aliases"]}
+        )
+        data["joins"] = [{
+            "from": "src",
+            "to": "ref",
+            "type": "left",
+            "on": [{
+                "left": "src.display_name",
+                "right": "ref.aliases",
+                "operator": "json_array_contains",
+                "json_path": "$.jira",
+            }],
+        }]
+        config = parse_mapper_yaml(_write_yaml(tmp_path, data))
+        sql = _build_source_query(config, dialect="duckdb")
+        assert "list_contains(CAST(json_extract(ref.aliases, '$.jira') AS VARCHAR[]), src.display_name)" in sql
+        assert "SELECT value FROM json_each" not in sql
+
+    def test_scalar_or_array_contains_duckdb_uses_list_contains(self, tmp_path):
+        data = _minimal_mapper()
+        data["sources"].append(
+            {"alias": "ref", "table": "ref_table", "columns": ["rkey", "aliases"]}
+        )
+        data["joins"] = [{
+            "from": "src",
+            "to": "ref",
+            "type": "left",
+            "on": [{
+                "left": "src.display_name",
+                "right": "ref.aliases",
+                "operator": "scalar_or_array_contains",
+            }],
+        }]
+        config = parse_mapper_yaml(_write_yaml(tmp_path, data))
+        sql = _build_source_query(config, dialect="duckdb")
+        # Scalar equality OR list_contains on JSON-validated array.
+        assert "ref.aliases = src.display_name" in sql
+        assert "json_valid(ref.aliases)" in sql
+        assert "list_contains(CAST(ref.aliases AS VARCHAR[]), src.display_name)" in sql
 
 
 # ===========================================================================
