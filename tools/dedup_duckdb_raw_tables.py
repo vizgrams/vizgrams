@@ -100,6 +100,24 @@ def _to_snake(name: str) -> str:
     return re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", name).lower()
 
 
+def _meta_table_pks() -> list[tuple[str, list[str]]]:
+    """Built-in PKs for the feature store's meta tables.
+
+    Mirrors ``semantic.feature._FEATURE_TABLE_PKS``. These tables are
+    created in code (not declared in any YAML) so the entity/extractor
+    walks miss them — but they suffer the same accumulate-on-PK-less
+    behaviour after the CH→DuckDB migration. The most painful is
+    ``__feature_value``: every full reconcile appends another copy of
+    every (feature_id, entity_id) pair, and joins to it from query SQL
+    fan out the row counts by the dupe multiplier.
+    """
+    return [
+        ("__feature_definition", ["feature_id"]),
+        ("__feature_value", ["feature_id", "entity_id"]),
+        ("__attribute_registry", ["attribute_name", "entity_type"]),
+    ]
+
+
 def _load_entity_pks(ontology_dir: Path) -> list[tuple[str, list[str]]]:
     """Return [(sem_table_name, [pk_col]), ...] from each entity YAML.
 
@@ -192,7 +210,18 @@ def _rebuild_with_pk(duck, table: str, pks: list[str]) -> tuple[int, int]:
     default=True,
     help="Also dedup sem tables using entity identity (default: on).",
 )
-def main(model_dir: str, duckdb_path: str | None, dry_run: bool, include_sem: bool) -> None:
+@click.option(
+    "--include-meta/--no-meta",
+    default=True,
+    help="Also dedup feature-store meta tables (__feature_value etc., default: on).",
+)
+def main(
+    model_dir: str,
+    duckdb_path: str | None,
+    dry_run: bool,
+    include_sem: bool,
+    include_meta: bool,
+) -> None:
     mdir = Path(model_dir)
     extractors_dir = mdir / "extractors"
     if not extractors_dir.is_dir():
@@ -214,6 +243,10 @@ def main(model_dir: str, duckdb_path: str | None, dry_run: bool, include_sem: bo
             msg += f"  Plus {len(sem_outputs)} sem tables from ontology/."
         else:
             msg += "  (No ontology/ dir — sem dedup skipped.)"
+    if include_meta:
+        meta_outputs = _meta_table_pks()
+        outputs.extend(meta_outputs)
+        msg += f"  Plus {len(meta_outputs)} meta tables."
     click.echo(msg)
 
     duck = duckdb.connect(duckdb_path, read_only=dry_run)
