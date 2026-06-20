@@ -360,6 +360,51 @@ def test_bulk_upsert_no_pk_appends(db: DuckDBBackend):
     assert rows == [["a"], ["a"], ["b"]]
 
 
+def test_bulk_upsert_with_primary_keys_on_pkless_table_dedupes(db: DuckDBBackend):
+    # Simulates the post-migration state: the table on disk lacks the
+    # YAML-declared PK. Without the DELETE+INSERT fallback every batch would
+    # append duplicates instead of upserting.
+    db._conn.execute("CREATE TABLE raw_events (id INTEGER, payload TEXT)")
+    db.bulk_upsert("raw_events", [
+        {"id": 1, "payload": "v1"},
+        {"id": 2, "payload": "v2"},
+    ], primary_keys=["id"])
+    db.bulk_upsert("raw_events", [
+        {"id": 1, "payload": "v1-updated"},  # would have been a dupe pre-fix
+        {"id": 3, "payload": "v3"},
+    ], primary_keys=["id"])
+    rows = db.execute("SELECT id, payload FROM raw_events ORDER BY id")
+    assert rows == [[1, "v1-updated"], [2, "v2"], [3, "v3"]]
+
+
+def test_bulk_upsert_pkless_composite_primary_keys(db: DuckDBBackend):
+    db._conn.execute("CREATE TABLE raw_x (a INTEGER, b INTEGER, v TEXT)")
+    db.bulk_upsert("raw_x", [
+        {"a": 1, "b": 1, "v": "first"},
+        {"a": 1, "b": 2, "v": "first"},
+    ], primary_keys=["a", "b"])
+    # (1,1) is in the new batch and should be replaced; (1,2) is left alone.
+    db.bulk_upsert("raw_x", [
+        {"a": 1, "b": 1, "v": "second"},
+    ], primary_keys=["a", "b"])
+    rows = db.execute("SELECT a, b, v FROM raw_x ORDER BY a, b")
+    assert rows == [[1, 1, "second"], [1, 2, "first"]]
+
+
+def test_bulk_upsert_with_primary_keys_on_pk_table_uses_on_conflict(db: DuckDBBackend):
+    # When the table has the matching PK constraint, we must NOT take the
+    # DELETE+INSERT path — ON CONFLICT is cheaper. Pass primary_keys anyway
+    # and verify behaviour stays correct (data ends up in the right state).
+    db.create_table("dim", {"id": "INTEGER", "name": "TEXT"}, primary_keys=["id"])
+    db.bulk_upsert("dim", [{"id": 1, "name": "Alice"}], primary_keys=["id"])
+    db.bulk_upsert("dim", [
+        {"id": 1, "name": "Anne"},
+        {"id": 2, "name": "Bob"},
+    ], primary_keys=["id"])
+    rows = db.execute("SELECT id, name FROM dim ORDER BY id")
+    assert rows == [[1, "Anne"], [2, "Bob"]]
+
+
 # ---------------------------------------------------------------------------
 # bulk_scd2 (Phase 4)
 # ---------------------------------------------------------------------------
