@@ -235,7 +235,22 @@ def get_pipeline_for_entity(model_dir: Path, entity_name: str) -> dict | None:
             # raw table; skip for the lineage view (could surface as
             # "union: [t1, t2]" later if needed).
             continue
-        ext_info = extractors_by_table.get(src.table, {"name": None, "tool": None})
+        # Mapper YAMLs reference raw tables as ``raw_<name>`` (CH
+        # cross-database convention) while extractor YAMLs declare the
+        # bare ``<name>``. Try the literal name first so older fixtures
+        # that prefix both sides still resolve, then fall back to the
+        # stripped form. Sem-prefixed sources are produced by another
+        # mapper, not an extractor, so they correctly stay null.
+        ext_info = extractors_by_table.get(src.table)
+        if ext_info is None:
+            stripped = src.table
+            for prefix in ("raw_", "sem_"):
+                if stripped.startswith(prefix):
+                    stripped = stripped[len(prefix):]
+                    break
+            ext_info = extractors_by_table.get(stripped)
+        if ext_info is None:
+            ext_info = {"name": None, "tool": None}
         sources.append({
             "tool": ext_info["tool"],
             "extractor": ext_info["name"],

@@ -18,7 +18,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   Activity as ActivityIcon, ArrowUpRight, BarChart3, Database,
   Download, GitCommit, Hash, History, Layers, LineChart,
-  Link2, Pencil, Plus, RotateCcw, Shuffle, Sparkles, Table2, Wrench, X,
+  Link2, Pencil, Play, Plus, RotateCcw, Shuffle, Sparkles, Table2, Wrench, X,
 } from 'lucide-react'
 
 import type {
@@ -33,8 +33,10 @@ import { SchemaAddPanel } from '@/components/explore/SchemaAddPanel'
 import { GovernedYamlEditor } from '@/components/proposals/GovernedYamlEditor'
 import { ProposalCard } from '@/components/proposals/ProposalCard'
 import { ProposeChangeForm } from '@/components/proposals/ProposeChangeForm'
+import { JobStatusPanel } from '@/components/JobStatusPanel'
 import { useModel } from '@/context/ModelContext'
 import { useRole } from '@/context/RoleContext'
+import { useJobPoller } from '@/hooks/useJobPoller'
 import { cn, formatValue } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
@@ -784,6 +786,11 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
   const [openExtractor, setOpenExtractor] = useState<string | null>(null)
   const [editingSubGroup, setEditingSubGroup] = useState<string | null>(null)
   const [editingMapper, setEditingMapper] = useState(false)
+  // Single job slot for the whole Pipeline tab — extractors and mappers
+  // share this state so the JobStatusPanel always reflects the most
+  // recent action. Running multiple extractors simultaneously isn't a
+  // useful workflow here (they all write to the same duckdb).
+  const { state: jobState, start: startJob, reset: resetJob } = useJobPoller()
 
   useEffect(() => {
     let cancelled = false
@@ -817,6 +824,8 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
         )}
       </div>
 
+      <JobStatusPanel state={jobState} onDismiss={resetJob} />
+
       <div className="rounded border bg-card p-5 overflow-x-auto">
         <div className="flex items-stretch gap-4 min-w-max">
           {/* Sources column — one row per raw table feeding the mapper */}
@@ -839,6 +848,21 @@ function PipelineTab({ entity }: { entity: EntitySummary }) {
                       muted={!src.extractor}
                       onClick={src.extractor ? () => setOpenExtractor(src.extractor) : undefined}
                     />
+                    {/* Inline play icon — one-click run of the producing
+                        extractor without opening the YAML drawer. Disabled
+                        while any job is in flight so we don't kick off a
+                        second writer against the same duckdb. */}
+                    {src.tool && (
+                      <RunChipButton
+                        title={`Run extractor: ${src.extractor}`}
+                        running={jobState.phase === 'running'}
+                        onClick={async () => {
+                          resetJob()
+                          const job = await api.runExtractor(src.tool as string)
+                          startJob(job.job_id, `Run ${src.extractor}`)
+                        }}
+                      />
+                    )}
                     <LineageArrow />
                     <LineageChip icon={<Database className="h-3 w-3" />} kind="Raw" name={src.raw_table} mono />
                   </div>
@@ -1034,6 +1058,37 @@ function LineageChip({
   )
 }
 
+/**
+ * Inline play-button used to kick off the extractor whose chip sits to
+ * the left of it. Sized to match the chip height (CHIP_PX) so the
+ * lineage row stays vertically aligned with Converger / Diverger paths.
+ */
+function RunChipButton({
+  title, running, onClick,
+}: {
+  title: string
+  running: boolean
+  onClick: () => void | Promise<void>
+}) {
+  return (
+    <button
+      title={title}
+      aria-label={title}
+      disabled={running}
+      onClick={onClick}
+      style={{ height: CHIP_PX }}
+      className={cn(
+        'shrink-0 inline-flex items-center justify-center w-8 rounded border bg-card transition-colors',
+        running
+          ? 'opacity-50 cursor-not-allowed'
+          : 'hover:bg-muted hover:border-foreground/30',
+      )}
+    >
+      <Play className={cn('h-3.5 w-3.5', running && 'animate-pulse')} />
+    </button>
+  )
+}
+
 function LineageArrow() {
   // Self-center so we line up with the chip / converger midpoints
   // (parent uses items-stretch so a bare span would float to the top).
@@ -1081,6 +1136,11 @@ function ExtractorDrawer({
   const [content, setContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Drawer holds its own job slot so the panel embedded here doesn't
+  // collide with the Pipeline-tab's outer one — opening the drawer
+  // while a chip-run is in flight should still let you queue a follow-up
+  // when it finishes.
+  const { state: jobState, start: startJob, reset: resetJob } = useJobPoller()
 
   useEffect(() => {
     let cancelled = false
@@ -1091,6 +1151,16 @@ function ExtractorDrawer({
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [api, name])
+
+  // Iagai convention: extractor name == tool name. ``runExtractor`` takes
+  // the tool path param. If the model ever ships an extractor whose name
+  // diverges from its tool, plumb tool through PipelineSource into here.
+  const runExtractor = async (fullRefresh: boolean) => {
+    resetJob()
+    const job = await api.runExtractor(name, undefined, fullRefresh)
+    startJob(job.job_id, fullRefresh ? `Full refresh: ${name}` : `Run ${name}`)
+  }
+  const running = jobState.phase === 'running'
 
   return (
     <>
@@ -1109,6 +1179,26 @@ function ExtractorDrawer({
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />
           </button>
+        </div>
+        <div className="flex items-center gap-2 px-5 py-2 border-b bg-muted/30">
+          <button
+            disabled={running}
+            onClick={() => runExtractor(false)}
+            className="flex items-center gap-1.5 border rounded-md px-3 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50"
+          >
+            <Play className={cn('h-3.5 w-3.5', running && 'animate-pulse')} /> Run extractor
+          </button>
+          <button
+            disabled={running}
+            onClick={() => runExtractor(true)}
+            title="Re-fetch all data from scratch (ignores incremental checkpoints)"
+            className="flex items-center gap-1.5 border rounded-md px-3 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50"
+          >
+            <RotateCcw className={cn('h-3.5 w-3.5', running && 'animate-spin')} /> Full refresh
+          </button>
+        </div>
+        <div className="px-5 pt-3">
+          <JobStatusPanel state={jobState} onDismiss={resetJob} />
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {loading
