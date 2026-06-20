@@ -373,6 +373,87 @@ class TestQueryAttributes:
 
 
 # ---------------------------------------------------------------------------
+# TestSliceExpressionAttribute
+#
+# Slices used to be column-paths only. Anything else (substr(field, 1, 4),
+# coalesce(...), cast(...), arbitrary scalar function calls) got smuggled
+# into SliceDef.field as a raw string and compiled as ``<root_alias>.<that
+# whole string>`` — DuckDB rejected the result with "Referenced column
+# 'i' not found". These tests pin the new path: SliceDef.expr holds the
+# parsed expression and routes through the expression compiler with the
+# root alias in scope.
+# ---------------------------------------------------------------------------
+
+class TestSliceExpressionAttribute:
+    def _entities(self) -> dict[str, EntityDef]:
+        return _make_entities()
+
+    def _build_slice(self, expr_str: str, alias: str) -> SliceDef:
+        from semantic.query import _parse_attribute_item
+        return _parse_attribute_item({alias: expr_str})
+
+    def test_substr_in_slice_emits_function_call_against_root_alias(self):
+        # The exact bug from dq_issues_missing_product_by_project: before
+        # the fix, SliceDef.field held the literal string
+        # "substr(released_at, 1, 4)" and compiled to
+        # ``pv.substr(released_at, 1, 4)`` — invalid.
+        sl = self._build_slice("substr(released_at, 1, 4)", "year")
+        assert sl.expr is not None
+        pv = _pivot(
+            slices=[sl],
+            metrics={"total": _metric("build_duration", "sum")},
+        )
+        sql = build_aggregate_query(pv, self._entities())
+        assert "SUBSTR(pv.released_at, 1, 4)" in sql
+        # AND in the GROUP BY (so the slice is a real grouping key, not
+        # just a SELECT-list expression DuckDB would reject).
+        gb = sql[sql.index("GROUP BY"):]
+        assert "SUBSTR(pv.released_at, 1, 4)" in gb
+
+    def test_split_part_aggregates_prefix(self):
+        # Real-world dq_issues_missing_product_by_project shape.
+        sl = self._build_slice("split_part(released_at, '-', 1)", "year")
+        pv = _pivot(
+            slices=[sl],
+            metrics={"total": _metric("build_duration", "sum")},
+        )
+        sql = build_aggregate_query(pv, self._entities())
+        assert "SPLIT_PART(pv.released_at, '-', 1)" in sql
+
+    def test_coalesce_in_slice_resolves_field_refs(self):
+        # Multi-arg scalar with field refs is the unlock for Q1's
+        # explicit-coalesce fallback escape hatch.
+        sl = self._build_slice("coalesce(released_at, build_duration)", "value")
+        pv = _pivot(
+            slices=[sl],
+            metrics={"total": _metric("build_duration", "sum")},
+        )
+        sql = build_aggregate_query(pv, self._entities())
+        assert "COALESCE(pv.released_at, pv.build_duration)" in sql
+
+    def test_format_time_still_special_cased(self):
+        # format_time keeps its dedicated path (SliceDef.format_pattern),
+        # so feature-aware slice rendering doesn't regress.
+        sl = self._build_slice("format_time(released_at, 'YYYY-MM')", "month")
+        assert sl.expr is None
+        assert sl.format_pattern == "YYYY-MM"
+        assert sl.field == "released_at"
+
+    def test_bare_column_unchanged(self):
+        # The whole point of the field/expr split: a bare column name
+        # still goes through the legacy field path so features and
+        # relation traversal don't shift.
+        sl = self._build_slice("released_at", "value")
+        assert sl.expr is None
+        assert sl.field == "released_at"
+
+    def test_dotted_traversal_unchanged(self):
+        sl = self._build_slice("Product.display_name", "product")
+        assert sl.expr is None
+        assert sl.field == "Product.display_name"
+
+
+# ---------------------------------------------------------------------------
 # TestRatioMetrics
 # ---------------------------------------------------------------------------
 

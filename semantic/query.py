@@ -42,11 +42,19 @@ class PaginationDef:
 
 @dataclass
 class SliceDef:
-    field: str              # "team", "Team.display_name", "merged_at"
+    # When ``expr`` is None, ``field`` is treated as a column path (e.g. "team"
+    # or "Team.display_name"). When ``expr`` is set (a scalar function, binary
+    # op, coalesce, cast, ...), it's compiled by the expression engine with
+    # ``root_alias`` + ``root_entity`` in scope — that's how single-part
+    # ``FieldRef("issue_key")`` inside ``substr(issue_key, 1, 4)`` resolves to
+    # ``i.issue_key`` rather than getting smuggled into ``i.<the whole string>``
+    # which DuckDB rejected with "Referenced column 'i' not found".
+    field: str              # "team", "Team.display_name", "merged_at"; raw expr text when expr is set
     alias: str | None = None         # display alias for the column
     format_pattern: str | None = None  # e.g. "YYYY-WW", "YYYY-MM" (for timestamps)
     order_position: int | None = None  # 1-indexed ORDER BY position (None = not in ORDER BY)
     order_direction: str = "asc"       # "asc" | "desc"
+    expr: object | None = None         # semantic.expression.Expr — parsed scalar expression
 
     @property
     def inferred_grain(self) -> str | None:
@@ -207,7 +215,8 @@ def _parse_attribute_item(item) -> SliceDef:
             expr_str = str(v)
     if alias is None or expr_str is None:
         raise ValueError(f"Attribute item must have exactly one alias key: {item!r}")
-    m = _FORMAT_TIME_RE.match(expr_str.strip())
+    stripped = expr_str.strip()
+    m = _FORMAT_TIME_RE.match(stripped)
     if m:
         return SliceDef(
             field=m.group(1),
@@ -216,8 +225,31 @@ def _parse_attribute_item(item) -> SliceDef:
             order_position=order_position,
             order_direction=order_direction,
         )
+
+    # Attempt expression parse. A bare column path ("team" or
+    # "Team.display_name") still flows through the existing field-based
+    # compile path so feature lookups + relation traversal behave
+    # identically. Anything richer (FuncCallExpr, BinOp, etc.) goes to
+    # the expression compiler — see engine.query_runner build_aggregate_
+    # query's slice loop.
+    try:
+        from semantic.expression import FieldRef, parse_expression_str
+        parsed = parse_expression_str(stripped)
+    except Exception:
+        parsed = None
+    if parsed is not None and not isinstance(parsed, FieldRef):
+        return SliceDef(
+            field=stripped,
+            expr=parsed,
+            alias=alias,
+            order_position=order_position,
+            order_direction=order_direction,
+        )
+    # Bare column path (single segment or dot-traversal): keep the
+    # field-based path so feature lookup + relation traversal behave
+    # identically to before this change.
     return SliceDef(
-        field=expr_str.strip(),
+        field=stripped,
         alias=alias,
         order_position=order_position,
         order_direction=order_direction,

@@ -286,11 +286,16 @@ def _compile_query_attr_expr(
     fv_joins: list[str],
     fv_counter: list[int],
     dialect: str = "sqlite",
+    entities: dict[str, EntityDef] | None = None,
 ) -> str:
     """Compile a query attribute expression (e.g. format_date(field, 'YYYY-MM-DD')) to SQL.
 
-    Field references are resolved via _feature_col_ref so that feature attributes
-    correctly read from the __feature_value JOIN.
+    format_date stays special-cased so feature-column references inside it
+    still route through ``_feature_col_ref`` and read from the
+    ``__feature_value`` JOIN. Everything else (substr, coalesce, cast,
+    arbitrary user-supplied SQL function names) goes through the expression
+    compiler with the query's root entity + alias in scope, so single-part
+    FieldRefs resolve cleanly.
     """
     expr = parse_expression_str(expr_str)
 
@@ -311,7 +316,21 @@ def _compile_query_attr_expr(
         )
         return render_function("format_date", [col_ref], {"pattern": fmt_arg.value}, dialect=dialect)
 
-    raise ValueError(f"Unsupported attribute expression: {expr_str!r}")
+    # General expression — compile via expression engine. CompileContext
+    # needs the entities dict for FieldRef traversal across relations; we
+    # don't have it at the call sites in build_detail_query yet, so when
+    # absent fall back to root_entity alone (single-part field references
+    # still resolve, multi-hop traversal won't).
+    from engine.expression_compiler import CompileContext, compile_expr
+    ctx = CompileContext(
+        root_entity=root_entity,
+        root_alias=root_alias,
+        entities=entities or {root_entity.name: root_entity},
+        join_steps=[],
+        joined={},
+        dialect=dialect,
+    )
+    return compile_expr(expr, ctx)
 
 
 def build_detail_query(
@@ -420,6 +439,7 @@ def build_detail_query(
             col_ref = _compile_query_attr_expr(
                 attr.expr_str, root_alias, root_entity,
                 features_by_entity, fv_joins, fv_counter, dialect=dialect,
+                entities=entities,
             )
             display = f"{root_entity.name}.{attr.label or attr.parts[-1]}"
             select_parts.append(f'{col_ref} AS "{display}"')
@@ -1258,6 +1278,34 @@ def build_aggregate_query(
     attr_col_aliases: dict[str, str] = {}  # bare/qualified field name → SELECT alias
 
     for slice_def in query.slices:
+        # Slice carries a parsed scalar expression (substr(...), coalesce(...),
+        # cast(...), arbitrary user-authored SQL function calls) — route
+        # through the expression compiler so single-part FieldRefs inside the
+        # expression resolve against root_alias instead of being treated as
+        # the whole slice path.
+        if slice_def.expr is not None:
+            col_alias = slice_def.alias or slice_def.field
+            from engine.expression_compiler import CompileContext, compile_expr
+            slice_ctx = CompileContext(
+                root_entity=root_entity,
+                root_alias=root_alias,
+                entities=entities,
+                join_steps=[],
+                joined=dict(joined_entities),
+                dialect=dialect,
+            )
+            col_sql = compile_expr(slice_def.expr, slice_ctx)
+            # Surface any joins the expression introduced (e.g. FieldRef to a
+            # ONE_TO_MANY entity) so the outer FROM clause builds them.
+            for step_dict in slice_ctx.join_steps:
+                join_steps_all.append(JoinStep(**step_dict))
+            joined_entities.update(slice_ctx.joined)
+
+            select_parts.append(f'{col_sql} AS "{col_alias}"')
+            group_by_parts.append(col_sql)
+            slice_col_aliases[slice_def.alias or slice_def.field] = col_alias
+            continue
+
         parts = slice_def.field.split(".")
         if len(parts) == 1:
             bare_field = parts[0]
