@@ -34,6 +34,15 @@ $defs:
       references:
         type: string
         pattern: "^[A-Z][a-zA-Z0-9]*$"
+      fallback_label:
+        type: string
+        pattern: "^[a-z][a-z0-9_]*$"
+        description: >
+          Column name on THIS entity to use as a display fallback when a
+          query traverses this RELATION and the target row is missing —
+          e.g. ``product_label`` on Repository carries the raw
+          metadata.product string so queries that join to Product can
+          still show something meaningful when the alias lookup failed.
       description:
         type: string
 

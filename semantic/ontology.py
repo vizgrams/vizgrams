@@ -32,6 +32,7 @@ def _parse_attributes(attrs_dict: dict) -> list[AttributeDef]:
             semantic=SemanticHint(semantic_val) if semantic_val else None,
             references=attr_def.get("references"),
             description=attr_def.get("description"),
+            fallback_label=attr_def.get("fallback_label"),
         ))
     return result
 

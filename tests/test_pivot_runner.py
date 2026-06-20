@@ -454,6 +454,89 @@ class TestSliceExpressionAttribute:
 
 
 # ---------------------------------------------------------------------------
+# TestRelationFallbackLabel
+#
+# When a RELATION attribute declares ``fallback_label: <col>`` on the
+# *source* entity, a query that traverses the relation should emit
+# ``COALESCE(target.<leaf>, source.<fallback_label>, '(unset)')`` so a
+# missing target row degrades to the raw upstream label rather than
+# "(unset)". The classic case: Repository.product_key → Product is
+# resolved via products.yaml aliases; when the alias lookup fails the
+# user sees the raw metadata.product string (preserved as
+# Repository.product_label) instead of nothing.
+# ---------------------------------------------------------------------------
+
+class TestRelationFallbackLabel:
+    """Slice + attribute traversal pick up source-side fallback columns."""
+
+    def _entities_with_fallback(self) -> dict[str, EntityDef]:
+        # ProductVersion.product_id → Product, with fallback_label =
+        # 'product_label_raw' on the FK attribute.
+        product = EntityDef(
+            name="Product",
+            identity=[_pk("product_id")],
+            attributes=[AttributeDef(name="display_name", col_type=ColumnType.STRING)],
+        )
+        pv = EntityDef(
+            name="ProductVersion",
+            identity=[
+                _pk("pv_id"),
+                AttributeDef(
+                    name="product_id",
+                    col_type=ColumnType.INTEGER,
+                    semantic=SemanticHint.RELATION,
+                    references="Product",
+                    fallback_label="product_label_raw",
+                ),
+            ],
+            attributes=[
+                _ts("released_at"),
+                _measure("build_duration"),
+                AttributeDef(name="product_label_raw", col_type=ColumnType.STRING),
+            ],
+            relations=[_m2o("product", "Product", "product_id")],
+        )
+        return {"ProductVersion": pv, "Product": product}
+
+    def test_slice_emits_three_arm_coalesce_with_source_label(self):
+        entities = self._entities_with_fallback()
+        pv = _pivot(
+            slices=[_slice("released_at", "month"), _slice("Product.display_name")],
+            metrics={"total": _metric("build_duration", "sum")},
+        )
+        sql = build_aggregate_query(pv, entities)
+        # The leaf COALESCE picks up the FK's fallback_label as a middle arm.
+        assert "COALESCE(p.display_name, pv.product_label_raw, '(unset)')" in sql
+
+    def test_slice_without_fallback_label_unchanged(self):
+        # When the RELATION attribute has no fallback_label, behaviour is
+        # the existing two-arm COALESCE.
+        entities = _make_entities()  # no fallback_label declared
+        pv = _pivot(
+            slices=[_slice("released_at", "month"), _slice("Product.display_name")],
+            metrics={"total": _metric("build_duration", "sum")},
+        )
+        sql = build_aggregate_query(pv, entities)
+        assert "COALESCE(p.display_name, '(unset)')" in sql
+        assert "product_label_raw" not in sql
+
+    def test_detail_query_attribute_traversal_picks_up_fallback(self):
+        # Detail queries (no measures, ``detail: true``) emit
+        # COALESCE in the SELECT for traversal attributes; verify the
+        # fallback arm is included.
+        from engine.query_runner import build_detail_query
+        entities = self._entities_with_fallback()
+        q = QueryDef(
+            name="dq",
+            entity="ProductVersion",
+            attributes=[QueryAttribute(parts=["Product", "display_name"], label="product")],
+            detail=True,
+        )
+        sql = build_detail_query(q, entities, page=1, page_size=100)
+        assert "COALESCE(p.display_name, pv.product_label_raw, '(unset)')" in sql
+
+
+# ---------------------------------------------------------------------------
 # TestRatioMetrics
 # ---------------------------------------------------------------------------
 
