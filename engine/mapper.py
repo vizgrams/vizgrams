@@ -39,6 +39,10 @@ class TargetStats:
     skipped_no_change: int = 0
     skipped_duplicate: int = 0
     failed: int = 0
+    # Set by the prune step when the target has ``prune: true`` — number of
+    # rows removed because they fell out of the source. Zero when the
+    # target doesn't opt into pruning.
+    pruned: int = 0
 
 
 @dataclass
@@ -488,6 +492,37 @@ def _merge_duplicate_candidates(candidates: list[dict], key_col: str) -> list[di
     return list(merged.values())
 
 
+def _maybe_prune(
+    backend, ctx: "_WriteContext", target: "TargetDef",
+    candidates: list[dict], stats: TargetStats, has_run_failures: bool,
+) -> None:
+    """Delete rows the mapper no longer produces, when the target opts in.
+
+    Off unless ``target.prune`` is set. Limited to UPSERT — SCD2 manages
+    its own row lifecycle via valid_from/valid_to, and DEDUP is for events
+    that accumulate. Skipped when any candidate failed (including bulk
+    write failure) — a partial run isn't authoritative about which keys
+    should still exist, and pruning on incomplete data would wipe live
+    rows the next successful run would re-emit.
+    """
+    if not target.prune or ctx.strategy != "UPSERT" or has_run_failures:
+        return
+    if not ctx.key_col:
+        return
+    keep = [c[ctx.key_col] for c in candidates if c.get(ctx.key_col) is not None]
+    try:
+        stats.pruned = backend.delete_except(ctx.table_name, ctx.key_col, keep)
+    except Exception as e:
+        # A failed prune shouldn't fail the whole mapper — the bulk write
+        # already landed. Log and surface in stats so it's visible.
+        logger.exception(
+            "Prune failed for %s — leaving stale rows in place",
+            target.entity_name,
+        )
+        stats.pruned = -1
+        del e
+
+
 def _fetch_rows(backend, query: str) -> list[dict]:
     """Execute a SELECT query and return rows as a list of dicts."""
     rows = backend.execute(query)
@@ -758,6 +793,7 @@ def run_mapper(
                                     raise MapperError(f"Write failed for {target.entity_name}: {e}") from e
 
             # Flush bulk buffers — one insert per target entity instead of one per row.
+            targets_by_entity = {t.entity_name: t for t in config.targets}
             for entity_name, (ctx, stats, candidates) in bulk_buffers.items():
                 if not candidates:
                     continue
@@ -769,6 +805,7 @@ def run_mapper(
                 # complete candidate per key: non-NULL / non-empty values win,
                 # falling back to whichever entry has them.
                 candidates = _merge_duplicate_candidates(candidates, ctx.key_col)
+                bulk_failed = False
                 try:
                     if ctx.strategy == "SCD2":
                         inserted, versioned = backend.bulk_scd2(ctx.table_name, candidates, ctx)
@@ -786,6 +823,7 @@ def run_mapper(
                         )
                         stats.inserted_new += len(candidates)
                 except Exception as e:
+                    bulk_failed = True
                     if strict:
                         raise MapperError(f"Bulk write failed for {entity_name}: {e}") from e
                     # Surface bulk failures as RowFailure entries — otherwise
@@ -803,6 +841,13 @@ def run_mapper(
                         reason=f"{type(e).__name__}: {e}",
                         source_values={},
                     ))
+                if not bulk_failed:
+                    target_def = targets_by_entity.get(entity_name)
+                    if target_def is not None:
+                        _maybe_prune(
+                            backend, ctx, target_def, candidates, stats,
+                            has_run_failures=bool(result.failures),
+                        )
 
         except Exception:
             raise
@@ -954,6 +999,7 @@ def _process_rows(backend, config, write_contexts, row_dicts,
                         raise MapperError(f"Write failed for {target.entity_name}: {e}") from e
 
     # Flush bulk buffers — one insert per target entity instead of one per row.
+    targets_by_entity = {t.entity_name: t for t in config.targets}
     for entity_name, (ctx, stats, candidates) in bulk_buffers.items():
         if not candidates:
             continue
@@ -964,6 +1010,7 @@ def _process_rows(backend, config, write_contexts, row_dicts,
             else:
                 stats.inserted_new += len(candidates)
             continue
+        bulk_failed = False
         try:
             if ctx.strategy == "SCD2":
                 inserted, versioned = backend.bulk_scd2(ctx.table_name, candidates, ctx)
@@ -980,6 +1027,7 @@ def _process_rows(backend, config, write_contexts, row_dicts,
                 )
                 stats.inserted_new += len(candidates)
         except Exception as e:
+            bulk_failed = True
             if strict:
                 raise MapperError(f"Bulk write failed for {entity_name}: {e}") from e
             logger.exception(
@@ -987,6 +1035,13 @@ def _process_rows(backend, config, write_contexts, row_dicts,
                 entity_name, len(candidates),
             )
             stats.failed += len(candidates)
+        if not bulk_failed:
+            target_def = targets_by_entity.get(entity_name)
+            if target_def is not None:
+                _maybe_prune(
+                    backend, ctx, target_def, candidates, stats,
+                    has_run_failures=bool(result.failures),
+                )
 
 
 def _write_target_row_backend(backend, ctx: _WriteContext, candidate: dict, stats: TargetStats):

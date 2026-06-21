@@ -58,6 +58,12 @@ class TargetDef:
     entity_name: str
     columns: list[TargetColumn] = field(default_factory=list)
     rows: list[RowGroup] = field(default_factory=list)
+    # When true and the target's write strategy is UPSERT, the mapper deletes
+    # rows whose primary key is not in the run's candidate set — so when a
+    # source row disappears, the materialised row disappears too. Off by
+    # default; pruning a mapper that fails mid-run would wipe live data, so
+    # the engine also skips pruning when any candidate failed.
+    prune: bool = False
 
 
 @dataclass

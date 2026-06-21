@@ -217,6 +217,30 @@ def test_upsert_pk_only_columns_do_nothing(db: DuckDBBackend):
 
 
 # ---------------------------------------------------------------------------
+# delete_except (prune)
+# ---------------------------------------------------------------------------
+
+def test_delete_except_removes_unkept(db: DuckDBBackend):
+    db.create_table("dim", {"k": "TEXT", "v": "TEXT"}, primary_keys=["k"])
+    for k in ("a", "b", "c"):
+        db.upsert("dim", {"k": k, "v": k.upper()})
+    n = db.delete_except("dim", "k", ["a", "c"])
+    assert n == 1
+    rows = db.execute("SELECT k FROM dim ORDER BY k")
+    assert [r[0] for r in rows] == ["a", "c"]
+
+
+def test_delete_except_empty_keeps_truncates(db: DuckDBBackend):
+    db.create_table("dim", {"k": "TEXT"}, primary_keys=["k"])
+    for k in ("a", "b"):
+        db.upsert("dim", {"k": k})
+    n = db.delete_except("dim", "k", [])
+    assert n == 2
+    rows = db.execute("SELECT k FROM dim")
+    assert rows == []
+
+
+# ---------------------------------------------------------------------------
 # append (fact insert with inserted_at)
 # ---------------------------------------------------------------------------
 

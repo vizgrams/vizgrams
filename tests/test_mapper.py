@@ -1602,6 +1602,106 @@ class TestUpsertStrategy:
         finally:
             backend.close()
 
+    def test_prune_removes_rows_dropped_from_source(self, tmp_path):
+        """Target with ``prune: true``: when a source row disappears between
+        mapper runs, the corresponding sem row is deleted (not left stale).
+        """
+        from core.db import DuckDBBackend
+        backend = DuckDBBackend(db_path=tmp_path / "x.duckdb")
+        backend.connect()
+        try:
+            product = _make_product_no_history_ontology()
+            _setup_db(backend, [product])
+            self._create_raw_table(backend, "source_data", ["product_key", "display_name"], [
+                ("p1", "A"), ("p2", "B"), ("p3", "C"),
+            ])
+            yaml_dict = _minimal_mapper()
+            yaml_dict["sources"][0]["table"] = "source_data"
+            yaml_dict["targets"][0]["prune"] = True
+            config = parse_mapper_yaml(_write_yaml(tmp_path, yaml_dict))
+
+            # Initial run lands three rows.
+            run_mapper(config, [product], backend)
+            rows = backend.execute('SELECT product_key FROM "product" ORDER BY product_key')
+            assert [r[0] for r in rows] == ["p1", "p2", "p3"]
+
+            # p2 is removed from the source; rerun should drop it from product.
+            backend._conn.execute("DELETE FROM source_data WHERE product_key = 'p2'")
+            result = run_mapper(config, [product], backend)
+            rows = backend.execute('SELECT product_key FROM "product" ORDER BY product_key')
+            assert [r[0] for r in rows] == ["p1", "p3"]
+            assert result.target_stats[0].pruned == 1
+        finally:
+            backend.close()
+
+    def test_prune_off_by_default_preserves_legacy_behaviour(self, tmp_path):
+        """Without ``prune: true`` the mapper is append-only-by-UPSERT —
+        rows that fall out of source must persist (regression guard for
+        every existing mapper that relies on accumulate-only semantics).
+        """
+        from core.db import DuckDBBackend
+        backend = DuckDBBackend(db_path=tmp_path / "x.duckdb")
+        backend.connect()
+        try:
+            product = _make_product_no_history_ontology()
+            _setup_db(backend, [product])
+            self._create_raw_table(backend, "source_data", ["product_key", "display_name"], [
+                ("p1", "A"), ("p2", "B"),
+            ])
+            yaml_dict = _minimal_mapper()
+            yaml_dict["sources"][0]["table"] = "source_data"
+            config = parse_mapper_yaml(_write_yaml(tmp_path, yaml_dict))
+            run_mapper(config, [product], backend)
+
+            backend._conn.execute("DELETE FROM source_data WHERE product_key = 'p2'")
+            result = run_mapper(config, [product], backend)
+            rows = backend.execute('SELECT product_key FROM "product" ORDER BY product_key')
+            # p2 stays — no prune flag means no delete.
+            assert [r[0] for r in rows] == ["p1", "p2"]
+            assert result.target_stats[0].pruned == 0
+        finally:
+            backend.close()
+
+    def test_prune_skipped_when_run_has_failures(self, tmp_path):
+        """A row that fails to evaluate should suppress pruning — the
+        candidate set is incomplete and pruning would wipe live rows that
+        the next successful run would re-emit.
+        """
+        from core.db import DuckDBBackend
+        backend = DuckDBBackend(db_path=tmp_path / "x.duckdb")
+        backend.connect()
+        try:
+            product = _make_product_no_history_ontology()
+            _setup_db(backend, [product])
+            self._create_raw_table(backend, "source_data", ["product_key", "display_name"], [
+                ("p1", "A"), ("p2", "B"),
+            ])
+            yaml_dict = _minimal_mapper()
+            yaml_dict["sources"][0]["table"] = "source_data"
+            yaml_dict["targets"][0]["prune"] = True
+            config = parse_mapper_yaml(_write_yaml(tmp_path, yaml_dict))
+            run_mapper(config, [product], backend)
+
+            # Replace source with a row that will fail to evaluate. Use a
+            # non-existent function so eval raises and the candidate doesn't
+            # land in the bulk buffer — result.failures is populated.
+            backend._conn.execute("DELETE FROM source_data")
+            backend._conn.execute(
+                "INSERT INTO source_data VALUES ('p3', 'C')"
+            )
+            yaml_dict["targets"][0]["columns"][1]["expr"] = "no_such_function(src.display_name)"
+            broken_config = parse_mapper_yaml(_write_yaml(tmp_path, yaml_dict))
+            result = run_mapper(broken_config, [product], backend, strict=False)
+            assert len(result.failures) >= 1
+            # No prune: p1 and p2 must remain even though the rerun produced
+            # zero successful candidates.
+            rows = backend.execute('SELECT product_key FROM "product" ORDER BY product_key')
+            assert "p1" in [r[0] for r in rows]
+            assert "p2" in [r[0] for r in rows]
+            assert result.target_stats[0].pruned == 0
+        finally:
+            backend.close()
+
     def test_resolve_write_context_scd2_with_history(self):
         """Entity with history should still resolve to SCD2."""
         from semantic.mapper_types import TargetDef

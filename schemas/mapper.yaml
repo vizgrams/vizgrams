@@ -161,6 +161,13 @@ properties:
         entity:
           type: string
           pattern: "^[A-Z][a-zA-Z0-9]*$"
+        prune:
+          type: boolean
+          description: >
+            When true and the target's write strategy is UPSERT, the mapper
+            deletes rows whose primary key isn't in the run's candidate set.
+            Off by default. Skipped on any candidate failure to avoid wiping
+            live data on a partial run.
         columns:
           type: array
           minItems: 1
