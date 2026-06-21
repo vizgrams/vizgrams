@@ -74,6 +74,32 @@ def execute_all_mappers(
     return _to_job_out(job)
 
 
+@crud_router.post("/{mapper_name}/execute", response_model=JobOut, status_code=202)
+def execute_mapper_by_name(
+    model: str,
+    mapper_name: str,
+    model_dir: str = Depends(resolve_model_dir),
+):
+    """Run one mapper by its YAML ``mapper:`` name.
+
+    Sibling to the entity-scoped ``/entity/{entity}/mapper/execute`` route.
+    The job log stores the mapper name in ``tool`` and surfaces it back as
+    ``entity`` on JobOut, so a rerun-from-job-log call needs an endpoint
+    that takes the mapper name verbatim — the entity-scoped route does a
+    case-sensitive lookup against the ontology's capitalised entity name
+    and misses for lowercase mapper names.
+    """
+    try:
+        mapper_service.get_mapper_by_name(model_dir, mapper_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        job = submit_mapper_job(model, mapper=mapper_name, triggered_by="api")
+    except BatchServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return _to_job_out(job)
+
+
 @crud_router.put("/{mapper_name}", response_model=MapperOut)
 def upsert_mapper(
     mapper_name: str,

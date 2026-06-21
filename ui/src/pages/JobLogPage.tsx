@@ -234,7 +234,11 @@ export function JobLogPage() {
       } else if (job.operation === 'map' && isAll) {
         await api.runAllMappers()
       } else if (job.operation === 'map' && job.entity) {
-        await api.runMapper(job.entity)
+        // For map jobs, JobOut.entity is the mapper name (the batch
+        // service stores it in `tool` and the API translates it back).
+        // Use the mapper-name route so case-sensitive entity lookup
+        // doesn't reject lowercase mapper names like "team".
+        await api.runMapperByName(job.entity)
       } else if (job.operation === 'reconcile_all' || (job.operation === 'materialize' && isAll)) {
         await api.reconcileAll()
       } else if (job.operation === 'materialize' && job.entity) {

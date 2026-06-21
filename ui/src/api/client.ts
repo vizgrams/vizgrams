@@ -390,6 +390,13 @@ export function makeApi(model: string) {
     runMapper: (entity: string) =>
       post<JobOut>(`${BASE}/entity/${entity}/mapper/execute`, {}),
 
+    // Re-run a mapper by its YAML name (lowercase artefact name).
+    // Used by JobLogPage rerun where `job.entity` is the mapper name
+    // (the batch service stores it in `tool` and JobOut surfaces it
+    // as `entity` for back-compat).
+    runMapperByName: (mapper: string) =>
+      post<JobOut>(`${BASE}/mapper/${mapper}/execute`, {}),
+
     // Run every mapper in topological order in a single background job.
     // Backend stores this with entity sentinel '__all__' in the job log
     // — Rerun on /jobs dispatches here when it sees that sentinel.
