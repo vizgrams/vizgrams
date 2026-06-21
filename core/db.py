@@ -94,9 +94,9 @@ class DBBackend(ABC):
         """Delete rows whose ``key_col`` value is not in ``keep_keys``.
 
         Used by mapper targets with ``prune: true`` to clean up entries the
-        mapper no longer produces — e.g. a Repository row whose source row
-        was deleted from github_repos. Returns the number of rows deleted
-        so callers can report it in mapper stats.
+        mapper no longer produces — e.g. an entity row whose upstream
+        source row was deleted between runs. Returns the number of rows
+        deleted so callers can report it in mapper stats.
         """
         ...
 
