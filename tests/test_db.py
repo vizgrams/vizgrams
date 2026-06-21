@@ -86,6 +86,35 @@ def test_upsert_serializes_dicts(db):
     assert rows[0]["data"] == '{"key": "value"}'
 
 
+def test_delete_except_removes_unkept_rows(db):
+    db.create_table("dim_table", {"id": "INTEGER", "name": "TEXT"}, primary_keys=["id"])
+    for n, name in [(1, "Alice"), (2, "Bob"), (3, "Carol")]:
+        db.upsert("dim_table", {"id": n, "name": name})
+    deleted = db.delete_except("dim_table", "id", [1, 3])
+    assert deleted == 1
+    rows = db.execute("SELECT id FROM dim_table ORDER BY id")
+    assert [r["id"] for r in rows] == [1, 3]
+
+
+def test_delete_except_empty_keeps_truncates(db):
+    db.create_table("dim_table", {"id": "INTEGER", "name": "TEXT"}, primary_keys=["id"])
+    db.upsert("dim_table", {"id": 1, "name": "Alice"})
+    db.upsert("dim_table", {"id": 2, "name": "Bob"})
+    deleted = db.delete_except("dim_table", "id", [])
+    assert deleted == 2
+    assert db.execute("SELECT COUNT(*) AS n FROM dim_table")[0]["n"] == 0
+
+
+def test_delete_except_string_keys(db):
+    db.create_table("dim_table", {"key": "TEXT", "v": "TEXT"}, primary_keys=["key"])
+    for k in ("a", "b", "c"):
+        db.upsert("dim_table", {"key": k, "v": k.upper()})
+    deleted = db.delete_except("dim_table", "key", ["a", "c"])
+    assert deleted == 1
+    rows = db.execute("SELECT key FROM dim_table ORDER BY key")
+    assert [r["key"] for r in rows] == ["a", "c"]
+
+
 def test_append_adds_inserted_at(db):
     db.create_table(
         "fact_table",

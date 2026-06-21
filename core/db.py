@@ -90,6 +90,17 @@ class DBBackend(ABC):
             self.upsert(table, row)
 
     @abstractmethod
+    def delete_except(self, table: str, key_col: str, keep_keys: list) -> int:
+        """Delete rows whose ``key_col`` value is not in ``keep_keys``.
+
+        Used by mapper targets with ``prune: true`` to clean up entries the
+        mapper no longer produces — e.g. an entity row whose upstream
+        source row was deleted between runs. Returns the number of rows
+        deleted so callers can report it in mapper stats.
+        """
+        ...
+
+    @abstractmethod
     def append(self, table: str, row: dict) -> None: ...
 
     @abstractmethod
@@ -229,6 +240,21 @@ class SQLiteBackend(DBBackend):
         assert self.conn, "Not connected"
         self.conn.execute(f"DELETE FROM {table}")
         self.conn.commit()
+
+    def delete_except(self, table: str, key_col: str, keep_keys: list) -> int:
+        assert self.conn, "Not connected"
+        keep_keys = list(keep_keys)
+        if not keep_keys:
+            cur = self.conn.execute(f"DELETE FROM {table}")
+            self.conn.commit()
+            return cur.rowcount
+        placeholders = ", ".join("?" for _ in keep_keys)
+        cur = self.conn.execute(
+            f"DELETE FROM {table} WHERE {key_col} NOT IN ({placeholders})",
+            keep_keys,
+        )
+        self.conn.commit()
+        return cur.rowcount
 
     def ensure_meta_table(self) -> None:
         """Create the _task_runs metadata table if it doesn't exist."""
@@ -718,6 +744,37 @@ class DuckDBBackend(DBBackend):
     def truncate(self, table: str) -> None:
         assert self._conn is not None, "Not connected"
         self._conn.execute(f"DELETE FROM {table}")
+
+    def delete_except(self, table: str, key_col: str, keep_keys: list) -> int:
+        """Delete rows whose ``key_col`` value is not in ``keep_keys``.
+
+        DuckDB 1.x crashes ("optional pointer not set") on large
+        parameterised ``IN`` lists, parameterised VALUES clauses, and
+        executemany-into-temp-table — every path that binds many
+        parameters in a single statement trips an internal assertion.
+        ``ALTER TABLE ... DELETE`` is ClickHouse-only. So we inline the
+        keep set as escaped string literals in a single statement —
+        no parameter binding.
+
+        ``keep_keys`` originates from the mapper engine, not user
+        input, so the values are trusted. Single-quote escaping
+        (``'`` → ``''``) is still applied for defence in depth.
+        """
+        assert self._conn is not None, "Not connected"
+        keep_keys = list(keep_keys)
+        before = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        if not keep_keys:
+            self._conn.execute(f"DELETE FROM {table}")
+            return before
+        quoted = ", ".join(
+            "'" + str(k).replace("'", "''") + "'"
+            for k in keep_keys
+        )
+        self._conn.execute(
+            f"DELETE FROM {table} WHERE {key_col} NOT IN ({quoted})"
+        )
+        after = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        return before - after
 
     # ------------------------------------------------------------------
     # S3 plumbing — httpfs extension + EXPORT/ATTACH against s3:// URIs
@@ -1379,6 +1436,39 @@ class ClickHouseBackend(DBBackend):
         """Remove all rows from a ReplacingMergeTree table synchronously."""
         assert self._client is not None, "Not connected"
         self._client.command(f"TRUNCATE TABLE `{table}`")
+
+    def delete_except(self, table: str, key_col: str, keep_keys: list) -> int:
+        """ALTER TABLE ... DELETE on a ReplacingMergeTree is a mutation —
+        asynchronous by default. The mapper relies on the deletion being
+        visible to the next read, so we wait for the mutation to finish
+        via ``mutations_sync = 2`` for this statement.
+        """
+        assert self._client is not None, "Not connected"
+        keep_keys = list(keep_keys)
+        before = int(
+            self._client.query(
+                f"SELECT count() FROM `{table}` FINAL"
+            ).result_rows[0][0]
+        )
+        if not keep_keys:
+            self._client.command(
+                f"TRUNCATE TABLE `{table}`",
+                settings={"mutations_sync": 2},
+            )
+            return before
+        # Inline the keep_keys as a ClickHouse Array(String) literal — the
+        # mutation parser doesn't accept positional parameters.
+        quoted = ", ".join("'" + str(k).replace("'", "''") + "'" for k in keep_keys)
+        self._client.command(
+            f"ALTER TABLE `{table}` DELETE WHERE {key_col} NOT IN ({quoted})",
+            settings={"mutations_sync": 2},
+        )
+        after = int(
+            self._client.query(
+                f"SELECT count() FROM `{table}` FINAL"
+            ).result_rows[0][0]
+        )
+        return before - after
 
     # ------------------------------------------------------------------
     # Pipeline run tracking

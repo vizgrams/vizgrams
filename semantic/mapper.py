@@ -92,6 +92,7 @@ def parse_mapper_dict(data: dict) -> MapperConfig:
             entity_name=tgt["entity"],
             columns=columns,
             rows=rows,
+            prune=bool(tgt.get("prune", False)),
         ))
 
     return MapperConfig(
