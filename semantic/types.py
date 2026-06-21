@@ -52,13 +52,6 @@ class AttributeDef:
     semantic: SemanticHint | None = None
     references: str | None = None
     description: str | None = None
-    # Column name on the *same* entity to fall back to when a query
-    # traverses the RELATION declared by this attribute (via
-    # ``references``) and the target row is missing. The query engine
-    # emits ``COALESCE(target.X, source.<fallback_label>, '(unset)')``
-    # instead of the bare ``COALESCE(target.X, '(unset)')``. Only
-    # meaningful when ``semantic`` is ``RELATION``.
-    fallback_label: str | None = None
 
 
 @dataclass
