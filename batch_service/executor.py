@@ -367,14 +367,30 @@ def _run_job(
             return False
 
     try:
-        result = run_extractor(
-            model_dir,
-            tool,
-            task_name=task,
-            since_override=since_override,
-            progress_cb=_progress,
-            cancel_check=_cancel_check,
-        )
+        # DuckDB is single-writer; without this lock two extract subprocesses
+        # (e.g. scheduled ``git`` still running when the user manually
+        # triggers ``jira``) both open the DB, one fails immediately with
+        # "Could not set lock on file", and the caller has no idea why.
+        # Wrap in the fcntl model lock so waiters queue instead of failing.
+        # Timeout matches ``model_write_lock``'s default (300 s); jobs
+        # blocked longer than that raise LockTimeoutError below.
+        from batch.lock import LockTimeoutError, model_write_lock
+        with model_write_lock(model_dir):
+            result = run_extractor(
+                model_dir,
+                tool,
+                task_name=task,
+                since_override=since_override,
+                progress_cb=_progress,
+                cancel_check=_cancel_check,
+            )
+    except LockTimeoutError as exc:
+        _log.error("Write lock timeout for extract job %s: %s", job_id, exc,
+                   extra={"job_id": job_id, "model": model_dir.name})
+        with jobdb.get_connection(model_dir) as con:
+            jobdb.update_job(con, job_id, status="failed",
+                             completed_at=_now_utc(), error=str(exc))
+        return
     except Exception as exc:
         _log.exception("Unexpected error in job %s", job_id)
         with jobdb.get_connection(model_dir) as con:
@@ -448,82 +464,98 @@ def _run_mapper_job(model_dir: Path, job_id: str, mapper_name: str | None) -> No
     total_rows = 0
 
     try:
+        from batch.lock import LockTimeoutError, model_write_lock
         from core.db import get_backend
         from engine.mapper import build_execution_waves, run_mapper
         from semantic.yaml_adapter import YAMLAdapter
 
-        ontology_entities = YAMLAdapter.load_entities(model_dir / "ontology")
-        all_mappers = YAMLAdapter.load_mappers(model_dir / "mappers")
+        # DuckDB is single-writer: without this lock a mapper trying to
+        # write sem tables while an extractor is still writing raw tables
+        # (or another mapper is mid-flight) fails immediately with "Could
+        # not set lock on file". materialize + reconcile already wrap their
+        # bodies in ``model_write_lock``; adding it here completes the
+        # concurrency=1 contract across all four job types. Same 300 s
+        # default timeout as the other jobs.
+        with model_write_lock(model_dir):
+            ontology_entities = YAMLAdapter.load_entities(model_dir / "ontology")
+            all_mappers = YAMLAdapter.load_mappers(model_dir / "mappers")
 
-        # Pre-execution gate: exactly one mapper per target entity. Multiple
-        # mappers stomping the same entity is the SCD2 oscillation bug — fail
-        # fast with a clear error rather than silently corrupting data.
-        _by_entity: dict[str, list[str]] = {}
-        for mc in all_mappers:
-            for tgt in mc.targets:
-                _by_entity.setdefault(tgt.entity_name, []).append(mc.name)
-        _dupes = {e: ms for e, ms in _by_entity.items() if len(ms) > 1}
-        if _dupes:
-            lines = [f"  {e}: {ms}" for e, ms in _dupes.items()]
-            raise RuntimeError(
-                "Mapper run aborted — entities are targeted by more than one "
-                "mapper, which causes non-deterministic SCD2 writes:\n"
-                + "\n".join(lines)
-                + "\nRefactor the duplicates into a single mapper or remove one."
-            )
+            # Pre-execution gate: exactly one mapper per target entity. Multiple
+            # mappers stomping the same entity is the SCD2 oscillation bug — fail
+            # fast with a clear error rather than silently corrupting data.
+            _by_entity: dict[str, list[str]] = {}
+            for mc in all_mappers:
+                for tgt in mc.targets:
+                    _by_entity.setdefault(tgt.entity_name, []).append(mc.name)
+            _dupes = {e: ms for e, ms in _by_entity.items() if len(ms) > 1}
+            if _dupes:
+                lines = [f"  {e}: {ms}" for e, ms in _dupes.items()]
+                raise RuntimeError(
+                    "Mapper run aborted — entities are targeted by more than one "
+                    "mapper, which causes non-deterministic SCD2 writes:\n"
+                    + "\n".join(lines)
+                    + "\nRefactor the duplicates into a single mapper or remove one."
+                )
 
-        if mapper_name:
-            target = next((mc for mc in all_mappers if mc.name == mapper_name), None)
-            if target is None:
-                raise KeyError(f"Mapper '{mapper_name}' not found in model '{model_dir.name}'")
-            waves = [[target]]
-        else:
-            waves = build_execution_waves(all_mappers)
-
-        n_waves = len(waves)
-
-        def _run_one(mc):
-            backend = get_backend(model_dir, namespace="sem")
-            source_backend = get_backend(model_dir, namespace="raw")
-            backend.connect()
-            source_backend.connect()
-            try:
-                result = run_mapper(mc, ontology_entities, backend, source_backend=source_backend)
-                return result.total_grain_rows
-            finally:
-                backend.close()
-                source_backend.close()
-
-        for wave_idx, wave in enumerate(waves, 1):
-            if len(wave) == 1:
-                mc = wave[0]
-                _progress(f"mapper {mc.name} — starting")
-                rows = _run_one(mc)
-                total_rows += rows
-                _progress(f"mapper {mc.name} — done  {rows} rows")
-                _log.info("Mapper complete", extra={
-                    "job_id": job_id, "model": model_dir.name,
-                    "mapper": mc.name, "rows": rows,
-                })
+            if mapper_name:
+                target = next((mc for mc in all_mappers if mc.name == mapper_name), None)
+                if target is None:
+                    raise KeyError(f"Mapper '{mapper_name}' not found in model '{model_dir.name}'")
+                waves = [[target]]
             else:
-                names = ", ".join(mc.name for mc in wave)
-                _progress(f"wave {wave_idx}/{n_waves}: {names} — starting ({len(wave)} parallel)")
-                wave_rows = 0
-                workers = min(len(wave), _MAPPER_WAVE_WORKERS)
-                with ThreadPoolExecutor(max_workers=workers) as wave_pool:
-                    futures = {wave_pool.submit(_run_one, mc): mc for mc in wave}
-                    for fut in as_completed(futures):
-                        mc = futures[fut]
-                        rows = fut.result()  # propagates exception → fails the job
-                        wave_rows += rows
-                        _progress(f"mapper {mc.name} — done  {rows} rows")
-                        _log.info("Mapper complete", extra={
-                            "job_id": job_id, "model": model_dir.name,
-                            "mapper": mc.name, "rows": rows,
-                        })
-                total_rows += wave_rows
-                _progress(f"wave {wave_idx}/{n_waves}: done  {wave_rows} rows")
+                waves = build_execution_waves(all_mappers)
 
+            n_waves = len(waves)
+
+            def _run_one(mc):
+                backend = get_backend(model_dir, namespace="sem")
+                source_backend = get_backend(model_dir, namespace="raw")
+                backend.connect()
+                source_backend.connect()
+                try:
+                    result = run_mapper(mc, ontology_entities, backend, source_backend=source_backend)
+                    return result.total_grain_rows
+                finally:
+                    backend.close()
+                    source_backend.close()
+
+            for wave_idx, wave in enumerate(waves, 1):
+                if len(wave) == 1:
+                    mc = wave[0]
+                    _progress(f"mapper {mc.name} — starting")
+                    rows = _run_one(mc)
+                    total_rows += rows
+                    _progress(f"mapper {mc.name} — done  {rows} rows")
+                    _log.info("Mapper complete", extra={
+                        "job_id": job_id, "model": model_dir.name,
+                        "mapper": mc.name, "rows": rows,
+                    })
+                else:
+                    names = ", ".join(mc.name for mc in wave)
+                    _progress(f"wave {wave_idx}/{n_waves}: {names} — starting ({len(wave)} parallel)")
+                    wave_rows = 0
+                    workers = min(len(wave), _MAPPER_WAVE_WORKERS)
+                    with ThreadPoolExecutor(max_workers=workers) as wave_pool:
+                        futures = {wave_pool.submit(_run_one, mc): mc for mc in wave}
+                        for fut in as_completed(futures):
+                            mc = futures[fut]
+                            rows = fut.result()  # propagates exception → fails the job
+                            wave_rows += rows
+                            _progress(f"mapper {mc.name} — done  {rows} rows")
+                            _log.info("Mapper complete", extra={
+                                "job_id": job_id, "model": model_dir.name,
+                                "mapper": mc.name, "rows": rows,
+                            })
+                    total_rows += wave_rows
+                    _progress(f"wave {wave_idx}/{n_waves}: done  {wave_rows} rows")
+
+    except LockTimeoutError as exc:
+        _log.error("Write lock timeout for mapper job %s: %s", job_id, exc,
+                   extra={"job_id": job_id, "model": model_dir.name})
+        with jobdb.get_connection(model_dir) as con:
+            jobdb.update_job(con, job_id, status="failed",
+                             completed_at=_now_utc(), error=str(exc))
+        return
     except Exception as exc:
         _log.exception("Unexpected error in mapper job %s", job_id)
         with jobdb.get_connection(model_dir) as con:

@@ -173,5 +173,29 @@ def test_lock_released_after_timeout_expiry(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_default_timeout_is_reasonable():
-    assert DEFAULT_TIMEOUT == 300.0
+def test_default_timeout_covers_long_extractors():
+    """The lock now serialises extract too, and a full git extract on a
+    large model can run several hours. A default shorter than that turns
+    every queued mapper into a spurious ``failed`` even though it just
+    needed to wait. Six hours (21600 s) is our covers-daily-cycle floor;
+    the exact value can drift as long as it stays comfortably above a
+    typical extract's wall-clock so operators aren't surprised."""
+    assert DEFAULT_TIMEOUT >= 21600.0
+
+
+def test_default_timeout_is_env_configurable(monkeypatch):
+    """``VZ_WRITE_LOCK_TIMEOUT`` lets ops dial the wait up or down without
+    a code change. Reloading the module picks up the override so the env
+    is honoured at process start rather than baked at import time."""
+    import importlib
+
+    import batch.lock as lock_mod
+    monkeypatch.setenv("VZ_WRITE_LOCK_TIMEOUT", "42")
+    reloaded = importlib.reload(lock_mod)
+    try:
+        assert reloaded.DEFAULT_TIMEOUT == 42.0
+    finally:
+        # Reload back to whatever the ambient env said, so subsequent
+        # tests see the real default. monkeypatch un-sets the env var
+        # after this test finishes, so this restores state cleanly.
+        importlib.reload(lock_mod)

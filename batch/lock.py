@@ -12,11 +12,22 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+import os as _os
+
 # Lock file name inside model_dir.  Gitignored (see .gitignore).
 _LOCK_FILENAME = ".write.lock"
 
-# Default timeout in seconds.  300 s covers even long-running extractors.
-DEFAULT_TIMEOUT = 300.0
+# Default timeout in seconds. The lock serialises all four batch job types
+# (extract, map, materialize, reconcile) — so a job waiting behind a live
+# git extract may need to hold on for hours before its turn. 300 s (the
+# original default when only materialize + reconcile took the lock)
+# leaves the queued job's status as ``failed`` while the extract is still
+# legitimately running, which the operator sees as spurious failures.
+#
+# Six hours covers a full daily git-extract cycle on a large model + some
+# slack. Override with ``VZ_WRITE_LOCK_TIMEOUT`` (seconds) if a longer
+# window is needed, or a shorter one if operator wants fail-fast semantics.
+DEFAULT_TIMEOUT = float(_os.environ.get("VZ_WRITE_LOCK_TIMEOUT", 21600.0))
 
 # Polling interval while waiting for the lock (seconds).
 _POLL_INTERVAL = 0.5

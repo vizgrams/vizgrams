@@ -17,14 +17,12 @@ Two layers:
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from batch_service import db as jobdb
 from batch_service import executor
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
