@@ -1,21 +1,33 @@
 # Copyright 2024-2026 Oliver Fenton
 # SPDX-License-Identifier: Apache-2.0
 
-"""Inline thread-pool executor for the batch service (Phase 1).
+"""Subprocess-per-job executor for the batch service.
 
-Submits extraction jobs to a bounded thread pool. Each running job writes
-progress to the model's ``vizgrams-batch.db`` so callers can poll for
-live updates via ``GET /api/v1/jobs/{job_id}``.
+Each job (extract / map / materialize / reconcile) runs in its own child
+process spawned via ``python -m batch_service.runner <subcmd>``. A
+background monitor thread reaps exited children and marks any job whose
+subprocess died without self-reporting a terminal status as ``failed``.
 
-The execution mechanism is an internal implementation detail of the batch
-service. Future phases may swap this for Celery + Redis or k8s Job manifests
-without changing the HTTP contract.
+Why not the previous ThreadPoolExecutor design: DuckDB 1.5.x has an
+internal assertion that, once triggered, invalidates the connection AND
+poisons the whole Python process for future DuckDB use. In-thread, one
+crash wedged every subsequent job in the batch_service for as long as it
+stayed up — we saw 8-day bad windows. Crash-in-child only kills that
+child; the next job spawns a fresh interpreter with a clean DuckDB state.
+
+The ``_run_*_job`` functions below are still called from the child (via
+``batch_service.runner``); they self-report progress + status to the
+batch DB (SQLite, multi-process safe), so no IPC between parent and child
+is needed beyond the child's exit code.
 """
 
 from __future__ import annotations
 
 import logging
 import os as _os
+import subprocess
+import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
@@ -23,11 +35,134 @@ from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
-# Bounded thread pool — configurable via BATCH_WORKERS env var
-_pool = ThreadPoolExecutor(max_workers=int(_os.environ.get("BATCH_WORKERS", "4")))
-
-# Max parallel mappers per wave — configurable via MAPPER_WAVE_WORKERS env var
+# Max parallel mappers per wave — configurable via MAPPER_WAVE_WORKERS env var.
+# Still used inside a child running ``_run_mapper_job`` to run same-wave
+# mappers in parallel threads within the one subprocess.
 _MAPPER_WAVE_WORKERS = int(_os.environ.get("MAPPER_WAVE_WORKERS", "8"))
+
+# Poll interval for the child-reaper thread. Small enough to notice a
+# crashed job within a couple of seconds; large enough not to burn CPU
+# checking exit statuses in a tight loop.
+_MONITOR_POLL_S = 1.0
+
+# Tracks live child processes so the monitor can reap them and the API
+# can hard-kill on cancel. Keyed by job_id; value is (Popen, model_dir).
+_children_lock = threading.Lock()
+_children: dict[str, tuple[subprocess.Popen, Path]] = {}
+
+_monitor_lock = threading.Lock()
+_monitor_started = False
+
+
+def _ensure_monitor() -> None:
+    """Start the child-reaper thread the first time a job is submitted."""
+    global _monitor_started
+    with _monitor_lock:
+        if _monitor_started:
+            return
+        threading.Thread(
+            target=_monitor_children, name="batch-child-reaper", daemon=True,
+        ).start()
+        _monitor_started = True
+
+
+def _monitor_children() -> None:
+    """Poll for exited children; if a child died without self-reporting a
+    terminal status, mark the job ``failed`` with the child's stderr tail
+    as the error. Runs forever as a daemon thread.
+    """
+    from batch_service import db as jobdb
+    while True:
+        time.sleep(_MONITOR_POLL_S)
+        with _children_lock:
+            dead = [
+                (jid, proc, mdir)
+                for jid, (proc, mdir) in _children.items()
+                if proc.poll() is not None
+            ]
+            for jid, _proc, _mdir in dead:
+                _children.pop(jid, None)
+        for jid, proc, mdir in dead:
+            try:
+                _finalize_dead_child(jid, proc, mdir, jobdb)
+            except Exception:
+                _log.exception("Reaper failed for job %s", jid)
+
+
+def _finalize_dead_child(
+    job_id: str, proc: subprocess.Popen, model_dir: Path, jobdb,
+) -> None:
+    """If the child crashed without updating the job to a terminal status,
+    stamp the job as failed with the subprocess's exit code + stderr tail.
+
+    Successful jobs (child returned 0 AND self-reported terminal) are left
+    alone. A ``running`` job with rc==0 shouldn't happen — child returning
+    0 without a terminal status means the child bypassed our error paths;
+    surface it as failed rather than leave it running forever.
+    """
+    rc = proc.returncode
+    stderr_tail = ""
+    try:
+        stderr = proc.stderr.read() if proc.stderr else b""
+        if stderr:
+            stderr_tail = stderr.decode(errors="replace")[-2000:]
+    except Exception:
+        pass
+
+    with jobdb.get_connection(model_dir) as con:
+        job = jobdb.get_job(con, job_id)
+        if job is None:
+            _log.warning("Reaper: job %s not found in batch db", job_id)
+            return
+        if job["status"] in ("completed", "failed", "cancelled"):
+            # Child self-reported before exiting — leave the status alone.
+            return
+        error = (
+            f"Job subprocess exited with code {rc} before setting status. "
+            "Likely a hard crash (native assertion, OOM, or signal). "
+            f"Stderr tail: {stderr_tail}" if stderr_tail
+            else f"Job subprocess exited with code {rc} before setting status."
+        )
+        jobdb.update_job(
+            con, job_id, status="failed",
+            completed_at=_now_utc(), error=error[:4000],
+        )
+    _log.error(
+        "Reaper marked orphaned job as failed",
+        extra={"job_id": job_id, "model": model_dir.name, "exit_code": rc},
+    )
+
+
+def _spawn(
+    subcmd: str, model_dir: Path, job_id: str, extra_args: list[str],
+) -> subprocess.Popen:
+    """Fork off ``python -m batch_service.runner <subcmd>`` for one job.
+
+    The child inherits the parent's environment (poetry venv, VZ_MODELS_DIR,
+    etc.); stderr is piped so the reaper can grab a tail on non-zero exits.
+    stdout is discarded — the child writes progress via the batch DB.
+    """
+    args = [
+        sys.executable, "-m", "batch_service.runner", subcmd,
+        "--model-dir", str(model_dir),
+        "--job-id", job_id,
+        *extra_args,
+    ]
+    proc = subprocess.Popen(
+        args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        env=_os.environ.copy(),
+    )
+    with _children_lock:
+        _children[job_id] = (proc, model_dir)
+    _ensure_monitor()
+    _log.info(
+        "Spawned job subprocess",
+        extra={"job_id": job_id, "model": model_dir.name,
+               "subcmd": subcmd, "pid": proc.pid},
+    )
+    return proc
 
 
 def submit(
@@ -37,8 +172,14 @@ def submit(
     task: str | None,
     since_override: str | None,
 ) -> None:
-    """Schedule a job on the thread pool and return immediately."""
-    _pool.submit(_run_job, model_dir, job_id, tool, task, since_override)
+    """Fire off an extract job in a subprocess. Returns immediately; the
+    caller polls the batch DB for status."""
+    extra = ["--tool", tool]
+    if task is not None:
+        extra += ["--task", task]
+    if since_override is not None:
+        extra += ["--since", since_override]
+    _spawn("extract", model_dir, job_id, extra)
 
 
 def _now_utc() -> str:
@@ -125,8 +266,11 @@ def _run_job(
 
 
 def submit_mapper(model_dir: Path, job_id: str, mapper_name: str | None) -> None:
-    """Schedule a mapper job on the thread pool and return immediately."""
-    _pool.submit(_run_mapper_job, model_dir, job_id, mapper_name)
+    """Fire off a mapper job in a subprocess. Returns immediately."""
+    extra = []
+    if mapper_name is not None:
+        extra += ["--mapper", mapper_name]
+    _spawn("map", model_dir, job_id, extra)
 
 
 def _run_mapper_job(model_dir: Path, job_id: str, mapper_name: str | None) -> None:
@@ -255,8 +399,11 @@ def _run_mapper_job(model_dir: Path, job_id: str, mapper_name: str | None) -> No
 
 
 def submit_materialize(model_dir: Path, job_id: str, entity_name: str | None) -> None:
-    """Schedule a materialize job on the thread pool and return immediately."""
-    _pool.submit(_run_materialize_job, model_dir, job_id, entity_name)
+    """Fire off a materialize job in a subprocess. Returns immediately."""
+    extra = []
+    if entity_name is not None:
+        extra += ["--entity", entity_name]
+    _spawn("materialize", model_dir, job_id, extra)
 
 
 def _run_materialize_job(model_dir: Path, job_id: str, entity_name: str | None) -> None:
@@ -363,8 +510,13 @@ def submit_reconcile(
     entity_name: str | None,
     feature_id: str | None,
 ) -> None:
-    """Schedule a feature-reconcile job on the thread pool and return immediately."""
-    _pool.submit(_run_reconcile_job, model_dir, job_id, entity_name, feature_id)
+    """Fire off a feature-reconcile job in a subprocess. Returns immediately."""
+    extra = []
+    if entity_name is not None:
+        extra += ["--entity", entity_name]
+    if feature_id is not None:
+        extra += ["--feature-id", feature_id]
+    _spawn("reconcile", model_dir, job_id, extra)
 
 
 def _run_reconcile_job(
