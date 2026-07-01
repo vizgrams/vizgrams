@@ -290,3 +290,207 @@ def test_reaper_survives_stderr_read_failure(tmp_path):
     status, error = _get_status("pipe-broken-1")
     assert status == "failed"
     assert "-9" in error
+
+
+# ---------------------------------------------------------------------------
+# _kill_zombie_if_job_terminal — running-child-with-terminal-DB-status case
+# ---------------------------------------------------------------------------
+
+
+def test_zombie_check_leaves_running_job_child_alone(tmp_path):
+    """Live child + ``running`` DB status is the normal case — legitimate
+    work in progress. Must NOT kill it. Guards against a regression where
+    the zombie sweep gets over-eager and murders live jobs."""
+    _insert_running_job("live-1")
+    proc = _fake_proc(exit_code=None)  # still running
+    executor._kill_zombie_if_job_terminal("live-1", proc, tmp_path, jobdb)
+    proc.terminate.assert_not_called()
+    proc.kill.assert_not_called()
+
+
+def test_zombie_check_kills_running_child_with_failed_job(tmp_path):
+    """The reason this whole helper exists: DB status went ``failed`` via
+    the orphan sweep but the child is still alive holding a DuckDB lock.
+    Must SIGTERM the child so the lock releases."""
+    _insert_running_job("hung-1")
+    with jobdb.get_connection() as con:
+        jobdb.update_job(con, "hung-1", status="failed",
+                         completed_at="2026-01-01T00:01:00Z",
+                         error="orphan-sweep marked me failed")
+    proc = _fake_proc(exit_code=None)
+    executor._kill_zombie_if_job_terminal("hung-1", proc, tmp_path, jobdb)
+    proc.terminate.assert_called_once()
+
+
+def test_zombie_check_kills_running_child_with_completed_job(tmp_path):
+    """Same guard for ``completed``: a child that self-reported completed
+    but somehow kept running (bug in _run_*_job cleanup path) still needs
+    killing so it stops holding resources."""
+    _insert_running_job("stuck-cleanup-1")
+    with jobdb.get_connection() as con:
+        jobdb.update_job(con, "stuck-cleanup-1", status="completed",
+                         completed_at="2026-01-01T00:01:00Z")
+    proc = _fake_proc(exit_code=None)
+    executor._kill_zombie_if_job_terminal("stuck-cleanup-1", proc, tmp_path, jobdb)
+    proc.terminate.assert_called_once()
+
+
+def test_zombie_check_kills_running_child_with_cancelled_job(tmp_path):
+    """Cancel is a common trigger for this — user hits cancel via API,
+    DB flips to ``cancelled``, but if the child ignores the cancel_check
+    and keeps running, terminate it."""
+    _insert_running_job("cancelme-1")
+    with jobdb.get_connection() as con:
+        jobdb.update_job(con, "cancelme-1", status="cancelled",
+                         completed_at="2026-01-01T00:01:00Z")
+    proc = _fake_proc(exit_code=None)
+    executor._kill_zombie_if_job_terminal("cancelme-1", proc, tmp_path, jobdb)
+    proc.terminate.assert_called_once()
+
+
+def test_zombie_check_ignores_missing_job(tmp_path):
+    """Job row deleted from DB between spawn and zombie check. No status
+    to compare against; must not raise or kill the child unnecessarily."""
+    proc = _fake_proc(exit_code=None)
+    executor._kill_zombie_if_job_terminal("gone-1", proc, tmp_path, jobdb)
+    proc.terminate.assert_not_called()
+
+
+def test_zombie_kill_pops_child_from_registry(tmp_path):
+    """After a zombie kill, the entry should be removed from _children
+    so a next-tick reaper pass doesn't try to re-finalize it after the
+    forced SIGKILL. Regression guard for a race where SIGKILL exit code
+    -9 confuses ``_finalize_dead_child`` into re-writing the error."""
+    _insert_running_job("zombie-cleanup-1")
+    with jobdb.get_connection() as con:
+        jobdb.update_job(con, "zombie-cleanup-1", status="failed",
+                         completed_at="2026-01-01T00:01:00Z",
+                         error="pre-existing")
+    proc = _fake_proc(exit_code=None)
+    executor._children["zombie-cleanup-1"] = (proc, tmp_path)
+    executor._kill_zombie_if_job_terminal("zombie-cleanup-1", proc, tmp_path, jobdb)
+    assert "zombie-cleanup-1" not in executor._children
+
+
+# ---------------------------------------------------------------------------
+# terminate_all_tracked_children — shutdown hook
+# ---------------------------------------------------------------------------
+
+
+def test_terminate_all_tracked_children_signals_every_child(tmp_path):
+    """Shutdown handler: SIGTERM every entry in _children. If we miss any,
+    ``make dev`` restart leaves DuckDB locks held by orphaned children."""
+    procs = [_fake_proc(exit_code=None) for _ in range(3)]
+    for i, p in enumerate(procs):
+        executor._children[f"job-{i}"] = (p, tmp_path)
+    executor.terminate_all_tracked_children()
+    for p in procs:
+        p.terminate.assert_called_once()
+    assert executor._children == {}
+
+
+def test_terminate_all_tracked_children_skips_already_dead(tmp_path):
+    """A child that exited on its own between our snapshot and the
+    signal call — SIGTERM would raise ProcessLookupError. Must swallow
+    it (the process is already gone; nothing to do)."""
+    proc = _fake_proc(exit_code=0)  # already exited
+    executor._children["done-already"] = (proc, tmp_path)
+    executor.terminate_all_tracked_children()
+    # No signal sent — _kill_child_tree returns early on poll() != None.
+    proc.terminate.assert_not_called()
+    assert executor._children == {}
+
+
+def test_terminate_all_tracked_children_survives_signal_error(tmp_path):
+    """One child failing to terminate must not stop us from trying the
+    rest. Otherwise a single kernel oddity leaves everything else running."""
+    p_good = _fake_proc(exit_code=None)
+    p_bad = _fake_proc(exit_code=None)
+    p_bad.terminate.side_effect = ProcessLookupError
+    executor._children["a"] = (p_good, tmp_path)
+    executor._children["b"] = (p_bad, tmp_path)
+    executor._children["c"] = (_fake_proc(exit_code=None), tmp_path)
+    executor.terminate_all_tracked_children()
+    p_good.terminate.assert_called_once()
+    # The registry is fully cleared regardless of per-child errors.
+    assert executor._children == {}
+
+
+# ---------------------------------------------------------------------------
+# sweep_and_kill_orphaned_runners — startup hook
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_kills_orphaned_runner_processes():
+    """After a hard parent exit, the child is reparented to PPID=1. On
+    the next startup we must SIGTERM any such process — otherwise its
+    DuckDB write lock blocks every new job."""
+    ps_output = (
+        "  PID  PPID COMMAND\n"
+        "12345    1 python -m batch_service.runner extract --model-dir /m --job-id j1\n"
+    )
+    fake_run = MagicMock()
+    fake_run.stdout = ps_output
+    with patch("batch_service.executor.subprocess.run", return_value=fake_run), \
+         patch("batch_service.executor._os.kill") as kill:
+        executor.sweep_and_kill_orphaned_runners()
+    kill.assert_called_once_with(12345, 15)
+
+
+def test_sweep_skips_live_children_owned_by_this_parent():
+    """A ``batch_service.runner`` whose PPID isn't 1 has a live parent
+    that owns it — not our problem to kill. Guards against nuking a
+    sibling batch_service's children in a multi-instance dev setup."""
+    self_pid = 99999
+    ps_output = (
+        "  PID  PPID COMMAND\n"
+        f"12345 {self_pid} python -m batch_service.runner extract --model-dir /m --job-id j1\n"
+    )
+    fake_run = MagicMock()
+    fake_run.stdout = ps_output
+    with patch("batch_service.executor.subprocess.run", return_value=fake_run), \
+         patch("batch_service.executor._os.kill") as kill:
+        executor.sweep_and_kill_orphaned_runners()
+    kill.assert_not_called()
+
+
+def test_sweep_ignores_unrelated_processes():
+    """Only kill processes with our exact module signature. Nginx,
+    postgres, other Python programs — all off-limits."""
+    ps_output = (
+        "  PID  PPID COMMAND\n"
+        "12345    1 python -m unrelated.script\n"
+        "12346    1 nginx: worker process\n"
+        "12347    1 postgres: writer\n"
+    )
+    fake_run = MagicMock()
+    fake_run.stdout = ps_output
+    with patch("batch_service.executor.subprocess.run", return_value=fake_run), \
+         patch("batch_service.executor._os.kill") as kill:
+        executor.sweep_and_kill_orphaned_runners()
+    kill.assert_not_called()
+
+
+def test_sweep_survives_ps_failure():
+    """``ps`` unavailable or timing out shouldn't crash startup. Log the
+    problem and continue — worst case we boot with orphans still alive
+    and their next scheduled job will fail with a lock conflict (recoverable)."""
+    with patch("batch_service.executor.subprocess.run",
+               side_effect=FileNotFoundError("ps not on PATH")):
+        # Must not raise.
+        executor.sweep_and_kill_orphaned_runners()
+
+
+def test_sweep_survives_kill_permission_error():
+    """The PID we tried to kill vanished between ``ps`` output and our
+    kill call (race). Must not raise — this is expected on a busy system."""
+    ps_output = (
+        "  PID  PPID COMMAND\n"
+        "12345    1 python -m batch_service.runner extract --model-dir /m --job-id j1\n"
+    )
+    fake_run = MagicMock()
+    fake_run.stdout = ps_output
+    with patch("batch_service.executor.subprocess.run", return_value=fake_run), \
+         patch("batch_service.executor._os.kill", side_effect=ProcessLookupError):
+        # Must not raise; the process is already gone which is what we wanted.
+        executor.sweep_and_kill_orphaned_runners()
