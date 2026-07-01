@@ -375,7 +375,7 @@ def _run_job(
         # Timeout matches ``model_write_lock``'s default (300 s); jobs
         # blocked longer than that raise LockTimeoutError below.
         from batch.lock import LockTimeoutError, model_write_lock
-        with model_write_lock(model_dir):
+        with model_write_lock(model_dir, wait_cb=_progress):
             result = run_extractor(
                 model_dir,
                 tool,
@@ -476,7 +476,7 @@ def _run_mapper_job(model_dir: Path, job_id: str, mapper_name: str | None) -> No
         # bodies in ``model_write_lock``; adding it here completes the
         # concurrency=1 contract across all four job types. Same 300 s
         # default timeout as the other jobs.
-        with model_write_lock(model_dir):
+        with model_write_lock(model_dir, wait_cb=_progress):
             ontology_entities = YAMLAdapter.load_entities(model_dir / "ontology")
             all_mappers = YAMLAdapter.load_mappers(model_dir / "mappers")
 
@@ -608,7 +608,7 @@ def _run_materialize_job(model_dir: Path, job_id: str, entity_name: str | None) 
 
     try:
         from batch.lock import LockTimeoutError, model_write_lock
-        with model_write_lock(model_dir):
+        with model_write_lock(model_dir, wait_cb=_progress):
             from core.db import get_backend
             from semantic.materialize import materialize_with_backend
             from semantic.yaml_adapter import YAMLAdapter
@@ -738,7 +738,7 @@ def _run_reconcile_job(
 
     try:
         from batch.lock import LockTimeoutError, model_write_lock
-        with model_write_lock(model_dir):
+        with model_write_lock(model_dir, wait_cb=_progress):
             from core.db import get_backend
             from semantic.feature import reconcile_with_backend
             from semantic.yaml_adapter import YAMLAdapter

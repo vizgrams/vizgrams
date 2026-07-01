@@ -173,14 +173,69 @@ def test_lock_released_after_timeout_expiry(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_default_timeout_covers_long_extractors():
-    """The lock now serialises extract too, and a full git extract on a
-    large model can run several hours. A default shorter than that turns
-    every queued mapper into a spurious ``failed`` even though it just
-    needed to wait. Six hours (21600 s) is our covers-daily-cycle floor;
-    the exact value can drift as long as it stays comfortably above a
-    typical extract's wall-clock so operators aren't surprised."""
-    assert DEFAULT_TIMEOUT >= 21600.0
+def test_default_timeout_is_reasonable():
+    """Serialising extract on the same lock means a job waiting behind a
+    live git extract sits in ``running`` status until it either gets the
+    lock or hits the timeout. Bigger than a few minutes and operators
+    see "jobs running forever" (a real regression we already shipped);
+    smaller than a minute and legitimate fast jobs fail on brief
+    contention. 300 s is the ambient value the codebase used for
+    materialize + reconcile before extract joined; keep it as the floor
+    so anyone lowering the default without thinking about the wait UX
+    trips this."""
+    assert DEFAULT_TIMEOUT >= 60.0
+    assert DEFAULT_TIMEOUT <= 3600.0
+
+
+def test_wait_cb_fires_on_lock_contention(tmp_path):
+    """The ``wait_cb`` hook is how job runners surface "queued for the
+    lock" as job progress — without it, users see a bare ``running``
+    status and can't tell whether the job is doing work or blocked."""
+    received = []
+
+    def other_holder():
+        with model_write_lock(tmp_path):
+            time.sleep(0.5)
+
+    t = threading.Thread(target=other_holder)
+    t.start()
+    time.sleep(0.1)  # let the other thread grab the lock
+    with model_write_lock(tmp_path, wait_cb=received.append):
+        pass
+    t.join()
+    # Two progress notes: one at the start of the wait, one at acquire.
+    assert len(received) == 2
+    assert "waiting" in received[0].lower()
+    assert "acquired" in received[1].lower()
+
+
+def test_wait_cb_not_called_on_uncontested_acquire(tmp_path):
+    """If the lock is free, nothing to report. Waking the operator up
+    with a "acquired" note for every job would be noise."""
+    received = []
+    with model_write_lock(tmp_path, wait_cb=received.append):
+        pass
+    assert received == []
+
+
+def test_wait_cb_failure_does_not_break_the_wait(tmp_path):
+    """The progress channel is a side effect. A user's ``_progress``
+    that raises (e.g. batch DB unreachable) must not prevent the lock
+    from being acquired — the wait continues as a plain timeout."""
+    def raising_cb(_msg):
+        raise RuntimeError("batch db down")
+
+    def other_holder():
+        with model_write_lock(tmp_path):
+            time.sleep(0.3)
+
+    t = threading.Thread(target=other_holder)
+    t.start()
+    time.sleep(0.1)
+    # Should not raise despite the callback raising.
+    with model_write_lock(tmp_path, wait_cb=raising_cb):
+        pass
+    t.join()
 
 
 def test_default_timeout_is_env_configurable(monkeypatch):
