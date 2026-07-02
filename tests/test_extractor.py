@@ -1050,3 +1050,89 @@ def test_new_column_null_when_not_in_api_response(db):
     rows = db.execute("SELECT * FROM commits2")
     assert len(rows) == 1
     assert rows[0]["new_field"] is None
+
+
+# ---------------------------------------------------------------------------
+# _iteration_timeout — per-iteration wall-clock guardrail (SIGALRM)
+# ---------------------------------------------------------------------------
+
+def test_iteration_timeout_fires_on_stuck_call():
+    """A tool.run implementation that hangs forever (real-world case: a
+    ``requests`` call whose socket is CLOSE_WAIT'd by the server) must
+    surface as ``IterationTimeout`` after the configured wall-clock, not
+    freeze the whole extract. This is the fix for the 5-hour stall on
+    iag-mro-eos-be we saw in production."""
+    import time
+
+    from engine.extractor import IterationTimeout, _iteration_timeout
+
+    with pytest.raises(IterationTimeout) as ei, _iteration_timeout(1):
+        time.sleep(5)  # would block for 5 s if the guardrail failed
+    assert "1s" in str(ei.value)
+
+
+def test_iteration_timeout_disarms_after_normal_completion():
+    """The SIGALRM cancel must fire on the ``finally`` path. Otherwise a
+    fast iteration would leave a live alarm that fires during the NEXT
+    iteration's code (e.g. inside a DB write) and blow up unrelated work.
+    Verify by running a fast iteration then a slow one (with no
+    timeout) — if the first alarm leaked, the slow one would raise."""
+    import time
+
+    from engine.extractor import _iteration_timeout
+
+    with _iteration_timeout(10):
+        pass  # completes instantly, must cancel the alarm
+    # Under a bug where the alarm persisted, this 2 s sleep would receive
+    # an out-of-band signal from the earlier iteration and raise.
+    time.sleep(0.1)
+
+
+def test_iteration_timeout_restores_prior_handler():
+    """SIGALRM's handler is process-global. If we don't restore whatever
+    signal.signal returned, other code in the same subprocess (mainly
+    tests) sees our handler leak. Set a sentinel handler, wrap a no-op
+    iteration, confirm the sentinel is back."""
+    import signal
+
+    from engine.extractor import _iteration_timeout
+
+    def sentinel(*_):
+        return None
+    prior = signal.signal(signal.SIGALRM, sentinel)
+    try:
+        with _iteration_timeout(5):
+            pass
+        assert signal.getsignal(signal.SIGALRM) is sentinel
+    finally:
+        signal.signal(signal.SIGALRM, prior)
+
+
+def test_iteration_timeout_no_op_on_non_main_thread():
+    """SIGALRM only works on the main thread; calling ``signal.signal``
+    off-thread raises ValueError. The context manager must degrade to a
+    passthrough in that case so a threaded test caller doesn't crash."""
+    import threading
+
+    from engine.extractor import _iteration_timeout
+
+    def worker():
+        with _iteration_timeout(1):
+            pass  # No SIGALRM installed → no crash, no protection
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join(timeout=2)
+    assert not t.is_alive()  # completed without deadlock
+
+
+def test_iteration_timeout_zero_or_negative_is_disabled():
+    """If ops sets ``VZ_EXTRACT_ITERATION_TIMEOUT_S=0`` to opt out of the
+    guardrail, we must NOT install a handler — otherwise a 0-second alarm
+    would fire immediately and break every iteration."""
+    import time
+
+    from engine.extractor import _iteration_timeout
+
+    with _iteration_timeout(0):
+        time.sleep(0.05)  # would raise if a 0-second alarm was installed

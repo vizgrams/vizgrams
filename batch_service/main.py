@@ -53,6 +53,18 @@ async def lifespan(app: FastAPI):
     models_dir = get_models_dir()
     _log.info("Batch service starting. Models dir: %s", models_dir)
 
+    # Kill any leftover ``batch_service.runner`` processes reparented to
+    # init by a previous parent's ungraceful exit (SIGKILL, ``make dev``
+    # respawn, crash). Must run before ``mark_orphaned_jobs`` so the DB
+    # cleanup below reflects what's actually alive, and before the
+    # scheduler starts so new jobs don't race the orphans for the model
+    # write lock.
+    try:
+        from batch_service.executor import sweep_and_kill_orphaned_runners
+        sweep_and_kill_orphaned_runners()
+    except Exception:
+        _log.exception("Error during startup orphaned-runner sweep")
+
     # Clean up jobs that were running when the process last died
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
@@ -84,6 +96,15 @@ async def lifespan(app: FastAPI):
     yield
 
     _log.info("Batch service shutting down")
+    # SIGTERM every tracked runner child before we exit so a graceful
+    # uvicorn shutdown doesn't leave DuckDB write locks held by processes
+    # reparented to init. The parallel sweep-on-startup handles the case
+    # where we couldn't do this (SIGKILL of the parent).
+    try:
+        from batch_service.executor import terminate_all_tracked_children
+        terminate_all_tracked_children()
+    except Exception:
+        _log.exception("Error terminating child subprocesses on shutdown")
 
 
 from batch_service.routers import jobs, schedules
