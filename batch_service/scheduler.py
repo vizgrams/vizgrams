@@ -25,9 +25,30 @@ _log = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 60  # seconds between schedule checks
 
+# Every batch job takes ``model_write_lock`` and DuckDB is single-writer,
+# so operations must run one at a time per model. This list gates a fresh
+# scheduler submission: if ANY of these is running or queued, don't add
+# more — the new one would just sit in "waiting for write lock" until its
+# 300 s timeout expired and fail, which is what the recurring
+# "everything in running status" report was showing.
+_WRITER_OPERATIONS = ("extract", "map", "materialize", "reconcile")
+
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _any_writer_running(con, model_name: str) -> tuple[bool, str | None]:
+    """Return (True, job_id) if any writer op is running for this model,
+    (False, None) otherwise. Callers skip submitting a fresh job when it
+    would join a queue that can only serialise one at a time anyway.
+    """
+    from batch_service import db as jobdb
+    running = jobdb.list_jobs(con, model_name, status="running", limit=50)
+    for j in running:
+        if j.get("operation") in _WRITER_OPERATIONS:
+            return True, j["job_id"]
+    return False, None
 
 
 def _schedule_tick(models_dir: Path) -> None:
@@ -61,14 +82,16 @@ def _schedule_tick(models_dir: Path) -> None:
         for tool in due:
             try:
                 with jobdb.get_connection(model_dir) as con:
-                    running = [
-                        j for j in jobdb.list_jobs(con, model_name, status="running", limit=50)
-                        if j.get("tool") == tool
-                    ]
-                    if running:
+                    # Any writer running (this tool or any other) means the
+                    # new job would just queue on the fcntl lock, sit at
+                    # ``waiting for write lock`` for 300 s, then fail. Skip
+                    # this tick and try again next minute — the schedule
+                    # entry stays "due" so we'll retry.
+                    is_busy, other_job = _any_writer_running(con, model_name)
+                    if is_busy:
                         _log.info(
-                            "Skipping %s/%s — already running (job %s)",
-                            model_name, tool, running[0]["job_id"],
+                            "Skipping %s/%s — writer already running (job %s)",
+                            model_name, tool, other_job,
                         )
                         continue
 
@@ -106,14 +129,11 @@ def _schedule_tick(models_dir: Path) -> None:
 
         try:
             with jobdb.get_connection(model_dir) as con:
-                running = [
-                    j for j in jobdb.list_jobs(con, model_name, status="running", limit=50)
-                    if j.get("operation") == "map"
-                ]
-                if running:
+                is_busy, other_job = _any_writer_running(con, model_name)
+                if is_busy:
                     _log.info(
-                        "Skipping mapper run for %s — already running (job %s)",
-                        model_name, running[0]["job_id"],
+                        "Skipping mapper run for %s — writer already running (job %s)",
+                        model_name, other_job,
                     )
                     continue
 
@@ -151,14 +171,11 @@ def _schedule_tick(models_dir: Path) -> None:
 
         try:
             with jobdb.get_connection(model_dir) as con:
-                running = [
-                    j for j in jobdb.list_jobs(con, model_name, status="running", limit=50)
-                    if j.get("operation") == "materialize"
-                ]
-                if running:
+                is_busy, other_job = _any_writer_running(con, model_name)
+                if is_busy:
                     _log.info(
-                        "Skipping materialize for %s — already running (job %s)",
-                        model_name, running[0]["job_id"],
+                        "Skipping materialize for %s — writer already running (job %s)",
+                        model_name, other_job,
                     )
                     continue
 
