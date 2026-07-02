@@ -5,6 +5,10 @@
 
 import json
 import logging
+import os
+import signal
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -15,6 +19,50 @@ from engine.schema import ensure_table, extract_json_path
 from tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
+
+
+# Per-iteration hang guardrail. Tools sometimes wedge on a socket in
+# CLOSE_WAIT (server sent FIN, urllib3 never noticed) or a paginated loop
+# that never terminates; the individual ``requests`` timeout only bounds
+# one socket op, not the whole ``tool.run`` generator. Without this, one
+# bad repo can freeze the whole extract for hours (observed 5+ h stall on
+# ``iag-mro-eos-be`` before we caught it). Configurable via
+# ``VZ_EXTRACT_ITERATION_TIMEOUT_S``. Default 15 min covers a large repo's
+# full pagination on GitHub's REST API; larger jobs can bump it.
+_ITERATION_TIMEOUT_S = int(os.environ.get("VZ_EXTRACT_ITERATION_TIMEOUT_S", "900"))
+
+
+class IterationTimeout(Exception):
+    """Raised inside an extractor iteration whose SIGALRM guardrail fires."""
+
+
+@contextmanager
+def _iteration_timeout(seconds: int):
+    """Bound one extractor iteration by wall-clock time via SIGALRM.
+
+    Only active on the main thread of a process (POSIX signal restriction).
+    Extract jobs already run one-per-subprocess (see
+    ``batch_service.executor._spawn``), so this is always the main thread
+    in practice — but we still gate on the check so a plain unit-test call
+    from a thread doesn't crash.
+    """
+    if seconds <= 0 or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _handler(_signum, _frame):
+        raise IterationTimeout(
+            f"iteration exceeded {seconds}s wall clock (likely a stuck "
+            "network call or infinite pagination loop)"
+        )
+
+    prev = signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, prev)
 
 
 def _parse_output(raw: dict) -> OutputConfig:
@@ -362,9 +410,17 @@ def run_task(
 
         iteration_started = _now_utc()
 
-        # Collect records from tool (skip this iteration on error)
+        # Collect records from tool (skip this iteration on error, incl.
+        # the wall-clock guardrail below firing on a stuck-forever call).
         try:
-            records = list(tool.run(task.command, params))
+            with _iteration_timeout(_ITERATION_TIMEOUT_S):
+                records = list(tool.run(task.command, params))
+        except IterationTimeout as e:
+            logger.warning("  %s (params=%s): skipped — %s", task.name, params, e)
+            if progress_cb:
+                progress_cb(f"  WARNING: {param_key or task.name}: skipped — {e}")
+            iteration_errors += 1
+            continue
         except Exception as e:
             logger.warning("  %s (params=%s): skipped — %s", task.name, params, e)
             if progress_cb:
