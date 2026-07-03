@@ -100,6 +100,21 @@ def _monitor_children() -> None:
                 _log.exception("Zombie-check failed for job %s", jid)
 
 
+def _stderr_tail_from_log(model_dir: Path, job_id: str, max_bytes: int = 2000) -> str:
+    """Read the tail of ``<model_dir>/data/jobs/<job_id>.log`` for surfacing
+    on a failed job. Silently returns "" if the file is missing or
+    unreadable — we never want the reaper to raise on cleanup."""
+    log_path = _child_log_path(model_dir, job_id)
+    try:
+        size = log_path.stat().st_size
+        with log_path.open("rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+            return f.read().decode(errors="replace")
+    except (FileNotFoundError, OSError):
+        return ""
+
+
 def _finalize_dead_child(
     job_id: str, proc: subprocess.Popen, model_dir: Path, jobdb,
 ) -> None:
@@ -112,13 +127,13 @@ def _finalize_dead_child(
     surface it as failed rather than leave it running forever.
     """
     rc = proc.returncode
-    stderr_tail = ""
-    try:
-        stderr = proc.stderr.read() if proc.stderr else b""
-        if stderr:
-            stderr_tail = stderr.decode(errors="replace")[-2000:]
-    except Exception:
-        pass
+    # Stderr goes to a per-job log file (see ``_spawn``) — reading a file's
+    # tail can't deadlock the way ``proc.stderr.read()`` on a pipe could.
+    # Historically we PIPE'd stderr and read it on exit; the 64 KB pipe
+    # buffer would fill on any long-running extract and the child would
+    # deadlock on its next ``logger.info(...)`` write. The log file gives
+    # us the same diagnostic tail without the deadlock.
+    stderr_tail = _stderr_tail_from_log(model_dir, job_id)
 
     with jobdb.get_connection(model_dir) as con:
         job = jobdb.get_job(con, job_id)
@@ -282,27 +297,55 @@ def sweep_and_kill_orphaned_runners() -> None:
         )
 
 
+def _child_log_path(model_dir: Path, job_id: str) -> Path:
+    """Per-job stderr sink. One file per job under ``<model_dir>/data/jobs/``.
+
+    A subdirectory keeps them out of the way of the DuckDB / SQLite files
+    in ``data/``. The file lives for the life of the job's investigation
+    value — nothing here cleans it up; a separate janitor can prune old
+    logs on a schedule if needed.
+    """
+    return model_dir / "data" / "jobs" / f"{job_id}.log"
+
+
 def _spawn(
     subcmd: str, model_dir: Path, job_id: str, extra_args: list[str],
 ) -> subprocess.Popen:
     """Fork off ``python -m batch_service.runner <subcmd>`` for one job.
 
     The child inherits the parent's environment (poetry venv, VZ_MODELS_DIR,
-    etc.); stderr is piped so the reaper can grab a tail on non-zero exits.
-    stdout is discarded — the child writes progress via the batch DB.
+    etc.). stdout is discarded and stderr is redirected to a per-job log
+    file — ``proc.stderr`` used to be a PIPE, but the 64 KB pipe buffer
+    filled on long-running extracts and the child deadlocked on the next
+    ``logger.info(...)`` write. Historical incident: ``git`` extract stuck
+    5 h+ on ``iag-mro-eos-orchestrator`` because SIGALRM couldn't
+    interrupt a ``write()`` syscall blocked on a full pipe.
     """
-    args = [
-        sys.executable, "-m", "batch_service.runner", subcmd,
-        "--model-dir", str(model_dir),
-        "--job-id", job_id,
-        *extra_args,
-    ]
-    proc = subprocess.Popen(
-        args,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        env=_os.environ.copy(),
-    )
+    log_path = _child_log_path(model_dir, job_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    # Open with buffering=0 so the child gets an unbuffered file for
+    # stderr redirection — Python's stderr is line-buffered on a TTY
+    # but block-buffered on a pipe/file, and we want each log line
+    # visible to ``tail -f`` mid-run.
+    log_fh = log_path.open("ab", buffering=0)
+    try:
+        args = [
+            sys.executable, "-m", "batch_service.runner", subcmd,
+            "--model-dir", str(model_dir),
+            "--job-id", job_id,
+            *extra_args,
+        ]
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=log_fh,
+            env=_os.environ.copy(),
+        )
+    finally:
+        # Close the parent's copy of the fd — the child has its own dup.
+        # If we leave this open the log file's inode stays alive on
+        # rotation and every child keeps appending to the same rotated fd.
+        log_fh.close()
     with _children_lock:
         _children[job_id] = (proc, model_dir)
     _ensure_monitor()

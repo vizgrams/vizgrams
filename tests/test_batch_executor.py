@@ -60,16 +60,27 @@ def _get_status(job_id: str) -> tuple[str, str | None]:
     return job["status"], job.get("error")
 
 
-def _fake_proc(*, exit_code: int | None = 0, stderr: bytes | None = b"") -> MagicMock:
+def _fake_proc(*, exit_code: int | None = 0) -> MagicMock:
     """A ``subprocess.Popen``-shaped mock. ``exit_code=None`` means still
-    running; the reaper skips those."""
+    running; the reaper skips those. Stderr is no longer read from the
+    ``Popen`` object (deadlocks on the 64 KB pipe buffer); see
+    ``_stderr_tail_from_log`` for the file-based tail — tests that care
+    about the tail should write to the per-job log path directly and let
+    the reaper read it back."""
     proc = MagicMock()
     proc.poll.return_value = exit_code
     proc.returncode = exit_code
-    proc.stderr = MagicMock()
-    proc.stderr.read.return_value = stderr
     proc.pid = 999
     return proc
+
+
+def _write_job_log(model_dir, job_id: str, content: bytes) -> None:
+    """Simulate what the child's stderr redirect produces — writes to the
+    same path the reaper reads from in ``_stderr_tail_from_log``."""
+    from batch_service.executor import _child_log_path
+    p = _child_log_path(model_dir, job_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(content)
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +206,8 @@ def test_reaper_marks_running_job_failed_with_exit_code(tmp_path):
     code surfaced in the error. Otherwise the job stays ``running`` in the
     DB indefinitely and users can't tell it crashed."""
     _insert_running_job("orphan-1")
-    proc = _fake_proc(exit_code=-9, stderr=b"boom in the extractor\n")
+    _write_job_log(tmp_path, "orphan-1", b"boom in the extractor\n")
+    proc = _fake_proc(exit_code=-9)
     executor._finalize_dead_child("orphan-1", proc, tmp_path, jobdb)
     status, error = _get_status("orphan-1")
     assert status == "failed"
@@ -211,7 +223,7 @@ def test_reaper_leaves_completed_job_alone(tmp_path):
     with jobdb.get_connection() as con:
         jobdb.update_job(con, "done-1", status="completed",
                          completed_at="2026-01-01T00:01:00Z")
-    proc = _fake_proc(exit_code=0, stderr=b"")
+    proc = _fake_proc(exit_code=0)
     executor._finalize_dead_child("done-1", proc, tmp_path, jobdb)
     status, _ = _get_status("done-1")
     assert status == "completed"
@@ -225,7 +237,8 @@ def test_reaper_leaves_failed_job_alone(tmp_path):
         jobdb.update_job(con, "badjob-1", status="failed",
                          completed_at="2026-01-01T00:01:00Z",
                          error="the real error")
-    proc = _fake_proc(exit_code=1, stderr=b"noise")
+    _write_job_log(tmp_path, "badjob-1", b"noise")
+    proc = _fake_proc(exit_code=1)
     executor._finalize_dead_child("badjob-1", proc, tmp_path, jobdb)
     _, error = _get_status("badjob-1")
     assert error == "the real error"
@@ -236,7 +249,7 @@ def test_reaper_leaves_cancelled_job_alone(tmp_path):
     with jobdb.get_connection() as con:
         jobdb.update_job(con, "stop-1", status="cancelled",
                          completed_at="2026-01-01T00:01:00Z")
-    proc = _fake_proc(exit_code=-15, stderr=b"")
+    proc = _fake_proc(exit_code=-15)
     executor._finalize_dead_child("stop-1", proc, tmp_path, jobdb)
     status, _ = _get_status("stop-1")
     assert status == "cancelled"
@@ -245,7 +258,7 @@ def test_reaper_leaves_cancelled_job_alone(tmp_path):
 def test_reaper_handles_missing_job_gracefully(tmp_path):
     """Job may have been deleted from the DB (e.g. TTL clean-up) between
     spawn and reap. Must not crash; nothing to update."""
-    proc = _fake_proc(exit_code=-9, stderr=b"")
+    proc = _fake_proc(exit_code=-9)
     # Should not raise even though the job row doesn't exist.
     executor._finalize_dead_child("ghost-1", proc, tmp_path, jobdb)
 
@@ -255,39 +268,56 @@ def test_reaper_marks_zero_exit_orphan_as_failed(tmp_path):
     terminal state is a bug — it bypassed the ``_run_*_job`` error paths.
     Surface it as failed rather than leave it running forever."""
     _insert_running_job("silent-1")
-    proc = _fake_proc(exit_code=0, stderr=b"")
+    proc = _fake_proc(exit_code=0)
     executor._finalize_dead_child("silent-1", proc, tmp_path, jobdb)
     status, _ = _get_status("silent-1")
     assert status == "failed"
 
 
 def test_reaper_truncates_very_long_stderr(tmp_path):
-    """Stderr can be arbitrary size. The error column is bounded; the
-    reaper must cap the stored string so a runaway log doesn't blow up
-    the batch db row."""
+    """The log file can be arbitrarily large; the error column is
+    bounded. The tail reader caps its own read at 2 KB and the reaper
+    caps the final error string at 4 KB — verify a 10 KB log doesn't
+    blow up the DB row."""
     _insert_running_job("verbose-1")
-    huge_stderr = ("x" * 10_000).encode()
-    proc = _fake_proc(exit_code=-11, stderr=huge_stderr)
+    _write_job_log(tmp_path, "verbose-1", ("x" * 10_000).encode())
+    proc = _fake_proc(exit_code=-11)
     executor._finalize_dead_child("verbose-1", proc, tmp_path, jobdb)
     _, error = _get_status("verbose-1")
     assert len(error) <= 4000
 
 
-def test_reaper_survives_stderr_read_failure(tmp_path):
-    """If reading stderr raises (e.g. the pipe was already closed by
-    something else), the reaper must still mark the job failed — the
-    exit code is what matters for containment, not the stderr tail."""
-    _insert_running_job("pipe-broken-1")
-    proc = MagicMock()
-    proc.poll.return_value = -9
-    proc.returncode = -9
-    proc.stderr = MagicMock()
-    proc.stderr.read.side_effect = OSError("pipe closed")
-    proc.pid = 999
-    executor._finalize_dead_child("pipe-broken-1", proc, tmp_path, jobdb)
-    status, error = _get_status("pipe-broken-1")
+def test_reaper_survives_missing_stderr_log(tmp_path):
+    """The log file might be missing (child crashed before opening
+    stderr, or the disk got wiped). The reaper must still mark the job
+    failed — the exit code is what matters for containment, not the
+    stderr tail."""
+    _insert_running_job("no-log-1")
+    proc = _fake_proc(exit_code=-9)
+    executor._finalize_dead_child("no-log-1", proc, tmp_path, jobdb)
+    status, error = _get_status("no-log-1")
     assert status == "failed"
     assert "-9" in error
+
+
+def test_stderr_tail_returns_last_max_bytes(tmp_path):
+    """The tail reader must return only the tail — reading the whole
+    file into memory to hand back a 2 KB slice would defeat the purpose.
+    Write a 100 KB file and confirm the reader seeks to the end."""
+    from batch_service.executor import _stderr_tail_from_log
+    _write_job_log(tmp_path, "big", b"HEAD" + (b"x" * 100_000) + b"TAIL")
+    tail = _stderr_tail_from_log(tmp_path, "big", max_bytes=100)
+    assert len(tail) == 100
+    assert tail.endswith("TAIL")
+    assert "HEAD" not in tail  # confirms we seeked past the beginning
+
+
+def test_stderr_tail_returns_empty_when_log_missing(tmp_path):
+    """A job with no log file must not raise from the tail reader —
+    ``_finalize_dead_child`` needs to keep going."""
+    from batch_service.executor import _stderr_tail_from_log
+    tail = _stderr_tail_from_log(tmp_path, "no-such-job")
+    assert tail == ""
 
 
 # ---------------------------------------------------------------------------
