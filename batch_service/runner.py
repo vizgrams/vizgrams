@@ -39,6 +39,27 @@ def _configure_logging() -> None:
     )
 
 
+def _init_external_tools() -> None:
+    """Discover extractor tools from ``VZ_TOOLS_DIR`` so this subprocess
+    knows about ``iagai_metadata``, ``coingecko``, and any other
+    externals. Both parent servers (batch_service.main + api.main) call
+    ``init_system_tools`` in their lifespan, but this child skips those
+    lifespans and would otherwise start with only the builtin registry —
+    so a scheduled ``iagai_metadata`` extract fails with "Unknown tool"
+    even though the tool is on disk and the same call at parent startup
+    saw it fine. Silent failure would loop every minute the scheduler
+    ticks; wire the same discovery here.
+    """
+    try:
+        from core.tool_service import init_system_tools
+        init_system_tools()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "External tool discovery failed in runner subprocess; "
+            "extracts using VZ_TOOLS_DIR tools will fail with 'Unknown tool'",
+        )
+
+
 def _cmd_extract(args: argparse.Namespace) -> int:
     from batch_service.executor import _run_job
     _run_job(
@@ -119,6 +140,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     _configure_logging()
+    _init_external_tools()
     args = _build_parser().parse_args(argv)
     return _HANDLERS[args.cmd](args)
 

@@ -160,3 +160,37 @@ def test_no_subcommand_exits():
     refactor accidentally dropping ``required=True`` on the subparsers."""
     with pytest.raises(SystemExit):
         runner.main([])
+
+
+# ---------------------------------------------------------------------------
+# External tool discovery
+# ---------------------------------------------------------------------------
+
+
+def test_main_calls_init_system_tools_before_dispatch():
+    """The subprocess must discover VZ_TOOLS_DIR tools (iagai_metadata,
+    coingecko, etc.) before running the job. If this init call is
+    dropped, the external registry stays empty and every non-builtin
+    extract fails with ``Unknown tool``. Regression fix — the bug shipped
+    for a day after the subprocess-per-job refactor moved job execution
+    out of the parent process's lifespan."""
+    with patch("core.tool_service.init_system_tools") as init, \
+         patch("batch_service.executor._run_job") as run:
+        runner.main([
+            "extract", "--model-dir", "/m", "--job-id", "j", "--tool", "git",
+        ])
+    init.assert_called_once()
+    # And dispatch still happens after init.
+    run.assert_called_once()
+
+
+def test_init_tools_failure_does_not_prevent_dispatch():
+    """Best-effort discovery: a broken tool.py in VZ_TOOLS_DIR mustn't
+    stop the job runner from executing whatever DID load, or a single
+    typo takes down the whole subprocess for every extract."""
+    with patch("core.tool_service.init_system_tools", side_effect=RuntimeError("bad tool")), \
+         patch("batch_service.executor._run_job") as run:
+        runner.main([
+            "extract", "--model-dir", "/m", "--job-id", "j", "--tool", "git",
+        ])
+    run.assert_called_once()
