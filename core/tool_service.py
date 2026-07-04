@@ -15,7 +15,6 @@ from pathlib import Path
 from core.model_config import resolve_tool_config
 from tools.base import BaseTool
 from tools.file.tool import FileTool
-from tools.garmin.tool import GarminTool
 from tools.git.tool import GitHubTool
 from tools.git_codeowners.tool import CodeownersTool
 from tools.jira.tool import JiraTool
@@ -29,7 +28,6 @@ BUILTIN_REGISTRY: dict[str, type] = {
     "git": GitHubTool,
     "git_codeowners": CodeownersTool,
     "file": FileTool,
-    "garmin": GarminTool,
 }
 
 EXTERNAL_REGISTRY: dict[str, type] = {}
