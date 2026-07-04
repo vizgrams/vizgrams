@@ -19,6 +19,14 @@ class RelationIn(BaseModel):
     target: str
     cardinality: str
     via: str | list[str] | None = None
+    # Name of the reciprocal relation on the target entity. Required by
+    # ontology validation for ONE_TO_MANY: the child side must declare
+    # ``inverse: <parent-side name>`` so both directions of the bidirectional
+    # link are known statically. Dropping this from the request body was
+    # producing chicken-and-egg install failures — POST created the entity
+    # with a bare relation, then no subsequent PUT could ever validate
+    # because the reciprocal side had no inverse either.
+    inverse: str | None = None
     description: str | None = None
 
 

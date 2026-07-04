@@ -894,6 +894,8 @@ def _rel_to_yaml(rel: dict) -> dict:
     d: dict = {"target": rel["target"], "cardinality": rel["cardinality"]}
     if rel.get("via") is not None:
         d["via"] = rel["via"]
+    if rel.get("inverse"):
+        d["inverse"] = rel["inverse"]
     if rel.get("description"):
         d["description"] = rel["description"]
     return d
