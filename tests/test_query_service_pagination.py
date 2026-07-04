@@ -16,7 +16,6 @@ sorted, not 5.
 from api.services.query_service import _compile_query_or_raise
 from tests.conftest import seed_artifact
 
-
 _ENTITY_YAML = """\
 entity: Widget
 identity:
