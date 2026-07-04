@@ -51,10 +51,61 @@ class TestRegistry:
         assert is_registered("format_time")
         assert is_registered("json_has_key")
         assert is_registered("datetime_diff")
-        assert is_registered("concat")
+        assert is_registered("round")
         # Case-insensitive — same normalisation as render_function.
         assert is_registered("FORMAT_DATE")
         assert not is_registered("definitely_not_a_function")
+
+
+# ---------------------------------------------------------------------------
+# ROUND(x [, N]) — dialect-agnostic
+# ---------------------------------------------------------------------------
+
+
+class TestRound:
+    """Registered to unblock query attribute expressions like
+    ``distance_km: round(distance_km, 2)`` — the validator rejects
+    unregistered function names in attributes (semantic/query.py) even
+    though the compiler's generic ``NAME(args)`` fallback would emit
+    the SQL correctly on its own."""
+
+    def test_round_two_arg(self):
+        """The common case: round to N decimal places."""
+        result = render_function("round", ["distance_km", "2"], {})
+        assert result == "ROUND(distance_km, 2)"
+
+    def test_round_one_arg(self):
+        """Single-arg round → integer. SQLite/DuckDB/ClickHouse all accept."""
+        result = render_function("round", ["distance_km"], {})
+        assert result == "ROUND(distance_km)"
+
+    def test_round_case_insensitive(self):
+        """User-facing YAML is case-agnostic — ``ROUND(x, 2)`` and
+        ``round(x, 2)`` compile to the same thing."""
+        result = render_function("ROUND", ["x", "1"], {})
+        assert result == "ROUND(x, 1)"
+
+    def test_round_registered_for_all_dialects(self):
+        """Registered with dialect '*' so it works uniformly across
+        sqlite / duckdb / clickhouse — none of them need a bespoke
+        implementation. Guard against a future PR splitting the
+        registration into per-dialect entries and forgetting one."""
+        for dialect in ("sqlite", "duckdb", "clickhouse"):
+            result = render_function("round", ["x", "2"], {}, dialect=dialect)
+            assert result == "ROUND(x, 2)"
+
+    def test_round_rejects_zero_args(self):
+        """arity_min=1 — bare ``round()`` is a user error, better to
+        fail at compile time than emit invalid SQL."""
+        import pytest
+        with pytest.raises(Exception, match="requires at least 1"):
+            render_function("round", [], {})
+
+    def test_round_rejects_three_args(self):
+        """arity_max=2 — no third argument (SQLite/DuckDB accept only 2)."""
+        import pytest
+        with pytest.raises(Exception, match="accepts at most 2"):
+            render_function("round", ["x", "1", "2"], {})
 
 
 # ---------------------------------------------------------------------------
