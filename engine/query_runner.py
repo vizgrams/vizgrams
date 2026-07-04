@@ -434,6 +434,12 @@ def build_detail_query(
         return f"COALESCE({tgt_alias}.{parts[-1]}, '(unset)')"
 
     select_parts: list[str] = []
+    # Map both bare attribute names and fully-qualified display aliases to the
+    # actual SELECT alias so ORDER BY can resolve either form. The aggregate
+    # path (build_aggregate_query) does this via slice_col_aliases; the detail
+    # path used to skip it entirely — `order: - calendar_date: asc` compiled
+    # to no ORDER BY clause at all and rows came back in table-scan order.
+    attr_alias_map: dict[str, str] = {}
     for attr in query.attributes:
         if attr.expr_str:
             col_ref = _compile_query_attr_expr(
@@ -443,6 +449,8 @@ def build_detail_query(
             )
             display = f"{root_entity.name}.{attr.label or attr.parts[-1]}"
             select_parts.append(f'{col_ref} AS "{display}"')
+            attr_alias_map[attr.label or attr.parts[-1]] = display
+            attr_alias_map[display] = display
             continue
         display = attr.label or _entity_qualified_alias(attr.parts, root_entity, entities)
         if len(attr.parts) > 1 and attr.parts[0] != root_entity.name:
@@ -456,6 +464,8 @@ def build_detail_query(
                 features_by_entity, fv_joins, fv_counter, dialect=dialect,
             )
         select_parts.append(f'{col_ref} AS "{display}"')
+        attr_alias_map[attr.label or attr.parts[-1]] = display
+        attr_alias_map[display] = display
 
     from_clause = f"FROM {root_entity.table_name} AS {root_alias}"
 
@@ -490,6 +500,12 @@ def build_detail_query(
     where_clause = ("WHERE " + "\n  AND ".join(filter_parts)) if filter_parts else ""
 
     order_by_clause = ""
+    if query.order_by:
+        order_parts = [
+            f'"{attr_alias_map.get(col, col)}" {direction.upper()}'
+            for col, direction in query.order_by
+        ]
+        order_by_clause = "ORDER BY " + ", ".join(order_parts)
 
     offset = (page - 1) * page_size
     limit_clause = f"LIMIT {page_size} OFFSET {offset}"
