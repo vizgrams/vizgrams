@@ -17,6 +17,18 @@ A tool is *due* when all of the following hold:
   1. Its YAML has a ``schedule.cron`` expression.
   2. Either it has never completed successfully, OR the croniter next-run
      timestamp after the last successful completion is ≤ now (UTC).
+  3. The count of consecutive failed runs since the last successful run
+     is below ``VZ_SCHEDULE_MAX_FAILURES`` (default 5). Once the cap is
+     hit, the scheduler stops firing this artifact until a manual trigger
+     produces a successful run and resets the counter.
+
+The failure cap exists because a broken extractor with a cron of
+``0 5 * * *`` will otherwise re-fire on every 60 s scheduler tick — the
+"last success" advancement mechanism can't move past a failure, so
+``next_run(cron, last_success=None) → yesterday 05:00 → past → due``
+holds forever. That produced ~700 failed extract jobs per hour on
+prod when Garmin auth first broke. The cap enforces "sane stop"
+behaviour: N attempts, then silence until a human clears the block.
 
 Usage::
 
@@ -30,6 +42,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -37,6 +50,29 @@ import yaml
 from croniter import CroniterBadCronError, croniter
 
 _log = logging.getLogger(__name__)
+
+# Consecutive failures since the last successful run at which the scheduler
+# stops firing this artifact. A manual trigger via the API bypasses this
+# check; if it succeeds, the counter resets automatically (the ordering of
+# ``ORDER BY completed_at DESC`` in ``_consecutive_failures_since_last_success``
+# means "since last success" naturally shifts forward). Env-var override so
+# ops can tighten to 3 or loosen to 10 without a redeploy.
+_DEFAULT_MAX_FAILURES = 5
+
+
+def _max_consecutive_failures() -> int:
+    raw = os.environ.get("VZ_SCHEDULE_MAX_FAILURES")
+    if not raw:
+        return _DEFAULT_MAX_FAILURES
+    try:
+        n = int(raw)
+        return n if n > 0 else _DEFAULT_MAX_FAILURES
+    except ValueError:
+        _log.warning(
+            "VZ_SCHEDULE_MAX_FAILURES=%r not an int; using default %d",
+            raw, _DEFAULT_MAX_FAILURES,
+        )
+        return _DEFAULT_MAX_FAILURES
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -80,6 +116,8 @@ def extractors_due(model_dir: Path) -> list[str]:
         base = last_success if last_success is not None else now - timedelta(hours=24)
         next_run = _next_run_after(cron_expr, base)
         if next_run is not None and next_run <= now:
+            if _hit_failure_cap(model_dir, "extract", tool_name):
+                continue
             _log.debug(
                 "Extractor due: tool=%s cron=%r last_success=%s next_run=%s",
                 tool_name, cron_expr, last_success, next_run,
@@ -242,6 +280,13 @@ def entities_due(model_dir: Path) -> list[str]:
     base = last_success if last_success is not None else (now - timedelta(hours=24))
     due: list[str] = []
 
+    # Materialize is submitted once for all entities together (tool='__all__'),
+    # so the failure cap is checked once here rather than per entity. If the
+    # scheduler is above the cap, we skip the whole materialize pass — no
+    # entity's schedule triggers a submit until a manual run succeeds.
+    if _hit_failure_cap(model_dir, "materialize", "__all__"):
+        return []
+
     for name in metadata_db.list_artifact_names(model_dir, "entity"):
         content = metadata_db.get_current_content(model_dir, "entity", name)
         if not content:
@@ -305,6 +350,11 @@ def mappers_due(model_dir: Path) -> list[str]:
     # fired today even though the service/schedule was set up earlier.
     base = last_success if last_success is not None else (now - timedelta(hours=24))
     due: list[str] = []
+
+    # Mapper jobs run in dependency-ordered waves as a single submit (tool='__all__').
+    # Same treatment as materialize — check the cap once, skip the whole pass.
+    if _hit_failure_cap(model_dir, "map", "__all__"):
+        return []
 
     for name in metadata_db.list_artifact_names(model_dir, "mapper"):
         content = metadata_db.get_current_content(model_dir, "mapper", name)
@@ -376,6 +426,76 @@ def _last_success_time(model_dir: Path, tool_name: str) -> datetime | None:
     except Exception:
         pass
     return None
+
+
+def _consecutive_failures_since_last_success(
+    model_dir: Path,
+    operation: str,
+    tool: str,
+) -> int:
+    """Count consecutive failed jobs since the most recent successful one
+    for the given (model, operation, tool) tuple.
+
+    - operation is one of ``'extract'`` / ``'map'`` / ``'materialize'``.
+    - tool is the per-tool name for extractors (``'garmin'``, ``'jira'``),
+      or ``'__all__'`` for run-all-mappers / materialize jobs.
+
+    Ordering: fetch the most recent success time; count how many failed
+    jobs completed *after* that. If no success exists, count all failed
+    jobs for this tuple. Zero means "the last completed job succeeded".
+
+    Only looks at scheduler-triggered jobs (``triggered_by = 'schedule'``).
+    A manual API trigger is not counted as a scheduler failure — that
+    matches the user model: "I want to debug and retry without waiting
+    for the cap to reset".
+    """
+    try:
+        from batch_service import db as jobdb
+
+        with jobdb.get_connection(model_dir) as con:
+            row = con.execute(
+                """
+                SELECT completed_at FROM jobs
+                WHERE model = ? AND operation = ? AND tool = ? AND status = 'completed'
+                ORDER BY completed_at DESC LIMIT 1
+                """,
+                (model_dir.name, operation, tool),
+            ).fetchone()
+            since = row[0] if row and row[0] else '1970-01-01T00:00:00Z'
+            failed = con.execute(
+                """
+                SELECT COUNT(*) FROM jobs
+                WHERE model = ? AND operation = ? AND tool = ?
+                  AND status = 'failed' AND triggered_by = 'schedule'
+                  AND completed_at IS NOT NULL AND completed_at > ?
+                """,
+                (model_dir.name, operation, tool, since),
+            ).fetchone()
+            return failed[0] if failed else 0
+    except Exception:
+        # DB unreadable — err on the side of allowing the tick. The scheduler
+        # already tolerates DB flakiness in other helpers with the same
+        # bare-except pattern.
+        return 0
+
+
+def _hit_failure_cap(model_dir: Path, operation: str, tool: str) -> bool:
+    """Convenience wrapper around ``_consecutive_failures_since_last_success``
+    that logs at WARNING level the first time a tool trips the cap on a
+    tick, so ops sees a clear signal in the scheduler log.
+
+    Returns True when the cap is reached and scheduling should skip.
+    """
+    n = _consecutive_failures_since_last_success(model_dir, operation, tool)
+    cap = _max_consecutive_failures()
+    if n >= cap:
+        _log.warning(
+            "Skipping scheduled %s/%s for %s — %d consecutive failed runs since last success "
+            "(cap=%d). Fix the underlying issue and trigger a manual run to reset the counter.",
+            operation, tool, model_dir.name, n, cap,
+        )
+        return True
+    return False
 
 
 def _next_run_after(cron_expr: str, after: datetime) -> datetime | None:
