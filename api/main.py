@@ -103,8 +103,11 @@ async def lifespan(app: FastAPI):
                 )
 
     # Wire the embeddings indexer (Epic 20 VG-230). Best-effort: if the
-    # provider can't be constructed (no API key) or the CH store can't
-    # ensure its schema, log and disable rather than crash startup.
+    # provider can't be constructed (no API key) or the DuckDB store
+    # can't ensure its schema (rare — most causes now would be a
+    # filesystem permission issue, since the CH dependency was replaced
+    # in the same PR that moved the rest of the stack to DuckDB), log
+    # and disable rather than crash startup.
     try:
         from core import metadata_db
         from semantic.llm.embeddings import get_default_provider
@@ -123,15 +126,15 @@ async def lifespan(app: FastAPI):
                 store.ensure_schema()
             except Exception as exc:
                 _startup_logger.warning(
-                    "Embeddings store schema check failed (ClickHouse unavailable?): %s. "
+                    "Embeddings store schema check failed: %s. "
                     "Indexing disabled this session.", exc,
                 )
             else:
                 configure_indexer(provider=provider, store=store)
                 metadata_db.set_index_hook(index_artifact_async)
                 _startup_logger.info(
-                    "Embeddings indexer wired — provider=%s store=%s.%s",
-                    provider.model, store.DATABASE, store.TABLE,
+                    "Embeddings indexer wired — provider=%s store=%s",
+                    provider.model, store.db_path,
                 )
 
                 # Self-heal stale rows in a background thread so we don't
