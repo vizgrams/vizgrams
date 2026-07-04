@@ -186,14 +186,34 @@ def get_access_rules(model_name: str) -> list[dict] | None:
     return get_model_access_rules(model_name)
 
 
-def set_access_rules(models_dir: Path, model_name: str, rules: list[dict] | None) -> list[dict] | None:
-    """Set (or clear) DB access rules for a model. Returns the new rules."""
+def set_access_rules(models_dir: Path, model_name: str, rules: list | None) -> list[dict] | None:
+    """Set (or clear) DB access rules for a model. Returns the new rules.
+
+    The DB layer serialises with ``json.dumps``, which chokes on pydantic
+    ``AccessRule`` instances (``TypeError: Object of type AccessRule is not
+    JSON serializable``). The router passes pydantic models straight through
+    from the request body, so normalise here to plain dicts before storing.
+    Accepts pydantic models, dicts, or anything with an ``email`` and
+    ``role`` attribute.
+    """
     registry = load_registry(models_dir)
     if model_name not in registry:
         raise KeyError(f"Model '{model_name}' not found in registry.")
+
+    plain_rules: list[dict] | None = None
+    if rules is not None:
+        plain_rules = []
+        for r in rules:
+            if hasattr(r, "model_dump"):
+                plain_rules.append(r.model_dump())
+            elif isinstance(r, dict):
+                plain_rules.append(r)
+            else:
+                plain_rules.append({"email": r.email, "role": r.role})
+
     from core.vizgrams_db import set_model_access_rules
-    set_model_access_rules(model_name, rules)
-    return rules
+    set_model_access_rules(model_name, plain_rules)
+    return plain_rules
 
 
 # ---------------------------------------------------------------------------
