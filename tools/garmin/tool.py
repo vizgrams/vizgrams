@@ -133,8 +133,20 @@ class GarminTool(BaseTool):
                 try:
                     token_json = self._resolve_token_store()
                     client.garth.loads(token_json)
-                    client.display_name = client.get_full_name()
-                    logger.debug("Garmin: session restored from token store")
+                    # Populate display_name from the garth profile. Several
+                    # library endpoints (get_heart_rates, get_personal_record,
+                    # anything under wellness/personalrecord services) build
+                    # URLs like ``/dailyHeartRate/{display_name}?date=…``. If
+                    # display_name is None the URL contains the literal string
+                    # "None" and Garmin returns 403. ``get_full_name()`` used
+                    # to be the source but returns None on token-restored
+                    # sessions (only set by an interactive login flow). The
+                    # garth-side profile is populated by ``garth.loads``.
+                    client.display_name = client.garth.profile.get("displayName")
+                    logger.debug(
+                        "Garmin: session restored from token store (display_name=%s)",
+                        client.display_name,
+                    )
                     # Re-persist in case garth refreshed the tokens during restore
                     self._persist_tokens(client)
                 except Exception as exc:
