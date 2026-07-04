@@ -405,3 +405,15 @@ register(
     lambda args, _: f"json_extract({args[0]}, '$.' || {args[1]}) IS NOT NULL",
     arity_min=2, arity_max=2,
 )
+
+
+# ROUND(x [, N]) — same syntax in SQLite, DuckDB, and ClickHouse. Registered
+# so query attribute expressions like ``distance_km: round(distance_km, 2)``
+# validate. The compiler's generic fallback ``NAME(args)`` already emits
+# ``ROUND(...)`` correctly; we register with a matching render for
+# clarity and to satisfy the validator's is_registered() check.
+register(
+    "round", "*",
+    lambda args, _: f"ROUND({', '.join(args)})",
+    arity_min=1, arity_max=2,
+)
