@@ -123,3 +123,80 @@ def test_token_restore_failure_falls_back_to_interactive_login(
 
     assert got is fake_client
     fake_client.login.assert_called_once()  # fallback landed
+
+
+# ---------------------------------------------------------------------------
+# env: token_store — for prod deployment where writing to disk is not
+# practical (containers with read-only root FS, SSM-injected secrets).
+# ---------------------------------------------------------------------------
+
+
+def test_env_token_store_reads_from_env_var(garmin_module, monkeypatch):
+    """``token_store: env:GARMIN_TOKEN_JSON`` reads the raw JSON from the
+    named env var. This is how prod bootstrap works — .env.prod carries the
+    token JSON that garth wrote out on a successful login on the dev
+    machine; no SCP, no tokens-on-disk in the container image."""
+    monkeypatch.setenv("GARMIN_TOKEN_JSON", '{"fake": "prod-token-payload"}')
+
+    fake_client = _fake_garth_client(display_name="ofenton")
+
+    tool = garmin_module.GarminTool({
+        "email": "test@example.com",
+        "password": "pw",
+        "token_store": "env:GARMIN_TOKEN_JSON",
+    })
+    tool._Garmin = MagicMock(return_value=fake_client)
+
+    got = tool._get_client()
+
+    assert got is fake_client
+    fake_client.garth.loads.assert_called_once_with('{"fake": "prod-token-payload"}')
+    assert fake_client.display_name == "ofenton"
+
+
+def test_env_token_store_missing_var_raises_clear_error(garmin_module, monkeypatch):
+    """When the referenced env var is unset the tool falls into the same
+    "could not restore tokens" path as a corrupt file, which drops through
+    to interactive ``login()``. Better than a silent None-token restore
+    that produces the 403-URL bug we fixed with display_name."""
+    monkeypatch.delenv("GARMIN_TOKEN_JSON", raising=False)
+
+    fake_client = _fake_garth_client()
+    tool = garmin_module.GarminTool({
+        "email": "test@example.com",
+        "password": "pw",
+        "token_store": "env:GARMIN_TOKEN_JSON",
+    })
+    tool._Garmin = MagicMock(return_value=fake_client)
+
+    with patch.object(tool, "_persist_tokens"):
+        got = tool._get_client()
+
+    assert got is fake_client
+    fake_client.login.assert_called_once()  # fell through to interactive login
+
+
+def test_env_token_store_does_not_persist(garmin_module, monkeypatch):
+    """Env-backed token stores are read-only — writing tokens back to
+    /proc/self/environ is nonsense. Guards against the daily scheduler
+    trying (and failing) to persist refreshed tokens on every run."""
+    monkeypatch.setenv("GARMIN_TOKEN_JSON", '{"fake": "tokens"}')
+
+    fake_client = _fake_garth_client(display_name="ofenton")
+    tool = garmin_module.GarminTool({
+        "email": "test@example.com",
+        "password": "pw",
+        "token_store": "env:GARMIN_TOKEN_JSON",
+    })
+    tool._Garmin = MagicMock(return_value=fake_client)
+
+    # Spy on _persist_tokens — it's called after successful restore, but
+    # should no-op when the store is env-backed.
+    with patch.object(tool, "_persist_tokens", wraps=tool._persist_tokens) as spy:
+        tool._get_client()
+
+    spy.assert_called_once()  # called...
+    # ...but writing garth.dumps to disk is what we're guarding against.
+    # If the guard ever regresses, this call will fail because MagicMock's
+    # ``garth.dumps()`` returns a MagicMock, not JSON-serialisable data.
+    fake_client.garth.dumps.assert_not_called()

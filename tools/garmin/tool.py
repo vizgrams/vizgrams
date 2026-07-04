@@ -162,16 +162,44 @@ class GarminTool(BaseTool):
             return client
 
     def _resolve_token_store(self) -> str:
-        """Read token JSON from file path (supports file: prefix)."""
+        """Read token JSON.
+
+        Accepted forms of ``token_store``:
+          file:/path/to/tokens.json  — read from disk (dev machine)
+          env:GARMIN_TOKEN_JSON      — read from env var (prod, secret-backed)
+
+        The env form makes the tool deployable to environments where writing
+        a file to disk isn't practical (containers with a read-only root FS,
+        SSM-injected secrets, etc.). The env var should contain the raw JSON
+        that garth writes on a successful interactive login — same content
+        the ``file:`` form would read from disk.
+        """
+        import os
         path = self._token_store or ""
+        if path.startswith("env:"):
+            var = path[4:].strip()
+            value = os.environ.get(var)
+            if value is None:
+                raise ValueError(
+                    f"Garmin token_store env var {var!r} is not set. "
+                    "In prod this is usually populated by SSM / a .env file."
+                )
+            return value
         if path.startswith("file:"):
             path = path[5:].strip()
         import pathlib
         return pathlib.Path(path).expanduser().read_text()
 
     def _persist_tokens(self, client) -> None:
-        """Write refreshed session tokens back to token_store if configured."""
+        """Write refreshed session tokens back to token_store if configured.
+
+        Only applies to ``file:`` — env-backed stores are read-only. Silently
+        skips persistence in the env case so the daily scheduler doesn't try
+        (and fail) to write to /proc/self/environ.
+        """
         if not self._token_store:
+            return
+        if self._token_store.startswith("env:"):
             return
         try:
             path = self._token_store
