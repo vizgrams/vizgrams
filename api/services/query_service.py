@@ -588,8 +588,20 @@ def _compile_query_or_raise(
         and not getattr(q, "metrics", None)
     )
     if is_detail:
+        # A YAML ``pagination.page_size`` smaller than the parser's
+        # default (100) is treated as a deliberate top-N cap and pushed
+        # down to SQL as LIMIT. Above that we defer to the caller's
+        # ``detail_page_size`` (default 1M — the "fetch all, paginate in
+        # Python" pattern) so operator-set caps and the existing
+        # in-memory sort/paginate flow are preserved.
+        # ``PaginationDef.page_size`` defaults to 100, so ``< 100`` can't
+        # come from an unset YAML block — the user had to write it.
+        effective_page_size = detail_page_size
+        yaml_page_size = getattr(getattr(q, "pagination", None), "page_size", None)
+        if yaml_page_size and yaml_page_size < 100 and yaml_page_size < effective_page_size:
+            effective_page_size = yaml_page_size
         return build_detail_query(
-            q, entities, page=1, page_size=detail_page_size,
+            q, entities, page=1, page_size=effective_page_size,
             features_by_entity=features_by_entity, dialect=dialect,
         )
     return build_aggregate_query(q, entities, features_by_entity=features_by_entity, dialect=dialect)
