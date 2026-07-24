@@ -498,6 +498,171 @@ def _hit_failure_cap(model_dir: Path, operation: str, tool: str) -> bool:
     return False
 
 
+def _last_job(
+    model_dir: Path, operation: str, tool: str,
+) -> tuple[str | None, str | None]:
+    """Return (completed_at, status) of the most recent job of any status
+    for this (op, tool). None/None if no jobs exist.
+    """
+    try:
+        from batch_service import db as jobdb
+
+        with jobdb.get_connection(model_dir) as con:
+            row = con.execute(
+                """
+                SELECT completed_at, status FROM jobs
+                WHERE model = ? AND operation = ? AND tool = ?
+                  AND completed_at IS NOT NULL
+                ORDER BY completed_at DESC LIMIT 1
+                """,
+                (model_dir.name, operation, tool),
+            ).fetchone()
+            if row:
+                return (row[0], row[1])
+    except Exception:
+        pass
+    return (None, None)
+
+
+def _iso_or_none(dt: datetime | None) -> str | None:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt else None
+
+
+def _target_health(
+    model_dir: Path,
+    operation: str,
+    tool: str,
+    cron: str | None,
+    last_success: datetime | None,
+    base: datetime | None,
+) -> dict:
+    """Build a health-summary row for a single (operation, tool) target.
+
+    ``base`` is what the scheduler would use as the reference for the next-run
+    calculation (usually last_success, or a 24h lookback fallback). Callers pass
+    the exact same value the scheduler uses so ``next_run`` matches reality.
+    """
+    now = datetime.now(UTC)
+    last_attempt_at, last_attempt_status = _last_job(model_dir, operation, tool)
+    failures = _consecutive_failures_since_last_success(model_dir, operation, tool)
+    cap = _max_consecutive_failures()
+    next_run = _next_run_after(cron, base or now) if cron else None
+    return {
+        "name": tool,
+        "cron": cron,
+        "last_success": _iso_or_none(last_success),
+        "last_attempt_at": last_attempt_at,
+        "last_attempt_status": last_attempt_status,
+        "next_run": _iso_or_none(next_run),
+        "failures_since_success": failures,
+        "failure_cap": cap,
+        "cap_hit": failures >= cap,
+    }
+
+
+def health_summary(model_dir: Path) -> dict:
+    """Return an aggregated health snapshot for a model — one row per
+    operational target (extract per tool, one row for the map/materialize
+    waves, one row for reconcile). The UI colours based on cap_hit,
+    last_attempt_status, and the timestamps; the backend returns raw
+    signals only.
+    """
+    from datetime import timedelta
+
+    from core import metadata_db
+
+    now = datetime.now(UTC)
+    fallback_base = now - timedelta(hours=24)
+
+    # --- Extract: per-tool rows ---
+    extract_targets: list[dict] = []
+    for name in metadata_db.list_artifact_names(model_dir, "extractor"):
+        content = metadata_db.get_current_content(model_dir, "extractor", name)
+        if not content:
+            continue
+        tool_name, cron_expr = _read_schedule_from_content(content, name)
+        last_success = _last_success_time(model_dir, tool_name)
+        base = last_success if last_success is not None else fallback_base
+        extract_targets.append(
+            _target_health(model_dir, "extract", tool_name, cron_expr, last_success, base)
+        )
+
+    # --- Map: one wave row (tool='__all__'), plus scheduled mapper list ---
+    # The scheduler fires the wave when any scheduled mapper's cron slot
+    # is due, so the wave's "next_run" is the earliest child next_run.
+    scheduled_mappers: list[str] = []
+    map_next_runs: list[datetime] = []
+    map_last_success = _last_mapper_success(model_dir)
+    map_base = map_last_success if map_last_success is not None else fallback_base
+    for name in metadata_db.list_artifact_names(model_dir, "mapper"):
+        content = metadata_db.get_current_content(model_dir, "mapper", name)
+        if not content:
+            continue
+        _, cron_expr = _read_schedule_from_content(content, name)
+        if cron_expr is None:
+            continue
+        scheduled_mappers.append(name)
+        nxt = _next_run_after(cron_expr, map_base)
+        if nxt is not None:
+            map_next_runs.append(nxt)
+    map_row = _target_health(
+        model_dir, "map", "__all__",
+        "wave" if scheduled_mappers else None,
+        map_last_success, map_base,
+    )
+    map_row["next_run"] = _iso_or_none(min(map_next_runs) if map_next_runs else None)
+    map_row["scheduled_children"] = scheduled_mappers
+
+    # --- Materialize: one wave row + scheduled entity list ---
+    scheduled_entities: list[str] = []
+    mat_next_runs: list[datetime] = []
+    mat_last_success = _last_materialize_success(model_dir)
+    mat_base = mat_last_success if mat_last_success is not None else fallback_base
+    for name in metadata_db.list_artifact_names(model_dir, "entity"):
+        content = metadata_db.get_current_content(model_dir, "entity", name)
+        if not content:
+            continue
+        _, cron_expr = _read_schedule_from_content(content, name)
+        if cron_expr is None:
+            continue
+        scheduled_entities.append(name)
+        nxt = _next_run_after(cron_expr, mat_base)
+        if nxt is not None:
+            mat_next_runs.append(nxt)
+    mat_row = _target_health(
+        model_dir, "materialize", "__all__",
+        "wave" if scheduled_entities else None,
+        mat_last_success, mat_base,
+    )
+    mat_row["next_run"] = _iso_or_none(min(mat_next_runs) if mat_next_runs else None)
+    mat_row["scheduled_children"] = scheduled_entities
+
+    # --- Reconcile: manual-only, single row ---
+    rec_last_success_at, _ = _last_job(model_dir, "reconcile", "__all__")
+    reconcile_row = {
+        "name": "__all__",
+        "cron": None,
+        "last_success": rec_last_success_at,
+        "last_attempt_at": _last_job(model_dir, "reconcile", "__all__")[0],
+        "last_attempt_status": _last_job(model_dir, "reconcile", "__all__")[1],
+        "next_run": None,
+        "failures_since_success": 0,
+        "failure_cap": _max_consecutive_failures(),
+        "cap_hit": False,
+        "scheduled_children": [],
+    }
+
+    return {
+        "model": model_dir.name,
+        "sections": [
+            {"operation": "extract",     "targets": extract_targets},
+            {"operation": "map",         "targets": [map_row]},
+            {"operation": "materialize", "targets": [mat_row]},
+            {"operation": "reconcile",   "targets": [reconcile_row]},
+        ],
+    }
+
+
 def _next_run_after(cron_expr: str, after: datetime) -> datetime | None:
     """Return the next UTC datetime that the cron fires after *after*."""
     try:

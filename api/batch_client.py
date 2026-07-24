@@ -229,6 +229,17 @@ def cancel_job(job_id: str, model: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def get_health(model: str) -> dict:
+    """Return aggregated health snapshot for a model."""
+    try:
+        resp = _client().get("/api/v1/health", params={"model": model})
+        return _raise_for_status(resp)
+    except BatchServiceError:
+        raise
+    except Exception as exc:
+        raise BatchServiceError(f"Batch service unreachable: {exc}") from exc
+
+
 def get_schedules(model: str) -> list[dict]:
     """Return schedule status for every scheduled extractor in the model."""
     try:

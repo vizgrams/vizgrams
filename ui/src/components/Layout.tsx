@@ -6,7 +6,7 @@ import { Link, useLocation } from 'react-router-dom'
 import {
   PanelLeftClose, PanelLeftOpen,
   Compass, LayoutGrid, MessageSquare,
-  Clock, Settings, User, Rss, Bookmark, Box,
+  Clock, Settings, User, Rss, Bookmark, Box, Activity,
 } from 'lucide-react'
 import type { ApplicationSummary } from '@/api/client'
 import { NotificationBell } from '@/components/proposals/NotificationBell'
@@ -109,6 +109,7 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
             {/* VG-307 — Extractors removed; per-entity Pipeline tab is the
                 primary editor, /tools stays reachable via the link rendered
                 inside PipelineTab for admins who need the cross-entity list. */}
+            <NavItem to="/health" icon={<Activity className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Health</NavItem>
             <NavItem to="/jobs" icon={<Clock className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Jobs</NavItem>
           </NavSection>
         )}

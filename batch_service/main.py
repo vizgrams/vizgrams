@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
         _log.exception("Error terminating child subprocesses on shutdown")
 
 
-from batch_service.routers import jobs, schedules
+from batch_service.routers import health, jobs, schedules
 
 app = FastAPI(
     title="vizgrams-batch",
@@ -166,3 +166,4 @@ def healthz():
 
 app.include_router(jobs.router)
 app.include_router(schedules.router)
+app.include_router(health.router)

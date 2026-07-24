@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
-import { CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, X, RotateCcw } from 'lucide-react'
-import type { JobOut } from '@/api/client'
+import { Link } from 'react-router-dom'
+import { CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, X, RotateCcw, ShieldAlert } from 'lucide-react'
+import type { HealthReport, JobOut } from '@/api/client'
 import { useModel } from '@/context/ModelContext'
 import { Card, ErrorMessage, Spinner } from '@/components/Layout'
 import { cn } from '@/lib/utils'
@@ -194,14 +195,20 @@ export function JobLogPage() {
   const { api, model } = useModel()
   const [filter, setFilter] = useState<Filter>('all')
   const [jobs, setJobs] = useState<JobOut[] | null>(null)
+  const [health, setHealth] = useState<HealthReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   async function load() {
     try {
       const params = { limit: LIMIT, ...(filter === 'running' ? { status: 'running' } : filter === 'failed' ? { status: 'failed' } : {}) }
-      const data = await api.listJobs(params)
+      const [data, healthData] = await Promise.all([
+        api.listJobs(params),
+        // Health call is best-effort; jobs list is the primary content.
+        api.getHealth().catch(() => null),
+      ])
       setJobs(data)
+      setHealth(healthData)
       setError(null)
     } catch (e) {
       setError(String(e))
@@ -269,6 +276,9 @@ export function JobLogPage() {
   }, [jobs])
 
   const runningCount = jobs?.filter((j) => RUNNING.has(j.status)).length ?? 0
+  const capped = health?.sections
+    .flatMap((s) => s.targets.map((t) => ({ op: s.operation, target: t })))
+    .filter((x) => x.target.cap_hit) ?? []
 
   return (
     <div className="space-y-4">
@@ -281,6 +291,25 @@ export function JobLogPage() {
           </span>
         )}
       </div>
+
+      {capped.length > 0 && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 flex items-start gap-2">
+          <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <span className="font-medium">
+              Scheduler blocked on {capped.length} target{capped.length > 1 ? 's' : ''}:
+            </span>{' '}
+            {capped.map((x, i) => (
+              <span key={`${x.op}:${x.target.name}`}>
+                {i > 0 && ', '}
+                <span className="font-mono">{x.op}/{x.target.name === '__all__' ? 'all' : x.target.name}</span>
+                {' '}({x.target.failures_since_success} failed)
+              </span>
+            ))}
+            . <Link to="/health" className="underline underline-offset-2">Open Health page</Link> to reset.
+          </div>
+        </div>
+      )}
 
       {/* Filter tabs */}
       <div className="flex gap-1 border-b">
