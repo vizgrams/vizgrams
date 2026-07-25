@@ -21,6 +21,7 @@ from semantic.llm.provider import (
     ChatCreditsExhaustedError,
     ChatDisabledError,
     ChatRateLimitError,
+    LLMBadRequestError,
     NoOpClient,
     get_default_client,
     is_chat_enabled,
@@ -103,6 +104,22 @@ class TestErrorTranslation:
         remapping novel failures would hide real bugs."""
         exc = _FakeSdkError("SomeInternalTypeError", "unexpected shape")
         assert translate_provider_error(exc) is None
+
+    def test_bad_request_surfaces_provider_body(self):
+        """400s are usually our fault (wrong tool schema, empty
+        message). The provider's own error text is the diagnostic —
+        surface it verbatim so users don't waste time on the wrong
+        theory."""
+        exc = _FakeSdkError(
+            "BadRequestError",
+            "tools.0.input_schema: Unknown keyword 'strict'",
+        )
+        # Anthropic packs the human message on ``exc.body.error.message``
+        exc.body = {"error": {"message": "tools.0.input_schema: Unknown keyword 'strict'"}}
+        result = translate_provider_error(exc)
+        assert isinstance(result, LLMBadRequestError)
+        assert "strict" in str(result)  # provider body flowed through
+        assert "invalid" in str(result).lower()
 
 
 class _FakeSdkError(Exception):

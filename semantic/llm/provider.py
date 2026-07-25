@@ -105,6 +105,46 @@ def translate_provider_error(exc: Exception) -> LLMError | None:
             "The LLM provider rate-limited the request. Wait a few seconds "
             "and try again."
         )
+    if name in ("BadRequestError", "UnprocessableEntityError"):
+        # 400s from the provider almost always mean our request shape is
+        # off (wrong tool schema, empty message, invalid model id). The
+        # provider's own error text is the most useful signal — surface
+        # it verbatim rather than a generic "bad request".
+        body = _extract_provider_body(exc)
+        return LLMBadRequestError(
+            f"The LLM provider rejected our request as invalid. "
+            f"Details: {body or str(exc)}"
+        )
+    return None
+
+
+class LLMBadRequestError(LLMError):
+    """Provider returned 400/422 — usually a request-shape bug (tool
+    schema, empty message, invalid model). Distinct from ``ChatAuthError``
+    (401/403) so users don't waste time rotating keys.
+    """
+
+
+def _extract_provider_body(exc: Exception) -> str | None:
+    """Best-effort extraction of the provider's error body. Anthropic
+    packs a JSON body on ``exc.body`` / ``exc.response.text``; OpenAI
+    similar. Falls back to None if nothing structured is available so
+    the caller can still show ``str(exc)``.
+    """
+    # Anthropic + OpenAI both put a dict on ``.body`` with an ``error``
+    # object containing a ``message``.
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        inner = body.get("error")
+        if isinstance(inner, dict):
+            msg = inner.get("message")
+            if msg:
+                return str(msg)
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        text = getattr(resp, "text", None)
+        if isinstance(text, str) and text:
+            return text[:500]
     return None
 
 
@@ -291,7 +331,26 @@ class AnthropicClient:
         if tools:
             kwargs["tools"] = self._to_anthropic_tools(tools)
 
-        resp = self._client.messages.create(**kwargs)
+        try:
+            resp = self._client.messages.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001 - re-raised after logging
+            # Anthropic 400s are near-impossible to diagnose from
+            # ``str(exc)`` alone. Log the outgoing payload shape (roles
+            # + tool names, NOT full content) so ops can spot a bad
+            # tool schema or empty message without turning on request
+            # tracing.
+            import logging
+            logging.getLogger(__name__).warning(
+                "Anthropic call failed",
+                extra={
+                    "model": kwargs.get("model"),
+                    "message_roles": [m.get("role") for m in anthropic_messages],
+                    "tool_names": [t.get("name") for t in kwargs.get("tools", [])],
+                    "has_system": bool(system),
+                    "provider_body": _extract_provider_body(exc),
+                },
+            )
+            raise
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         for block in resp.content:
