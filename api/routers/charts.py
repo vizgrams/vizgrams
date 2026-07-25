@@ -23,7 +23,7 @@ from api.dependencies import (
 )
 from api.schemas.query import QueryDetail
 from api.schemas.view import ViewDetail
-from api.services import query_service, view_service
+from api.services import chart_service, query_service, view_service
 from api.services.query_service import QueryValidationError
 from api.services.view_service import ViewValidationError
 
@@ -33,14 +33,31 @@ router = APIRouter(prefix="/model/{model}/chart", tags=["charts"])
 
 
 class ChartUpsert(BaseModel):
-    """Atomic save of the query + view that compose one chart."""
-    query_yaml: str
-    view_yaml: str
+    """Atomic save of a chart. Two shapes are accepted:
+
+    * ``chart_yaml`` — the modern one-file shape. Server splits it into a
+      query + view pair sharing the chart's name.
+    * ``query_yaml`` + ``view_yaml`` — the legacy split shape. Preserved
+      because the LLM tool loop and standalone editors still compose them
+      independently and shouldn't be forced through the split/join round-
+      trip.
+
+    Exactly one of the two shapes must be provided.
+    """
+    chart_yaml: str | None = None
+    query_yaml: str | None = None
+    view_yaml: str | None = None
 
 
 class ChartOut(BaseModel):
     query: QueryDetail
     view: ViewDetail
+    chart_yaml: str
+
+
+class ChartGet(BaseModel):
+    name: str
+    chart_yaml: str
 
 
 @router.put("/{chart}", response_model=ChartOut)
@@ -59,18 +76,42 @@ def upsert_chart(
     """
     user_id, via = author_from_principal(principal)
 
+    # Resolve the payload shape → (query_yaml, view_yaml). Only one shape
+    # may be supplied; otherwise the request is ambiguous.
+    if body.chart_yaml is not None:
+        if body.query_yaml is not None or body.view_yaml is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide either chart_yaml OR query_yaml+view_yaml, not both.",
+            )
+        try:
+            query_yaml, view_yaml = chart_service.split_chart_yaml(body.chart_yaml, chart)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": str(exc), "stage": "split"},
+            ) from exc
+    else:
+        if body.query_yaml is None or body.view_yaml is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide chart_yaml, or both query_yaml and view_yaml.",
+            )
+        query_yaml, view_yaml = body.query_yaml, body.view_yaml
+
     # Snapshot the previous query content so we can roll back if the view
     # save fails. None means "didn't exist before — delete on rollback".
+    # Service returns a dict — access via subscript, not attribute.
     try:
         prev_query = query_service.get_query(model_dir, chart)
-        prev_query_yaml: str | None = prev_query.raw_yaml
+        prev_query_yaml: str | None = prev_query.get("raw_yaml")
     except KeyError:
         prev_query_yaml = None
 
     # Step 1: write the query. If this fails, nothing has changed yet.
     try:
         query_out = query_service.create_or_replace_query(
-            model_dir, chart, body.query_yaml, user_id=user_id, via=via,
+            model_dir, chart, query_yaml, user_id=user_id, via=via,
         )
     except QueryValidationError as exc:
         raise HTTPException(
@@ -90,7 +131,7 @@ def upsert_chart(
     # the user re-enter a multi-line query they thought they saved isn't.
     try:
         view_out = view_service.create_or_replace_view(
-            model_dir, chart, body.view_yaml, user_id=user_id, via=via,
+            model_dir, chart, view_yaml, user_id=user_id, via=via,
         )
     except ViewValidationError as exc:
         if prev_query_yaml is not None:
@@ -117,4 +158,26 @@ def upsert_chart(
             status_code=400, detail={"message": str(exc), "stage": "view"},
         ) from exc
 
-    return ChartOut(query=query_out, view=view_out)
+    # Compose from what we just wrote so the response reflects the exact
+    # bytes on disk, not the caller's input — this catches YAML round-trip
+    # quirks that would otherwise only bite on the next GET. Service
+    # returns dicts; access via subscript.
+    chart_yaml = chart_service.join_chart_yaml(
+        query_out.get("raw_yaml"), view_out.get("raw_yaml"),
+    )
+    return ChartOut(query=query_out, view=view_out, chart_yaml=chart_yaml)
+
+
+@router.get("/{chart}", response_model=ChartGet)
+def get_chart(
+    chart: str,
+    model_dir: str = Depends(resolve_model_dir),
+    _principal: dict = Depends(require_user_or_service_account),
+):
+    """Return the composed one-file chart YAML for the single-editor UI."""
+    from pathlib import Path
+    chart_yaml = chart_service.compose_chart_yaml(Path(model_dir), chart)
+    # An entirely empty compose means neither the query nor the view exists.
+    if not chart_yaml.strip() or chart_yaml.strip() == "{}":
+        raise HTTPException(status_code=404, detail=f"Chart '{chart}' not found.")
+    return ChartGet(name=chart, chart_yaml=chart_yaml)
