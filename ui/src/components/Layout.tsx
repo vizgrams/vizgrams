@@ -65,6 +65,10 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { model, api } = useModel()
   const { email: userEmail, role } = useRole()
   const [apps, setApps] = useState<ApplicationSummary[]>([])
+  // Capability probe. Failure defaults to enabled so a config-endpoint
+  // outage doesn't hide the nav item; only an explicit ``false``
+  // suppresses. Fetched once at mount — restart flips it.
+  const [chatEnabled, setChatEnabled] = useState(true)
 
   useEffect(() => {
     api.listApplications().then(setApps).catch(() => {})
@@ -72,6 +76,13 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
     // when the model itself changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model])
+
+  useEffect(() => {
+    fetch('/api/v1/config')
+      .then((r) => (r.ok ? r.json() : { chat_enabled: true }))
+      .then((d) => setChatEnabled(d.chat_enabled !== false))
+      .catch(() => setChatEnabled(true))
+  }, [])
 
   return (
     <aside className={cn(
@@ -117,7 +128,7 @@ function Sidebar({ collapsed, onToggle }: SidebarProps) {
         <NavSection label="User" collapsed={collapsed} dark>
           <NavItem to="/feed" icon={<Rss className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Feed</NavItem>
           <NavItem to="/saved" icon={<Bookmark className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Saved</NavItem>
-          {(role === 'member' || role === 'admin') && (
+          {(role === 'member' || role === 'admin') && chatEnabled && (
             <NavItem to="/chat" matchExact icon={<MessageSquare className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Chat</NavItem>
           )}
           <NavItem to="/explore" matchPrefix="/explore" icon={<Compass className="h-3.5 w-3.5" />} collapsed={collapsed} dark>Explore</NavItem>

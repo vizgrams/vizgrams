@@ -44,6 +44,70 @@ class LLMResponse:
     raw: Any = None
 
 
+class LLMError(Exception):
+    """Base class for LLM-provider errors surfaced to end users. Carries a
+    short human-facing message; the underlying exception (if any) is
+    preserved via ``__cause__`` for logs and debugging.
+    """
+
+
+class ChatDisabledError(LLMError):
+    """Raised when ``VZ_LLM_PROVIDER=none``. Chat endpoints should catch
+    this and return 503 with a friendly "chat is disabled on this
+    deployment" message rather than a stack trace.
+    """
+
+
+class ChatCreditsExhaustedError(LLMError):
+    """The provider refused the request because the account is out of
+    credit / over-quota. Distinct from other auth failures because the
+    fix is different (top up, not rotate keys)."""
+
+
+class ChatAuthError(LLMError):
+    """The provider rejected the request as unauthenticated — usually a
+    missing, mistyped, or revoked API key. Prompts users to check their
+    ``.env`` / SSM key rather than debug the code."""
+
+
+class ChatRateLimitError(LLMError):
+    """Provider rate-limited the request. Transient — usually retrying
+    after a short pause works."""
+
+
+def translate_provider_error(exc: Exception) -> LLMError | None:
+    """Best-effort translation of provider SDK errors into vizgrams'
+    friendly ``LLMError`` hierarchy. Returns ``None`` if the exception
+    doesn't match a known provider error — callers should propagate the
+    original in that case.
+    """
+    name = type(exc).__name__
+    text = str(exc).lower()
+
+    # Credits / quota — Anthropic and OpenAI both use billing-adjacent
+    # error strings. Anthropic's ``PermissionDeniedError`` covers the
+    # "credit balance is too low" case; OpenAI's is under
+    # ``RateLimitError`` with ``insufficient_quota``.
+    credit_signals = ("credit balance", "insufficient_quota", "quota exceeded",
+                      "insufficient credits", "credits", "out of credits")
+    if any(sig in text for sig in credit_signals):
+        return ChatCreditsExhaustedError(
+            "Your LLM provider account is out of credit. Top up and retry."
+        )
+
+    if name in ("AuthenticationError", "PermissionDeniedError"):
+        return ChatAuthError(
+            "The LLM provider rejected the API key. Check ANTHROPIC_API_KEY "
+            "or OPENAI_API_KEY in your .env, then restart the API."
+        )
+    if name in ("RateLimitError",):
+        return ChatRateLimitError(
+            "The LLM provider rate-limited the request. Wait a few seconds "
+            "and try again."
+        )
+    return None
+
+
 @runtime_checkable
 class LLMClient(Protocol):
     """Protocol every LLM provider must implement.
@@ -248,6 +312,32 @@ class AnthropicClient:
 
 
 # ---------------------------------------------------------------------------
+# NoOp implementation — the "chat capability disabled" state
+# ---------------------------------------------------------------------------
+
+
+class NoOpClient:
+    """An ``LLMClient`` that raises ``ChatDisabledError`` on every call.
+
+    Selected by ``VZ_LLM_PROVIDER=none``. Lets a deployment turn the chat
+    surface off cleanly without leaving keys lying around — the endpoint
+    catches the specific error and returns a friendly 503 instead of a
+    stack trace.
+    """
+
+    def complete(self, **_kwargs) -> LLMResponse:
+        raise ChatDisabledError(
+            "Chat is disabled on this deployment (VZ_LLM_PROVIDER=none)."
+        )
+
+
+def is_chat_enabled() -> bool:
+    """Cheap check callers can use to hide chat affordances (nav item,
+    landing prompts) without construing an actual client."""
+    return os.environ.get("VZ_LLM_PROVIDER", "openai").lower() != "none"
+
+
+# ---------------------------------------------------------------------------
 # Factory — read provider choice from environment
 # ---------------------------------------------------------------------------
 
@@ -258,9 +348,13 @@ def get_default_client() -> LLMClient:
     Reads ``VZ_LLM_PROVIDER`` (default ``openai``). Each provider has its
     own credential env vars; missing credentials raise ``RuntimeError`` —
     callers that want graceful degradation should catch and fall back.
+    ``VZ_LLM_PROVIDER=none`` returns a ``NoOpClient`` (chat disabled).
     """
     provider = os.environ.get("VZ_LLM_PROVIDER", "openai").lower()
     model_override = os.environ.get("VZ_LLM_MODEL")
+
+    if provider == "none":
+        return NoOpClient()
 
     if provider == "openai":
         api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -286,5 +380,5 @@ def get_default_client() -> LLMClient:
 
     raise ValueError(
         f"Unknown VZ_LLM_PROVIDER: {provider!r}. "
-        f"Currently supported: 'openai', 'anthropic'."
+        f"Currently supported: 'openai', 'anthropic', 'none'."
     )

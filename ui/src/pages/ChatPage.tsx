@@ -18,7 +18,8 @@
  * adapter against the existing /chat/sessions API.
  */
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertCircle } from 'lucide-react'
 import { HttpAgent } from '@ag-ui/client'
 import {
   AssistantRuntimeProvider,
@@ -26,6 +27,7 @@ import {
   MessagePrimitive,
   ComposerPrimitive,
   makeAssistantToolUI,
+  useMessage,
   type ToolCallMessagePartProps,
 } from '@assistant-ui/react'
 import { useAgUiRuntime } from '@assistant-ui/react-ag-ui'
@@ -160,8 +162,34 @@ function AssistantMessage() {
     <MessagePrimitive.Root className="max-w-3xl mx-auto my-4">
       <div className="text-sm text-foreground">
         <MessagePrimitive.Parts />
+        <MessageErrorBanner />
       </div>
     </MessagePrimitive.Root>
+  )
+}
+
+// RUN_ERROR events from the backend land on the current message as
+// ``status.type === "incomplete" && reason === "error"`` with an
+// ``error`` payload carrying the human-friendly message. Without this,
+// the thread silently freezes — no text, no explanation of why the
+// turn failed (out-of-credit, auth, provider down, etc.).
+function MessageErrorBanner() {
+  const message = useMessage((m) => m)
+  const status = message?.status
+  if (!status || status.type !== 'incomplete' || status.reason !== 'error') {
+    return null
+  }
+  const err = status.error
+  const text = typeof err === 'string'
+    ? err
+    : typeof err === 'object' && err !== null && 'message' in err
+      ? String((err as Record<string, unknown>).message)
+      : "The assistant couldn't complete this turn."
+  return (
+    <div className="mt-2 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+      <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+      <div>{text}</div>
+    </div>
   )
 }
 
@@ -185,7 +213,15 @@ function Composer() {
 
 export default function ChatPage() {
   const { model } = useModel()
+  const chatEnabled = useChatEnabled()
+
   if (!model) return null
+  if (chatEnabled === false) return <ChatDisabledEmpty />
+  // While the capability probe is in flight, render nothing rather
+  // than the enabled page — flashing the composer only to disable it
+  // on the response would be worse than a brief blank.
+  if (chatEnabled === null) return null
+
   return (
     <ChatRuntimeProvider model={model}>
       {/* The tool-UI registrations mount here so the runtime knows how
@@ -196,5 +232,37 @@ export default function ChatPage() {
         <Thread />
       </div>
     </ChatRuntimeProvider>
+  )
+}
+
+// Probes GET /api/v1/config for the ``chat_enabled`` flag. Returns
+// ``null`` while loading (so the caller can render a blank state
+// instead of flashing UI). Failures fall back to ``true`` — a broken
+// config endpoint shouldn't disable chat.
+function useChatEnabled(): boolean | null {
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/v1/config')
+      .then((r) => (r.ok ? r.json() : { chat_enabled: true }))
+      .then((d) => { if (!cancelled) setEnabled(d.chat_enabled !== false) })
+      .catch(() => { if (!cancelled) setEnabled(true) })
+    return () => { cancelled = true }
+  }, [])
+  return enabled
+}
+
+function ChatDisabledEmpty() {
+  return (
+    <div className="flex-1 flex items-center justify-center p-8">
+      <div className="max-w-md text-center space-y-2">
+        <h2 className="text-lg font-semibold">Chat is disabled</h2>
+        <p className="text-sm text-muted-foreground">
+          The assistant surface is turned off on this deployment. Explore
+          data via saved views and applications, or ask an admin to
+          enable an LLM provider.
+        </p>
+      </div>
+    </div>
   )
 }
