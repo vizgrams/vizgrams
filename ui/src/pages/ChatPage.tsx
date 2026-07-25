@@ -71,8 +71,17 @@ type ViewPayload = {
   payload: Record<string, unknown>
 }
 
-function ChartCardRender({ result }: ToolCallMessagePartProps<unknown, string>) {
+// Assistant-ui's tool renderer may hand ``result`` as:
+//   - a string (raw TOOL_CALL_RESULT.content) — the AG-UI adapter's
+//     default, and what our backend emits
+//   - an object (already JSON-parsed by some other adapter layer)
+//   - null / undefined during the "call in flight, no result yet" phase
+// Handle all three so a re-render race doesn't leave the user staring
+// at the placeholder forever.
+function ChartCardRender({ result }: ToolCallMessagePartProps<unknown, unknown>) {
   const parsed = useMemo<ViewPayload | null>(() => {
+    if (result == null) return null
+    if (typeof result === 'object') return result as ViewPayload
     if (typeof result !== 'string') return null
     try {
       return JSON.parse(result) as ViewPayload
@@ -82,9 +91,15 @@ function ChartCardRender({ result }: ToolCallMessagePartProps<unknown, string>) 
   }, [result])
 
   if (!parsed) {
+    // No result yet OR unparseable — show a compact status hint that
+    // includes the raw shape so a developer can inspect via
+    // React DevTools without opening the network tab.
+    const hint = result == null
+      ? '(waiting for tool result)'
+      : `(unparseable: ${typeof result === 'string' ? result.slice(0, 80) : typeof result})`
     return (
       <div className="rounded-md border bg-muted/30 p-3 my-2 text-xs text-muted-foreground font-mono">
-        (rendering pending)
+        {hint}
       </div>
     )
   }

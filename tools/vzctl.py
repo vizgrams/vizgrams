@@ -454,5 +454,127 @@ def restore(uri: str, model_dir: str, region: str | None) -> None:
         backend.close()
 
 
+@cli.command()
+@click.argument("model")
+@click.argument("message")
+@click.option(
+    "--model-dir", default=None,
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    help="Path to the model directory. Defaults to $VZ_MODELS_DIR/<MODEL>.",
+)
+@click.option(
+    "--format", "output_format", default="human",
+    type=click.Choice(["human", "json", "events"]),
+    help="Output format. 'human' is a readable summary; 'json' is the full "
+         "ChatTurnResult; 'events' is the raw AG-UI event stream (one JSON per line).",
+)
+def chat(
+    model: str,
+    message: str,
+    model_dir: str | None,
+    output_format: str,
+) -> None:
+    """Run one chat turn against MODEL with MESSAGE, print the result.
+
+    Bypasses the HTTP server — calls the agentic loop directly. Useful for
+    agents (Claude Code, cron, CI) that need to interrogate the chat
+    capability without a running API. Reads .env for LLM keys the same way
+    the API does.
+
+    Exits non-zero on tool failure or LLM error so a wrapping script can
+    detect problems reliably.
+
+    Examples::
+
+        vzctl chat oliverfenton "top 5 activities by tss"
+        vzctl chat iagai "dora clt trend last 12w" --format json
+        vzctl chat oliverfenton "summarise my training" --format events
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    # Load .env so keys land in os.environ — the API's lifespan does this,
+    # but the CLI runs standalone.
+    try:
+        from dotenv import load_dotenv
+        for candidate in [Path(".env"), Path(__file__).resolve().parents[1] / ".env"]:
+            if candidate.is_file():
+                load_dotenv(candidate)
+                break
+    except ImportError:
+        pass
+
+    from api.services.chat.agui_stream import stream_turn
+    from api.services.chat.service import chat_turn
+
+    resolved_dir = Path(model_dir) if model_dir else (
+        Path(os.environ["VZ_MODELS_DIR"]) / model
+        if os.environ.get("VZ_MODELS_DIR")
+        else Path("models") / model
+    )
+    if not resolved_dir.is_dir():
+        click.echo(f"Model directory not found: {resolved_dir}", err=True)
+        sys.exit(2)
+
+    if output_format == "events":
+        # Emit each AG-UI event as one line of JSON — same shape the /chat/stream
+        # endpoint sends over SSE, minus the "data: " prefix. Agents can parse
+        # this to see tool calls stream in.
+        for event in stream_turn(
+            model_dir=resolved_dir, message=message, thread_id="cli"
+        ):
+            click.echo(event.model_dump_json())
+        return
+
+    try:
+        result = chat_turn(model_dir=resolved_dir, message=message)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"chat_turn raised: {type(exc).__name__}: {exc}", err=True)
+        sys.exit(1)
+
+    if output_format == "json":
+        # Full ChatTurnResult as a dict — for agent consumption.
+        payload = {
+            "success": result.success,
+            "error": result.error,
+            "iterations": result.iterations,
+            "title": result.title,
+            "saved_view": result.saved_view,
+            "inline_view": result.inline_view,
+            "query_yaml": result.query_yaml,
+            "view_yaml": result.view_yaml,
+            "sql": result.sql,
+            "trace": [
+                {"name": t.name, "arguments": t.arguments, "success": t.success,
+                 "summary": t.summary, "payload": t.payload}
+                for t in result.trace
+            ],
+        }
+        click.echo(json.dumps(payload, indent=2, default=str))
+        sys.exit(0 if result.success else 1)
+
+    # Human format — the default. Print a compact readable summary.
+    click.echo(f"success   : {result.success}")
+    click.echo(f"iterations: {result.iterations}")
+    if result.title:
+        click.echo(f"title     : {result.title}")
+    click.echo(f"trace ({len(result.trace)}):")
+    for step in result.trace:
+        marker = "✓" if step.success else "✗"
+        summary = step.summary.replace("\n", " ")[:80]
+        click.echo(f"  {marker} {step.name}: {summary}")
+    if result.error:
+        click.echo(f"error     : {result.error}")
+    if result.saved_view:
+        click.echo(f"saved_view: {result.saved_view.get('name')}")
+    if result.inline_view:
+        vy = (result.inline_view.get("view_yaml") or "").splitlines()[:5]
+        click.echo("inline_view (first 5 lines of view_yaml):")
+        for line in vy:
+            click.echo(f"  {line}")
+    sys.exit(0 if result.success else 1)
+
+
 if __name__ == "__main__":
     cli()
