@@ -44,6 +44,116 @@ class LLMResponse:
     raw: Any = None
 
 
+class LLMError(Exception):
+    """Base class for LLM-provider errors surfaced to end users. Carries a
+    short human-facing message; the underlying exception (if any) is
+    preserved via ``__cause__`` for logs and debugging.
+    """
+
+
+class ChatDisabledError(LLMError):
+    """Raised when ``VZ_LLM_PROVIDER=none``. Chat endpoints should catch
+    this and return 503 with a friendly "chat is disabled on this
+    deployment" message rather than a stack trace.
+    """
+
+
+class ChatCreditsExhaustedError(LLMError):
+    """The provider refused the request because the account is out of
+    credit / over-quota. Distinct from other auth failures because the
+    fix is different (top up, not rotate keys)."""
+
+
+class ChatAuthError(LLMError):
+    """The provider rejected the request as unauthenticated — usually a
+    missing, mistyped, or revoked API key. Prompts users to check their
+    ``.env`` / SSM key rather than debug the code."""
+
+
+class ChatRateLimitError(LLMError):
+    """Provider rate-limited the request. Transient — usually retrying
+    after a short pause works."""
+
+
+def translate_provider_error(exc: Exception) -> LLMError | None:
+    """Best-effort translation of provider SDK errors into vizgrams'
+    friendly ``LLMError`` hierarchy. Returns ``None`` if the exception
+    doesn't match a known provider error — callers should propagate the
+    original in that case.
+    """
+    name = type(exc).__name__
+    # ``str(exc)`` on the Anthropic SDK sometimes surfaces only the
+    # HTTP status; the human-readable reason lives on ``exc.body.error.
+    # message``. Check both so the credit-exhausted signal (which ships
+    # as BadRequestError, NOT PermissionDeniedError, contrary to the
+    # obvious guess) is picked up regardless of SDK version.
+    body_msg = _extract_provider_body(exc) or ""
+    text = f"{exc} {body_msg}".lower()
+
+    # Credits / quota — Anthropic and OpenAI both use billing-adjacent
+    # error strings. Anthropic's "credit balance is too low" arrives as
+    # BadRequestError.body.error.message; OpenAI's is under
+    # ``RateLimitError`` with ``insufficient_quota``.
+    credit_signals = ("credit balance", "insufficient_quota", "quota exceeded",
+                      "insufficient credits", "purchase credits", "out of credits")
+    if any(sig in text for sig in credit_signals):
+        return ChatCreditsExhaustedError(
+            "Your LLM provider account is out of credit. Top up and retry."
+        )
+
+    if name in ("AuthenticationError", "PermissionDeniedError"):
+        return ChatAuthError(
+            "The LLM provider rejected the API key. Check ANTHROPIC_API_KEY "
+            "or OPENAI_API_KEY in your .env, then restart the API."
+        )
+    if name in ("RateLimitError",):
+        return ChatRateLimitError(
+            "The LLM provider rate-limited the request. Wait a few seconds "
+            "and try again."
+        )
+    if name in ("BadRequestError", "UnprocessableEntityError"):
+        # 400s from the provider almost always mean our request shape is
+        # off (wrong tool schema, empty message, invalid model id). The
+        # provider's own error text is the most useful signal — surface
+        # it verbatim rather than a generic "bad request".
+        body = _extract_provider_body(exc)
+        return LLMBadRequestError(
+            f"The LLM provider rejected our request as invalid. "
+            f"Details: {body or str(exc)}"
+        )
+    return None
+
+
+class LLMBadRequestError(LLMError):
+    """Provider returned 400/422 — usually a request-shape bug (tool
+    schema, empty message, invalid model). Distinct from ``ChatAuthError``
+    (401/403) so users don't waste time rotating keys.
+    """
+
+
+def _extract_provider_body(exc: Exception) -> str | None:
+    """Best-effort extraction of the provider's error body. Anthropic
+    packs a JSON body on ``exc.body`` / ``exc.response.text``; OpenAI
+    similar. Falls back to None if nothing structured is available so
+    the caller can still show ``str(exc)``.
+    """
+    # Anthropic + OpenAI both put a dict on ``.body`` with an ``error``
+    # object containing a ``message``.
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        inner = body.get("error")
+        if isinstance(inner, dict):
+            msg = inner.get("message")
+            if msg:
+                return str(msg)
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        text = getattr(resp, "text", None)
+        if isinstance(text, str) and text:
+            return text[:500]
+    return None
+
+
 @runtime_checkable
 class LLMClient(Protocol):
     """Protocol every LLM provider must implement.
@@ -227,7 +337,26 @@ class AnthropicClient:
         if tools:
             kwargs["tools"] = self._to_anthropic_tools(tools)
 
-        resp = self._client.messages.create(**kwargs)
+        try:
+            resp = self._client.messages.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001 - re-raised after logging
+            # Anthropic 400s are near-impossible to diagnose from
+            # ``str(exc)`` alone. Log the outgoing payload shape (roles
+            # + tool names, NOT full content) so ops can spot a bad
+            # tool schema or empty message without turning on request
+            # tracing.
+            import logging
+            logging.getLogger(__name__).warning(
+                "Anthropic call failed",
+                extra={
+                    "model": kwargs.get("model"),
+                    "message_roles": [m.get("role") for m in anthropic_messages],
+                    "tool_names": [t.get("name") for t in kwargs.get("tools", [])],
+                    "has_system": bool(system),
+                    "provider_body": _extract_provider_body(exc),
+                },
+            )
+            raise
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         for block in resp.content:
@@ -248,6 +377,32 @@ class AnthropicClient:
 
 
 # ---------------------------------------------------------------------------
+# NoOp implementation — the "chat capability disabled" state
+# ---------------------------------------------------------------------------
+
+
+class NoOpClient:
+    """An ``LLMClient`` that raises ``ChatDisabledError`` on every call.
+
+    Selected by ``VZ_LLM_PROVIDER=none``. Lets a deployment turn the chat
+    surface off cleanly without leaving keys lying around — the endpoint
+    catches the specific error and returns a friendly 503 instead of a
+    stack trace.
+    """
+
+    def complete(self, **_kwargs) -> LLMResponse:
+        raise ChatDisabledError(
+            "Chat is disabled on this deployment (VZ_LLM_PROVIDER=none)."
+        )
+
+
+def is_chat_enabled() -> bool:
+    """Cheap check callers can use to hide chat affordances (nav item,
+    landing prompts) without construing an actual client."""
+    return os.environ.get("VZ_LLM_PROVIDER", "openai").lower() != "none"
+
+
+# ---------------------------------------------------------------------------
 # Factory — read provider choice from environment
 # ---------------------------------------------------------------------------
 
@@ -258,9 +413,13 @@ def get_default_client() -> LLMClient:
     Reads ``VZ_LLM_PROVIDER`` (default ``openai``). Each provider has its
     own credential env vars; missing credentials raise ``RuntimeError`` —
     callers that want graceful degradation should catch and fall back.
+    ``VZ_LLM_PROVIDER=none`` returns a ``NoOpClient`` (chat disabled).
     """
     provider = os.environ.get("VZ_LLM_PROVIDER", "openai").lower()
     model_override = os.environ.get("VZ_LLM_MODEL")
+
+    if provider == "none":
+        return NoOpClient()
 
     if provider == "openai":
         api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -286,5 +445,5 @@ def get_default_client() -> LLMClient:
 
     raise ValueError(
         f"Unknown VZ_LLM_PROVIDER: {provider!r}. "
-        f"Currently supported: 'openai', 'anthropic'."
+        f"Currently supported: 'openai', 'anthropic', 'none'."
     )

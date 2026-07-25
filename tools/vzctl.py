@@ -454,5 +454,235 @@ def restore(uri: str, model_dir: str, region: str | None) -> None:
         backend.close()
 
 
+@cli.command()
+@click.argument("model")
+@click.argument("message")
+@click.option(
+    "--model-dir", default=None,
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    help="Path to the model directory. Defaults to $VZ_MODELS_DIR/<MODEL>.",
+)
+@click.option(
+    "--format", "output_format", default="human",
+    type=click.Choice(["human", "json", "events"]),
+    help="Output format. 'human' is a readable summary; 'json' is the full "
+         "ChatTurnResult; 'events' is the raw AG-UI event stream (one JSON per line).",
+)
+@click.option(
+    "--history", "history_path", default=None,
+    type=click.Path(exists=False, file_okay=True, dir_okay=False, writable=True),
+    help="Path to a JSON file with prior turns. Each turn's ChatTurnResult "
+         "(as emitted by --format json) is appended to the file; on the next "
+         "invocation, --history <same file> replays the prior context. Enables "
+         "multi-turn conversation from the CLI (agents like Claude Code can "
+         "keep a session going by re-passing the same file).",
+)
+def chat(
+    model: str,
+    message: str,
+    model_dir: str | None,
+    output_format: str,
+    history_path: str | None,
+) -> None:
+    """Run one chat turn against MODEL with MESSAGE, print the result.
+
+    Bypasses the HTTP server — calls the agentic loop directly. Useful for
+    agents (Claude Code, cron, CI) that need to interrogate the chat
+    capability without a running API. Reads .env for LLM keys the same way
+    the API does.
+
+    Exits non-zero on tool failure or LLM error so a wrapping script can
+    detect problems reliably.
+
+    Examples::
+
+        vzctl chat oliverfenton "top 5 activities by tss"
+        vzctl chat iagai "dora clt trend last 12w" --format json
+        vzctl chat oliverfenton "summarise my training" --format events
+
+    Multi-turn::
+
+        # Turn 1 — new session
+        vzctl chat oliverfenton "summarise my training" --history session.json
+        # Turn 2 — same file replays prior context
+        vzctl chat oliverfenton "chart the summary" --history session.json
+        # Turn 3
+        vzctl chat oliverfenton "explain this" --history session.json
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    # Load .env so keys land in os.environ — the API's lifespan does this,
+    # but the CLI runs standalone.
+    try:
+        from dotenv import load_dotenv
+        for candidate in [Path(".env"), Path(__file__).resolve().parents[1] / ".env"]:
+            if candidate.is_file():
+                load_dotenv(candidate)
+                break
+    except ImportError:
+        pass
+
+    from api.services.chat.agui_stream import stream_turn
+    from api.services.chat.service import chat_turn
+
+    resolved_dir = Path(model_dir) if model_dir else (
+        Path(os.environ["VZ_MODELS_DIR"]) / model
+        if os.environ.get("VZ_MODELS_DIR")
+        else Path("models") / model
+    )
+    if not resolved_dir.is_dir():
+        click.echo(f"Model directory not found: {resolved_dir}", err=True)
+        sys.exit(2)
+
+    prior_history = _load_chat_history(history_path)
+
+    if output_format == "events":
+        # Emit each AG-UI event as one line of JSON — same shape the /chat/stream
+        # endpoint sends over SSE, minus the "data: " prefix. Agents can parse
+        # this to see tool calls stream in.
+        for event in stream_turn(
+            model_dir=resolved_dir, message=message, thread_id="cli",
+            history=prior_history,
+        ):
+            click.echo(event.model_dump_json())
+        return
+
+    try:
+        result = chat_turn(model_dir=resolved_dir, message=message,
+                           history=prior_history)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"chat_turn raised: {type(exc).__name__}: {exc}", err=True)
+        sys.exit(1)
+
+    # Persist to the history file so the NEXT invocation replays context.
+    if history_path:
+        _append_chat_history(history_path, message, result)
+
+    if output_format == "json":
+        # Full ChatTurnResult as a dict — for agent consumption.
+        payload = {
+            "success": result.success,
+            "error": result.error,
+            "iterations": result.iterations,
+            "title": result.title,
+            "saved_view": result.saved_view,
+            "inline_view": result.inline_view,
+            "query_yaml": result.query_yaml,
+            "view_yaml": result.view_yaml,
+            "sql": result.sql,
+            "trace": [
+                {"name": t.name, "arguments": t.arguments, "success": t.success,
+                 "summary": t.summary, "payload": t.payload}
+                for t in result.trace
+            ],
+        }
+        click.echo(json.dumps(payload, indent=2, default=str))
+        sys.exit(0 if result.success else 1)
+
+    # Human format — the default. Print a compact readable summary.
+    click.echo(f"success   : {result.success}")
+    click.echo(f"iterations: {result.iterations}")
+    if result.title:
+        click.echo(f"title     : {result.title}")
+    click.echo(f"trace ({len(result.trace)}):")
+    for step in result.trace:
+        marker = "✓" if step.success else "✗"
+        summary = step.summary.replace("\n", " ")[:80]
+        click.echo(f"  {marker} {step.name}: {summary}")
+    if result.error:
+        click.echo(f"error     : {result.error}")
+    if result.saved_view:
+        click.echo(f"saved_view: {result.saved_view.get('name')}")
+    if result.inline_view:
+        vy = (result.inline_view.get("view_yaml") or "").splitlines()[:5]
+        click.echo("inline_view (first 5 lines of view_yaml):")
+        for line in vy:
+            click.echo(f"  {line}")
+    sys.exit(0 if result.success else 1)
+
+
+def _load_chat_history(history_path: str | None) -> list[dict]:
+    """Read prior turns from a session file. Missing file → empty history
+    (first turn); malformed file → hard fail so a corrupt session doesn't
+    silently amnesia."""
+    import json
+    if not history_path:
+        return []
+    path = Path(history_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    try:
+        turns = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        click.echo(f"History file {history_path} is not valid JSON: {exc}", err=True)
+        sys.exit(2)
+    if not isinstance(turns, list):
+        click.echo(f"History file {history_path} must contain a JSON array.", err=True)
+        sys.exit(2)
+    return turns
+
+
+def _append_chat_history(history_path: str, user_message: str, result) -> None:
+    """Extend the session file with the turn we just ran, in the shape
+    ``chat_turn`` expects on the next invocation. The full trace goes in
+    so the LLM sees the same context it saw in-session — including the
+    terminal tool's view payload that anchors "current view" logic."""
+    import json
+    import uuid
+    path = Path(history_path)
+    existing = _load_chat_history(history_path)
+
+    existing.append({"role": "user", "content": user_message})
+
+    tool_call_ids = [f"tc_{uuid.uuid4().hex[:12]}" for _ in result.trace]
+    if result.trace:
+        existing.append({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": tc_id,
+                    "type": "function",
+                    "function": {"name": step.name,
+                                 "arguments": json.dumps(step.arguments)},
+                }
+                for tc_id, step in zip(tool_call_ids, result.trace)
+            ],
+        })
+        for tc_id, step in zip(tool_call_ids, result.trace):
+            # Embed the view payload on the terminal tool's result so the
+            # next turn's _extract_current_view finds it — same shape the
+            # streaming layer emits over SSE.
+            is_terminal = (
+                step is result.trace[-1]
+                and step.name in ("present_view", "run_saved_view")
+                and (result.saved_view or result.inline_view)
+            )
+            if is_terminal:
+                payload = (
+                    {"kind": "saved_view", "payload": result.saved_view}
+                    if result.saved_view
+                    else {"kind": "inline_view", "payload": result.inline_view}
+                )
+                content = json.dumps(payload)
+            else:
+                content = step.summary or ("ok" if step.success else "failed")
+            existing.append({"role": "tool", "tool_call_id": tc_id,
+                             "content": content})
+    # Final assistant text turn — always append even if empty, so the
+    # role ordering (user → assistant tool_calls → tool → assistant text)
+    # mirrors what the streaming loop produces mid-turn.
+    caption = ""
+    if result.saved_view:
+        caption = result.saved_view.get("caption") or ""
+    elif result.inline_view:
+        caption = result.inline_view.get("caption") or ""
+    existing.append({"role": "assistant", "content": caption})
+
+    path.write_text(json.dumps(existing, indent=2, default=str))
+
+
 if __name__ == "__main__":
     cli()

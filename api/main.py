@@ -241,6 +241,17 @@ def healthz():
     return {"status": "ok", "version": "1.0.0"}
 
 
+@app.get("/api/v1/config", tags=["config"])
+def public_config():
+    """Client-visible capability flags. Small deliberately — anything
+    sensitive (keys, provider names beyond enabled/disabled) stays
+    server-side. UI reads this on load to decide whether to render the
+    chat surface.
+    """
+    from semantic.llm.provider import is_chat_enabled
+    return {"chat_enabled": is_chat_enabled()}
+
+
 # Versioned routers
 PREFIX = "/api/v1"
 

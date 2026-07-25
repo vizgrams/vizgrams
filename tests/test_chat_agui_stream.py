@@ -77,6 +77,34 @@ class TestBookends:
         assert events[-1].type == EventType.RUN_ERROR
         assert "provider went away" in events[-1].message
 
+    def test_chat_disabled_error_gets_dedicated_code(self):
+        """Chat-disabled is distinct from provider failure — UI should
+        be able to render it differently (nav suppression, "disabled"
+        empty state) rather than show a scary provider error."""
+        from semantic.llm.provider import ChatDisabledError
+        events = _run(ChatDisabledError("Chat is disabled on this deployment."))
+        err = events[-1]
+        assert err.type == EventType.RUN_ERROR
+        assert err.code == "chat_disabled"
+        assert "disabled" in err.message.lower()
+
+    def test_provider_credit_error_gets_friendly_message(self):
+        """The real problem the user is trying to solve: credits ran
+        out. RUN_ERROR must carry the human-readable "top up" message,
+        not the raw SDK exception."""
+        # Mimic anthropic.PermissionDeniedError shape by name+text
+        class PermissionDeniedError(Exception):
+            pass
+        exc = PermissionDeniedError(
+            "Your credit balance is too low to access the Anthropic API."
+        )
+        events = _run(exc)
+        err = events[-1]
+        assert err.type == EventType.RUN_ERROR
+        assert err.code == "ChatCreditsExhaustedError"
+        assert "credit" in err.message.lower()
+        assert "top up" in err.message.lower()
+
 
 class TestTraceMapping:
     def test_each_trace_step_emits_start_args_end_result(self):

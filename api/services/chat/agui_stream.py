@@ -46,6 +46,11 @@ from ag_ui.core import (
 )
 
 from api.services.chat.service import ChatTurnResult, chat_turn
+from semantic.llm.provider import (
+    ChatDisabledError,
+    LLMError,
+    translate_provider_error,
+)
 
 # Tool names whose result carries a renderable view payload — the
 # terminal tools of ``chat_turn``'s loop. When the *last* trace step
@@ -80,10 +85,29 @@ def stream_turn(
             message=message,
             history=history or [],
         )
+    except ChatDisabledError as exc:
+        # Explicit disabled state — friendlier "capability off" phrasing
+        # than a generic provider failure.
+        yield RunErrorEvent(message=str(exc), code="chat_disabled")
+        return
     except Exception as exc:  # noqa: BLE001 - all failures become RUN_ERROR events
-        yield RunErrorEvent(
-            message=f"chat_turn raised: {type(exc).__name__}: {exc}",
+        # Translate known provider errors (out-of-credit, auth, rate
+        # limit) into human-readable messages before the browser sees
+        # them. Falls back to a generic message + type name for anything
+        # unrecognised so we don't hide totally novel failures.
+        friendly = translate_provider_error(exc) or (
+            exc if isinstance(exc, LLMError) else None
         )
+        if friendly is not None:
+            yield RunErrorEvent(
+                message=str(friendly),
+                code=type(friendly).__name__,
+            )
+        else:
+            yield RunErrorEvent(
+                message=f"Chat failed unexpectedly: {type(exc).__name__}: {exc}",
+                code="unexpected",
+            )
         return
 
     # Per-tool trace events. Emit args as a single ToolCallArgs event
