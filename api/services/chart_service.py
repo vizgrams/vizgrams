@@ -103,14 +103,12 @@ def join_chart_yaml(query_yaml: str | None, view_yaml: str | None) -> str:
     if not isinstance(view, dict):
         view = {}
 
-    merged: dict = {}
-    # Query fields first so view fields can win on clashes.
-    for k, v in query.items():
-        merged[k] = v
-    for k, v in view.items():
-        if k == "query":
-            continue  # implicit — the chart name is the query name
-        merged[k] = v
+    # Query fields first so view fields can win on clashes. The
+    # synthetic ``query: <name>`` self-reference from the split is
+    # dropped — it's implementation detail, not something the user
+    # should see in the composed YAML.
+    merged: dict = dict(query)
+    merged.update({k: v for k, v in view.items() if k != "query"})
 
     return yaml.safe_dump(merged, sort_keys=False)
 
