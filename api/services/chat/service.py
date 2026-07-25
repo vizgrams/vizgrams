@@ -188,20 +188,69 @@ class ChatTurnResult:
 
 
 def _history_to_openai(history: list[dict] | None) -> list[dict]:
-    """Translate a list of ``{role, content}`` turns into OpenAI messages.
+    """Translate a list of turns into OpenAI messages, preserving the
+    tool-use structure that lets follow-up turns reason about prior
+    tool calls.
 
-    Only ``role`` and ``content`` are passed through — query / chart
-    payloads from prior turns are intentionally dropped so the LLM
-    re-derives them from the current user prompt + assistant caption
-    context, which is enough for drilldown to work.
+    Prior behaviour dropped ``tool_calls`` on assistant turns and
+    filtered out ``role='tool'`` messages — meaning a follow-up like
+    "chart the summary" had no idea what "the summary" was because the
+    previous ``run_saved_view`` tool_call + its result were invisible.
+    Now:
+
+    * ``user`` / ``system`` — passed through.
+    * ``assistant`` — passed through with ``tool_calls`` preserved.
+      Empty-content assistant turns (tool-call-only) are kept — the
+      OpenAI/Anthropic SDKs require them to precede their tool results.
+    * ``tool`` — passed through with ``tool_call_id`` intact.
     """
     out: list[dict] = []
     for turn in history or []:
         role = turn.get("role")
-        content = turn.get("content") or ""
-        if role in ("user", "assistant") and content:
-            out.append({"role": role, "content": content})
+        if role == "tool":
+            # Tool result — must reference an assistant tool_call earlier
+            # in the same messages array; SDKs 400 on dangling tool ids.
+            if turn.get("tool_call_id"):
+                out.append({
+                    "role": "tool",
+                    "tool_call_id": turn["tool_call_id"],
+                    "content": turn.get("content") or "",
+                })
+            continue
+        if role == "assistant":
+            entry: dict = {"role": "assistant", "content": turn.get("content") or ""}
+            if turn.get("tool_calls"):
+                entry["tool_calls"] = turn["tool_calls"]
+            out.append(entry)
+            continue
+        if role in ("user", "system") and turn.get("content"):
+            out.append({"role": role, "content": turn["content"]})
     return out
+
+
+def _extract_current_view(history: list[dict] | None) -> dict | None:
+    """Find the most recent view rendered in this conversation, if any.
+
+    Scans prior tool messages for the JSON payload the streaming layer
+    embeds in terminal tool results (``{kind: 'saved_view'|'inline_view',
+    payload: {...}}``). Returns the newest one, or None if the user is
+    on their first turn or the last turn didn't produce a view. The
+    system prompt uses this to tell the LLM what the user is currently
+    looking at — otherwise "chart it" / "explain this" has no referent.
+    """
+    for turn in reversed(history or []):
+        if turn.get("role") != "tool":
+            continue
+        content = turn.get("content") or ""
+        if not isinstance(content, str) or not content.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(parsed, dict) and parsed.get("kind") in ("saved_view", "inline_view"):
+            return parsed
+    return None
 
 
 def _build_semantic_search():
@@ -302,8 +351,39 @@ When authoring with `build_and_run_query`:
 {schema}"""
 
 
-def build_system_prompt(model_name: str, schema_context: str) -> str:
-    return _SYSTEM_PROMPT_TEMPLATE.format(model=model_name, schema=schema_context)
+def build_system_prompt(
+    model_name: str,
+    schema_context: str,
+    current_view: dict | None = None,
+) -> str:
+    """Assemble the system prompt.
+
+    ``current_view`` is the newest view rendered earlier in the
+    conversation (extracted via ``_extract_current_view``). When set, the
+    LLM is told what the user is currently looking at so follow-up
+    requests like "chart this" / "explain this" have a referent. Absent
+    on the first turn or when the previous turn didn't produce a view.
+    """
+    base = _SYSTEM_PROMPT_TEMPLATE.format(model=model_name, schema=schema_context)
+    if not current_view:
+        return base
+    kind = current_view.get("kind")
+    payload = current_view.get("payload") or {}
+    if kind == "saved_view":
+        current_line = (
+            f"\n\nCURRENT VIEW: the user is currently looking at saved view "
+            f"``{payload.get('name')}``. Follow-up requests like 'chart it', "
+            f"'explain this', 'change the axes' refer to this view unless the "
+            f"user clearly asks for something new."
+        )
+    else:
+        current_line = (
+            "\n\nCURRENT VIEW: the user is currently looking at an inline view "
+            "authored this session. Follow-up requests like 'chart it', 'explain "
+            "this', 'change the axes' refer to it unless the user asks for "
+            "something new."
+        )
+    return base + current_line
 
 
 # ---------------------------------------------------------------------------
@@ -407,8 +487,10 @@ def chat_turn(
         features_by_entity.setdefault(fd.entity_type, []).append(fd)
     schema = build_schema_context(model_name, entities, features_by_entity)
 
+    current_view = _extract_current_view(history)
     messages: list[dict] = [
-        {"role": "system", "content": build_system_prompt(model_name, schema)},
+        {"role": "system",
+         "content": build_system_prompt(model_name, schema, current_view)},
         *_history_to_openai(history),
         {"role": "user", "content": message},
     ]

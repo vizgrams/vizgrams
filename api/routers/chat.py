@@ -181,6 +181,12 @@ def _split_run_agent_input(messages: list) -> tuple[str, list[dict]]:
     (user | assistant | system | tool), so history maps 1:1 to what
     chat_turn expects — just drop the trailing user message that we're
     about to hand off as the fresh input.
+
+    Preserves ``tool_calls`` on assistant turns and ``tool_call_id`` on
+    tool turns so the LLM sees the full prior loop, not just prose stubs.
+    That's what makes "chart the summary" work on turn 2: the assistant
+    can see the previous ``run_saved_view`` tool_call + its result and
+    reason about them instead of guessing what "the summary" refers to.
     """
     if not messages:
         return "", []
@@ -191,13 +197,57 @@ def _split_run_agent_input(messages: list) -> tuple[str, list[dict]]:
         m = messages[i]
         if m.get("role") == "user":
             content = _extract_text(m.get("content"))
-            history = [
-                {"role": h.get("role"), "content": _extract_text(h.get("content"))}
-                for h in messages[:i]
-                if h.get("role") in ("user", "assistant", "system")
-            ]
-            return content, history
+            history = [_history_entry(h) for h in messages[:i]]
+            return content, [h for h in history if h]
     return "", []
+
+
+def _history_entry(msg: dict) -> dict | None:
+    """Preserve a single AG-UI message as an OpenAI-shape history entry.
+
+    * user / system → keep content
+    * assistant with text → keep content
+    * assistant with ``tool_calls`` → keep both (tool_calls carries the
+      structured function calls the LLM made — losing them here strands
+      the next turn's tool results without a parent)
+    * tool → keep content + ``tool_call_id`` (must reference an assistant
+      tool_call earlier in the history)
+    * anything else → dropped
+    """
+    role = msg.get("role")
+    if role == "tool":
+        return {
+            "role": "tool",
+            "tool_call_id": msg.get("tool_call_id") or msg.get("toolCallId"),
+            "content": _extract_text(msg.get("content")),
+        }
+    if role == "assistant":
+        entry: dict = {"role": "assistant", "content": _extract_text(msg.get("content"))}
+        tool_calls = msg.get("tool_calls") or msg.get("toolCalls")
+        if tool_calls:
+            entry["tool_calls"] = [_normalise_tool_call(tc) for tc in tool_calls]
+        return entry
+    if role in ("user", "system"):
+        return {"role": role, "content": _extract_text(msg.get("content"))}
+    return None
+
+
+def _normalise_tool_call(tc: dict) -> dict:
+    """AG-UI tool calls arrive OpenAI-shape most of the time
+    (``{id, type: 'function', function: {name, arguments}}``) but the
+    assistant-ui adapter sometimes emits a flatter shape (``{id, name,
+    args}``) for locally-executed tools. Normalise so the downstream
+    LLM adapter (OpenAI / Anthropic) sees a consistent structure."""
+    if "function" in tc:
+        return tc
+    return {
+        "id": tc.get("id"),
+        "type": "function",
+        "function": {
+            "name": tc.get("name") or "unknown",
+            "arguments": tc.get("arguments") or tc.get("args") or "{}",
+        },
+    }
 
 
 def _extract_text(content) -> str:

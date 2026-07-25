@@ -21,16 +21,24 @@ from tests.llm.conftest import FakeLLMClient, response_text, response_with_tool
 # ---------------------------------------------------------------------------
 
 
-def test_history_filters_unknown_roles():
+def test_history_preserves_valid_roles():
+    """Multi-turn context needs system + tool roles through — dropping
+    them broke follow-ups like "chart the summary" because the LLM
+    never saw the prior tool_result. Only orphan tool messages (no
+    ``tool_call_id`` to pair with an assistant tool_call) are dropped
+    because SDKs 400 on dangling references."""
     history = [
         {"role": "user", "content": "hi"},
-        {"role": "system", "content": "ignored"},
+        {"role": "system", "content": "extra system context"},
         {"role": "assistant", "content": "ok"},
-        {"role": "tool", "content": "also ignored"},
+        {"role": "tool", "content": "orphan (no tool_call_id — dropped)"},
+        {"role": "tool", "tool_call_id": "tc_1", "content": "paired (kept)"},
     ]
     assert _history_to_openai(history) == [
         {"role": "user", "content": "hi"},
+        {"role": "system", "content": "extra system context"},
         {"role": "assistant", "content": "ok"},
+        {"role": "tool", "tool_call_id": "tc_1", "content": "paired (kept)"},
     ]
 
 
