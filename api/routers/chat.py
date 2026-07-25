@@ -124,7 +124,7 @@ class ChatResponse(BaseModel):
 
 @router.post("/stream")
 def chat_stream(
-    body: ChatRequest,
+    body: dict,  # AG-UI RunAgentInput — parsed below to preserve flexibility
     model: str,
     model_dir: str = Depends(resolve_model_dir),
     user_id: str = Depends(get_current_user),
@@ -132,28 +132,80 @@ def chat_stream(
 ) -> StreamingResponse:
     """AG-UI streaming variant of the chat turn.
 
-    Returns ``text/event-stream``. Every event is one AG-UI protocol
-    frame (see ``agui_stream.stream_turn``). Persistence + publish live
-    on the non-streaming ``POST /chat`` for now; a follow-up will fold
-    them into the stream via a final ``CUSTOM`` event carrying the
-    ``session_id`` + ``turn_id`` so the frontend can wire "publish this
-    turn" without a second round-trip.
+    Accepts an AG-UI ``RunAgentInput`` payload — the standard shape
+    ``HttpAgent`` posts (``{threadId, runId, messages, tools, ...}``).
+    We extract the last user message + prior history from ``messages``
+    and hand off to the existing ``chat_turn`` loop; the response is a
+    ``text/event-stream`` of AG-UI protocol frames.
+
+    Persistence + publish still live on the non-streaming ``POST /chat``
+    for now; a follow-up will fold them into the stream via a final
+    ``CUSTOM`` event carrying the ``session_id`` + ``turn_id`` so the
+    frontend can wire "publish this turn" without a second round-trip.
     """
     from ag_ui.encoder import AGUI_MEDIA_TYPE, EventEncoder
 
-    thread_id = body.session_id or "new"
+    thread_id = body.get("threadId") or body.get("thread_id") or "new"
+    messages = body.get("messages") or []
+    user_message, history = _split_run_agent_input(messages)
+    if not user_message:
+        raise HTTPException(
+            status_code=422,
+            detail="RunAgentInput.messages must end with a user message.",
+        )
+
     encoder = EventEncoder()
 
     def _sse_iter():
         for event in agui_stream.stream_turn(
             model_dir=Path(model_dir),
-            message=body.message,
+            message=user_message,
             thread_id=thread_id,
-            history=[turn.model_dump() for turn in body.history],
+            history=history,
         ):
             yield encoder.encode(event)
 
     return StreamingResponse(_sse_iter(), media_type=AGUI_MEDIA_TYPE)
+
+
+def _split_run_agent_input(messages: list) -> tuple[str, list[dict]]:
+    """Extract (last_user_message, prior_history) from an AG-UI messages
+    array. AG-UI uses the same role vocabulary as OpenAI Chat Completions
+    (user | assistant | system | tool), so history maps 1:1 to what
+    chat_turn expects — just drop the trailing user message that we're
+    about to hand off as the fresh input.
+    """
+    if not messages:
+        return "", []
+    # Find the last user message. If it's not at the tail, AG-UI has
+    # already interleaved an assistant reply we haven't seen — treat the
+    # message itself as the input anyway (edge case: mid-stream resume).
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if m.get("role") == "user":
+            content = _extract_text(m.get("content"))
+            history = [
+                {"role": h.get("role"), "content": _extract_text(h.get("content"))}
+                for h in messages[:i]
+                if h.get("role") in ("user", "assistant", "system")
+            ]
+            return content, history
+    return "", []
+
+
+def _extract_text(content) -> str:
+    """AG-UI messages may carry ``content`` as either a string or a list
+    of typed parts (``[{type: 'text', text: '...'}, ...]``). Collapse to
+    text — the current chat_turn only accepts strings."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "text":
+                parts.append(p.get("text") or "")
+        return "".join(parts)
+    return ""
 
 
 @router.post("", response_model=ChatResponse)
