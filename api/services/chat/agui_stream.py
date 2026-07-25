@@ -13,12 +13,13 @@ Every turn emits:
 
     RUN_STARTED
       → TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END / TOOL_CALL_RESULT
-        (one set per trace entry, in loop order)
+        (one set per trace entry, in loop order; the LAST result — for
+         the terminal tool — carries the view payload as JSON so the
+         frontend's ``makeAssistantToolUI`` for that tool renders the
+         chart card)
       → TEXT_MESSAGE_START / TEXT_MESSAGE_CONTENT / TEXT_MESSAGE_END
         (final assistant text — the caption for the produced view, or
          an error message)
-      → CUSTOM (vizgrams-specific: the saved_view or inline_view payload
-        so the UI can render the chart card via generative UI)
     RUN_FINISHED   (or RUN_ERROR on failure)
 """
 
@@ -32,7 +33,6 @@ from typing import Any
 
 from ag_ui.core import (
     BaseEvent,
-    CustomEvent,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
@@ -46,6 +46,15 @@ from ag_ui.core import (
 )
 
 from api.services.chat.service import ChatTurnResult, chat_turn
+
+# Tool names whose result carries a renderable view payload — the
+# terminal tools of ``chat_turn``'s loop. When the *last* trace step
+# matches, we embed the full view payload in that TOOL_CALL_RESULT's
+# content as JSON so the frontend's ``makeAssistantToolUI`` for the
+# tool name can render a chart card. Names are duplicated (not imported)
+# so this module doesn't take a dependency on the tool registry — the
+# stream layer is deliberately loose-coupled from the tool internals.
+_TERMINAL_TOOL_NAMES = frozenset({"present_view", "run_saved_view"})
 
 
 def stream_turn(
@@ -80,7 +89,15 @@ def stream_turn(
     # Per-tool trace events. Emit args as a single ToolCallArgs event
     # containing the full JSON payload — streaming args token-by-token
     # is a Phase 2 refactor.
-    for step in result.trace:
+    #
+    # For the *last* trace step (the terminal tool — present_view /
+    # run_saved_view), we embed the full view payload in the tool
+    # result's content as JSON. This is the seam ``makeAssistantToolUI``
+    # in the frontend hangs on: given a tool name + JSON result, render a
+    # React component. Keeps rendering documented + typed, avoids the
+    # undocumented CUSTOM-event subscriber path.
+    view_payload = _view_payload(result)
+    for i, step in enumerate(result.trace):
         tool_call_id = _new_id("tc")
         yield ToolCallStartEvent(
             tool_call_id=tool_call_id,
@@ -92,10 +109,21 @@ def stream_turn(
             delta=json.dumps(step.arguments),
         )
         yield ToolCallEndEvent(tool_call_id=tool_call_id)
+
+        is_terminal = (
+            i == len(result.trace) - 1
+            and step.name in _TERMINAL_TOOL_NAMES
+            and view_payload is not None
+        )
+        content = (
+            json.dumps(view_payload)
+            if is_terminal
+            else (step.summary or ("ok" if step.success else "failed"))
+        )
         yield ToolCallResultEvent(
             message_id=_new_id("msg"),
             tool_call_id=tool_call_id,
-            content=step.summary or ("ok" if step.success else "failed"),
+            content=content,
         )
 
     # Final text — the caption on success, the error on failure.
@@ -106,12 +134,12 @@ def stream_turn(
         yield TextMessageContentEvent(message_id=message_id, delta=text)
     yield TextMessageEndEvent(message_id=message_id)
 
-    # Vizgrams-specific: publish the produced view payload as a CUSTOM
-    # event so the assistant-ui runtime can render a chart card via a
-    # generative-UI handler keyed on ``name``.
-    payload = _view_payload(result)
-    if payload is not None:
-        yield CustomEvent(name="vizgrams.view", value=payload)
+    # Chart-card rendering flows through the terminal tool's
+    # TOOL_CALL_RESULT (see the loop above) — assistant-ui's
+    # ``makeAssistantToolUI`` reads a tool result by name and renders
+    # a React component. That path is documented and typed; the older
+    # CUSTOM-event path required an undocumented ``AbstractAgent``
+    # subscriber and was removed for clarity.
 
     if result.success:
         yield RunFinishedEvent(thread_id=thread_id, run_id=run_id)
