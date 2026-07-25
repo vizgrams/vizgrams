@@ -191,6 +191,7 @@ from api.routers import (
     extractors,
     features,
     graph,
+    health,
     input_data,
     jobs,
     mappers,
@@ -265,6 +266,7 @@ app.include_router(graph.router, prefix=PREFIX)
 app.include_router(explore.router, prefix=PREFIX)
 app.include_router(chat.router, prefix=PREFIX)
 app.include_router(jobs.router, prefix=PREFIX)
+app.include_router(health.router, prefix=PREFIX)
 app.include_router(input_data.router, prefix=PREFIX)
 app.include_router(vizgrams.router, prefix=PREFIX)
 app.include_router(service_accounts.router, prefix=PREFIX)

@@ -214,6 +214,29 @@ export interface JobOut {
   warnings: string[]
 }
 
+export interface HealthTarget {
+  name: string
+  cron: string | null
+  last_success: string | null
+  last_attempt_at: string | null
+  last_attempt_status: string | null
+  next_run: string | null
+  failures_since_success: number
+  failure_cap: number
+  cap_hit: boolean
+  scheduled_children?: string[]
+}
+
+export interface HealthSection {
+  operation: string
+  targets: HealthTarget[]
+}
+
+export interface HealthReport {
+  model: string
+  sections: HealthSection[]
+}
+
 export interface RelatedResult {
   entity: string
   id: string
@@ -411,6 +434,9 @@ export function makeApi(model: string) {
     // materialize job whose entity is the '__all__' sentinel.
     reconcileAll: () =>
       post<JobOut>(`${BASE}/entity/reconcile-all`, {}),
+
+    getHealth: () =>
+      get<HealthReport>(`${BASE}/health`),
 
     getJob: (jobId: string) =>
       get<JobOut>(`${BASE}/job/${jobId}`),

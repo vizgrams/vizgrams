@@ -8,6 +8,7 @@ import { RoleProvider } from '@/context/RoleContext'
 import { useRole } from '@/context/RoleContext'
 import type { PlatformRole } from '@/api/client'
 import { Layout } from '@/components/Layout'
+import { HealthPage } from '@/pages/HealthPage'
 import { JobLogPage } from '@/pages/JobLogPage'
 import { ToolsPage } from '@/pages/ToolsPage'
 import { MappersPage } from '@/pages/MappersPage'
@@ -85,6 +86,7 @@ export default function App() {
             <Route path="/admin/models" element={<ProtectedRoute minRole="admin"><ModelsPage /></ProtectedRoute>} />
             <Route path="/tools" element={<ProtectedRoute minRole="admin"><ToolsPage /></ProtectedRoute>} />
             <Route path="/mappers" element={<ProtectedRoute minRole="admin"><MappersPage /></ProtectedRoute>} />
+            <Route path="/health" element={<ProtectedRoute minRole="admin"><HealthPage /></ProtectedRoute>} />
             <Route path="/jobs" element={<ProtectedRoute minRole="admin"><JobLogPage /></ProtectedRoute>} />
 
             {/* VG-298 — legacy routes redirect to /explore */}
