@@ -143,7 +143,7 @@ def chat_stream(
     ``CUSTOM`` event carrying the ``session_id`` + ``turn_id`` so the
     frontend can wire "publish this turn" without a second round-trip.
     """
-    from ag_ui.encoder import AGUI_MEDIA_TYPE, EventEncoder
+    from ag_ui.encoder import EventEncoder
 
     thread_id = body.get("threadId") or body.get("thread_id") or "new"
     messages = body.get("messages") or []
@@ -154,6 +154,13 @@ def chat_stream(
             detail="RunAgentInput.messages must end with a user message.",
         )
 
+    # Encoder emits SSE frames (``data: {...}\n\n``). Use its own
+    # get_content_type() rather than the module-level
+    # ``AGUI_MEDIA_TYPE`` constant — that constant is the protobuf
+    # media type (``application/vnd.ag-ui.event+proto``), which the
+    # JS ``HttpAgent`` doesn't parse. It sends ``Accept:
+    # text/event-stream`` and silently drops anything else, which
+    # made the UI hang despite a healthy 200 on the wire.
     encoder = EventEncoder()
 
     def _sse_iter():
@@ -165,7 +172,7 @@ def chat_stream(
         ):
             yield encoder.encode(event)
 
-    return StreamingResponse(_sse_iter(), media_type=AGUI_MEDIA_TYPE)
+    return StreamingResponse(_sse_iter(), media_type=encoder.get_content_type())
 
 
 def _split_run_agent_input(messages: list) -> tuple[str, list[dict]]:
