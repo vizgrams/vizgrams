@@ -52,10 +52,13 @@ def _any_writer_running(con, model_name: str) -> tuple[bool, str | None]:
 
 
 def _schedule_tick(models_dir: Path) -> None:
-    """One pass: check all models for due extractors, mapper runs, and entity materializations."""
-    from batch.schedule import entities_due, extractors_due, mappers_due
-    from batch_service import db as jobdb
-    from batch_service import executor as jobexec
+    """One pass: check all models for due extractors, mapper runs, and entity materializations.
+
+    Each operation (extract / map / materialize) is dispatched via its own
+    helper so a skip in one section cannot leak a ``continue`` past the
+    others — a class of bug that silently gated materialize on mappers
+    being due for weeks (Health page surfaced it 2026-07-24).
+    """
     from core.registry import load_registry
 
     try:
@@ -69,135 +72,152 @@ def _schedule_tick(models_dir: Path) -> None:
         if not model_dir.is_dir():
             continue
 
-        # --- Extractors ---
+        # Each helper contains its own try/except and its own "not due"
+        # early return; ``continue`` inside them stays inside them.
+        _tick_extractors(model_name, model_dir)
+        _tick_mappers(model_name, model_dir)
+        _tick_materialize(model_name, model_dir)
+
+
+def _tick_extractors(model_name: str, model_dir: Path) -> None:
+    from batch.schedule import extractors_due
+    from batch_service import db as jobdb
+    from batch_service import executor as jobexec
+
+    try:
+        due = extractors_due(model_dir)
+    except Exception:
+        _log.exception("Error checking extractor schedule for model %s", model_name)
+        return
+    if not due:
+        return
+    _log.info("Extractors due for %s: %s", model_name, due)
+
+    for tool in due:
         try:
-            due = extractors_due(model_dir)
-        except Exception:
-            _log.exception("Error checking extractor schedule for model %s", model_name)
-            due = []
-
-        if due:
-            _log.info("Extractors due for %s: %s", model_name, due)
-
-        for tool in due:
-            try:
-                with jobdb.get_connection(model_dir) as con:
-                    # Any writer running (this tool or any other) means the
-                    # new job would just queue on the fcntl lock, sit at
-                    # ``waiting for write lock`` for 300 s, then fail. Skip
-                    # this tick and try again next minute — the schedule
-                    # entry stays "due" so we'll retry.
-                    is_busy, other_job = _any_writer_running(con, model_name)
-                    if is_busy:
-                        _log.info(
-                            "Skipping %s/%s — writer already running (job %s)",
-                            model_name, tool, other_job,
-                        )
-                        continue
-
-                    job_id = str(uuid.uuid4())
-                    jobdb.insert_job(
-                        con,
-                        job_id=job_id,
-                        model=model_name,
-                        operation="extract",
-                        tool=tool,
-                        status="running",
-                        started_at=_now(),
-                        triggered_by="schedule",
+            with jobdb.get_connection(model_dir) as con:
+                # Any writer running (this tool or any other) means the
+                # new job would just queue on the fcntl lock, sit at
+                # ``waiting for write lock`` for 300 s, then fail. Skip
+                # this tick and try again next minute — the schedule
+                # entry stays "due" so we'll retry.
+                is_busy, other_job = _any_writer_running(con, model_name)
+                if is_busy:
+                    _log.info(
+                        "Skipping %s/%s — writer already running (job %s)",
+                        model_name, tool, other_job,
                     )
+                    continue
 
-                jobexec.submit(model_dir, job_id, tool, None, None)
+                job_id = str(uuid.uuid4())
+                jobdb.insert_job(
+                    con,
+                    job_id=job_id,
+                    model=model_name,
+                    operation="extract",
+                    tool=tool,
+                    status="running",
+                    started_at=_now(),
+                    triggered_by="schedule",
+                )
+
+            jobexec.submit(model_dir, job_id, tool, None, None)
+            _log.info(
+                "Scheduled extractor job submitted",
+                extra={"job_id": job_id, "model": model_name, "tool": tool},
+            )
+        except Exception:
+            _log.exception("Error submitting scheduled extractor job for %s/%s", model_name, tool)
+
+
+def _tick_mappers(model_name: str, model_dir: Path) -> None:
+    from batch.schedule import mappers_due
+    from batch_service import db as jobdb
+    from batch_service import executor as jobexec
+
+    try:
+        due_mappers = mappers_due(model_dir)
+    except Exception:
+        _log.exception("Error checking mapper schedule for model %s", model_name)
+        return
+    if not due_mappers:
+        return
+    _log.info("Mappers due for %s: %s", model_name, due_mappers)
+
+    try:
+        with jobdb.get_connection(model_dir) as con:
+            is_busy, other_job = _any_writer_running(con, model_name)
+            if is_busy:
                 _log.info(
-                    "Scheduled extractor job submitted",
-                    extra={"job_id": job_id, "model": model_name, "tool": tool},
+                    "Skipping mapper run for %s — writer already running (job %s)",
+                    model_name, other_job,
                 )
-            except Exception:
-                _log.exception("Error submitting scheduled extractor job for %s/%s", model_name, tool)
+                return
 
-        # --- Mappers ---
-        try:
-            due_mappers = mappers_due(model_dir)
-        except Exception:
-            _log.exception("Error checking mapper schedule for model %s", model_name)
-            continue
-
-        if not due_mappers:
-            continue
-
-        _log.info("Mappers due for %s: %s", model_name, due_mappers)
-
-        try:
-            with jobdb.get_connection(model_dir) as con:
-                is_busy, other_job = _any_writer_running(con, model_name)
-                if is_busy:
-                    _log.info(
-                        "Skipping mapper run for %s — writer already running (job %s)",
-                        model_name, other_job,
-                    )
-                    continue
-
-                job_id = str(uuid.uuid4())
-                jobdb.insert_job(
-                    con,
-                    job_id=job_id,
-                    model=model_name,
-                    operation="map",
-                    tool="__all__",
-                    status="running",
-                    started_at=_now(),
-                    triggered_by="schedule",
-                )
-
-            jobexec.submit_mapper(model_dir, job_id, None)
-            _log.info(
-                "Scheduled mapper job submitted",
-                extra={"job_id": job_id, "model": model_name, "due_mappers": due_mappers},
+            job_id = str(uuid.uuid4())
+            jobdb.insert_job(
+                con,
+                job_id=job_id,
+                model=model_name,
+                operation="map",
+                tool="__all__",
+                status="running",
+                started_at=_now(),
+                triggered_by="schedule",
             )
-        except Exception:
-            _log.exception("Error submitting scheduled mapper job for %s", model_name)
 
-        # --- Entities (materialize + feature reconcile) ---
-        try:
-            due_entities = entities_due(model_dir)
-        except Exception:
-            _log.exception("Error checking entity schedule for model %s", model_name)
-            continue
+        jobexec.submit_mapper(model_dir, job_id, None)
+        _log.info(
+            "Scheduled mapper job submitted",
+            extra={"job_id": job_id, "model": model_name, "due_mappers": due_mappers},
+        )
+    except Exception:
+        _log.exception("Error submitting scheduled mapper job for %s", model_name)
 
-        if not due_entities:
-            continue
 
-        _log.info("Entities due for %s: %s", model_name, due_entities)
+def _tick_materialize(model_name: str, model_dir: Path) -> None:
+    from batch.schedule import entities_due
+    from batch_service import db as jobdb
+    from batch_service import executor as jobexec
 
-        try:
-            with jobdb.get_connection(model_dir) as con:
-                is_busy, other_job = _any_writer_running(con, model_name)
-                if is_busy:
-                    _log.info(
-                        "Skipping materialize for %s — writer already running (job %s)",
-                        model_name, other_job,
-                    )
-                    continue
+    try:
+        due_entities = entities_due(model_dir)
+    except Exception:
+        _log.exception("Error checking entity schedule for model %s", model_name)
+        return
+    if not due_entities:
+        return
+    _log.info("Entities due for %s: %s", model_name, due_entities)
 
-                job_id = str(uuid.uuid4())
-                jobdb.insert_job(
-                    con,
-                    job_id=job_id,
-                    model=model_name,
-                    operation="materialize",
-                    tool="__all__",
-                    status="running",
-                    started_at=_now(),
-                    triggered_by="schedule",
+    try:
+        with jobdb.get_connection(model_dir) as con:
+            is_busy, other_job = _any_writer_running(con, model_name)
+            if is_busy:
+                _log.info(
+                    "Skipping materialize for %s — writer already running (job %s)",
+                    model_name, other_job,
                 )
+                return
 
-            jobexec.submit_materialize(model_dir, job_id, None)
-            _log.info(
-                "Scheduled materialize job submitted",
-                extra={"job_id": job_id, "model": model_name, "due_entities": due_entities},
+            job_id = str(uuid.uuid4())
+            jobdb.insert_job(
+                con,
+                job_id=job_id,
+                model=model_name,
+                operation="materialize",
+                tool="__all__",
+                status="running",
+                started_at=_now(),
+                triggered_by="schedule",
             )
-        except Exception:
-            _log.exception("Error submitting scheduled materialize job for %s", model_name)
+
+        jobexec.submit_materialize(model_dir, job_id, None)
+        _log.info(
+            "Scheduled materialize job submitted",
+            extra={"job_id": job_id, "model": model_name, "due_entities": due_entities},
+        )
+    except Exception:
+        _log.exception("Error submitting scheduled materialize job for %s", model_name)
 
 
 def start_scheduler(models_dir: Path) -> threading.Thread:
