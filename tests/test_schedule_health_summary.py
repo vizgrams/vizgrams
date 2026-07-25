@@ -9,8 +9,6 @@ show a silently-broken pipeline as green if those signals were missing.
 
 from pathlib import Path
 
-import pytest
-
 from batch.schedule import health_summary
 from tests.test_schedule_failure_cap import _write_job
 
