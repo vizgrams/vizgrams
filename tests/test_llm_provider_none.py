@@ -73,6 +73,24 @@ class TestErrorTranslation:
         assert isinstance(result, ChatCreditsExhaustedError)
         assert "out of credit" in str(result).lower()
 
+    def test_anthropic_credit_via_bad_request_body_maps_to_credits(self):
+        """Real 2026-07 shape: Anthropic returns BadRequestError with the
+        'credit balance' text on ``exc.body.error.message`` NOT in
+        ``str(exc)``. Translator must check ``.body`` too, otherwise
+        the very credit exhaustion this class exists for falls through
+        to the generic bad-request bucket."""
+        exc = _FakeSdkError("BadRequestError", "Error code: 400")
+        exc.body = {"error": {
+            "type": "invalid_request_error",
+            "message": (
+                "Your credit balance is too low to access the Anthropic API. "
+                "Please go to Plans & Billing to upgrade or purchase credits."
+            ),
+        }}
+        result = translate_provider_error(exc)
+        assert isinstance(result, ChatCreditsExhaustedError)
+        assert "top up" in str(result).lower()
+
     def test_openai_insufficient_quota_maps_to_credits_exhausted(self):
         # OpenAI packs quota errors inside RateLimitError with an
         # ``insufficient_quota`` code — must NOT be treated as a

@@ -82,14 +82,20 @@ def translate_provider_error(exc: Exception) -> LLMError | None:
     original in that case.
     """
     name = type(exc).__name__
-    text = str(exc).lower()
+    # ``str(exc)`` on the Anthropic SDK sometimes surfaces only the
+    # HTTP status; the human-readable reason lives on ``exc.body.error.
+    # message``. Check both so the credit-exhausted signal (which ships
+    # as BadRequestError, NOT PermissionDeniedError, contrary to the
+    # obvious guess) is picked up regardless of SDK version.
+    body_msg = _extract_provider_body(exc) or ""
+    text = f"{exc} {body_msg}".lower()
 
     # Credits / quota — Anthropic and OpenAI both use billing-adjacent
-    # error strings. Anthropic's ``PermissionDeniedError`` covers the
-    # "credit balance is too low" case; OpenAI's is under
+    # error strings. Anthropic's "credit balance is too low" arrives as
+    # BadRequestError.body.error.message; OpenAI's is under
     # ``RateLimitError`` with ``insufficient_quota``.
     credit_signals = ("credit balance", "insufficient_quota", "quota exceeded",
-                      "insufficient credits", "credits", "out of credits")
+                      "insufficient credits", "purchase credits", "out of credits")
     if any(sig in text for sig in credit_signals):
         return ChatCreditsExhaustedError(
             "Your LLM provider account is out of credit. Top up and retry."
