@@ -18,8 +18,9 @@
  * adapter against the existing /chat/sessions API.
  */
 
-import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { AlertCircle, Loader2 } from 'lucide-react'
 import { HttpAgent } from '@ag-ui/client'
 import {
   AssistantRuntimeProvider,
@@ -32,6 +33,10 @@ import {
 } from '@assistant-ui/react'
 import { useAgUiRuntime } from '@assistant-ui/react-ag-ui'
 
+import type { ViewResult } from '@/api/client'
+import { ViewContent } from '@/components/view/ViewContent'
+import { ViewParamBar } from '@/components/view/ViewParamBar'
+import { frameToUrl, type DrillFrame, type ViewDrilldownConfig } from '@/components/view/drilldown'
 import { useModel } from '@/context/ModelContext'
 
 // Dev auth: the API expects X-Dev-User in local dev. Vite's dev server
@@ -66,18 +71,14 @@ function ChatRuntimeProvider({
 // terminal tool's TOOL_CALL_RESULT as JSON; we parse and render.
 // ---------------------------------------------------------------------------
 
-type ViewPayload = {
-  kind: 'inline_view' | 'saved_view'
-  payload: Record<string, unknown>
-}
+type ViewPayload =
+  | { kind: 'saved_view'; payload: { name: string; params?: Record<string, string> } }
+  | { kind: 'inline_view'; payload: { view_yaml: string; query_yaml?: string | null; params?: Record<string, string> } }
 
-// Assistant-ui's tool renderer may hand ``result`` as:
-//   - a string (raw TOOL_CALL_RESULT.content) — the AG-UI adapter's
-//     default, and what our backend emits
-//   - an object (already JSON-parsed by some other adapter layer)
-//   - null / undefined during the "call in flight, no result yet" phase
+// Assistant-ui's tool renderer may hand ``result`` as string OR object
+// OR null/undefined during the "call in flight, no result yet" phase.
 // Handle all three so a re-render race doesn't leave the user staring
-// at the placeholder forever.
+// at a placeholder forever.
 function ChartCardRender({ result }: ToolCallMessagePartProps<unknown, unknown>) {
   const parsed = useMemo<ViewPayload | null>(() => {
     if (result == null) return null
@@ -91,9 +92,6 @@ function ChartCardRender({ result }: ToolCallMessagePartProps<unknown, unknown>)
   }, [result])
 
   if (!parsed) {
-    // No result yet OR unparseable — show a compact status hint that
-    // includes the raw shape so a developer can inspect via
-    // React DevTools without opening the network tab.
     const hint = result == null
       ? '(waiting for tool result)'
       : `(unparseable: ${typeof result === 'string' ? result.slice(0, 80) : typeof result})`
@@ -103,18 +101,85 @@ function ChartCardRender({ result }: ToolCallMessagePartProps<unknown, unknown>)
       </div>
     )
   }
+  return <ChatChartCard view={parsed} />
+}
 
-  // Spike placeholder — Phase 3 replaces this with the real ChatViewCard
-  // (chart, params, drilldowns, publish). Rendering the payload as JSON
-  // proves the makeAssistantToolUI wire works end-to-end.
-  return (
-    <div className="rounded-md border bg-card p-4 my-2">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">
-        {parsed.kind === 'saved_view' ? 'saved view' : 'inline view'}
+// Execute the view (saved or inline) and render via ViewContent — the
+// same component every other surface uses. Drilldown navigates out of
+// chat into /explore. Params editable via ViewParamBar.
+function ChatChartCard({ view }: { view: ViewPayload }) {
+  const { api } = useModel()
+  const navigate = useNavigate()
+  const [result, setResult] = useState<ViewResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const initialParams = view.payload.params ?? {}
+  const [paramValues, setParamValues] = useState<Record<string, string>>(initialParams)
+
+  const run = useCallback(async (values: Record<string, string>) => {
+    setLoading(true); setError(null)
+    try {
+      const r = view.kind === 'saved_view'
+        ? await api.executeView(view.payload.name, 1000, 0, values)
+        : await api.executeViewInline(
+            view.payload.view_yaml,
+            view.payload.query_yaml ?? undefined,
+            values,
+          )
+      setResult(r)
+      // Surface schema defaults in the param bar on first render so the
+      // user sees what's actually being applied.
+      if (Object.keys(values).length === 0 && r.params?.length) {
+        const defaults: Record<string, string> = {}
+        for (const p of r.params) if (p.default != null) defaults[p.name] = p.default
+        setParamValues((prev) => ({ ...defaults, ...prev }))
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [api, view])
+
+  useEffect(() => { run(initialParams) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [run])
+
+  if (loading && !result) {
+    return (
+      <div className="rounded-md border bg-card p-3 my-2 flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading view…
       </div>
-      <pre className="text-xs overflow-x-auto bg-muted/50 p-3 rounded font-mono">
-        {JSON.stringify(parsed.payload, null, 2)}
-      </pre>
+    )
+  }
+  if (error || !result) {
+    return (
+      <div className="rounded-md border border-red-200 bg-red-50 p-3 my-2 flex items-start gap-2 text-sm text-red-800">
+        <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+        <div>{error ?? 'View execution failed.'}</div>
+      </div>
+    )
+  }
+
+  const viz = (result.visualization as Record<string, unknown>) || {}
+  const rowDrilldown = viz.row_drilldown as ViewDrilldownConfig | undefined
+  const appDrilldown = viz.app_drilldown as ViewDrilldownConfig | undefined
+
+  return (
+    <div className="rounded-md border bg-card p-4 my-2 space-y-3">
+      {result.params && result.params.length > 0 && (
+        <ViewParamBar
+          params={result.params}
+          values={paramValues}
+          onChange={setParamValues}
+          onApply={() => run(paramValues)}
+        />
+      )}
+      <ViewContent
+        result={result}
+        rowDrilldown={rowDrilldown}
+        appDrilldown={appDrilldown}
+        paramValues={paramValues}
+        onNavigate={(frame: DrillFrame) => navigate(frameToUrl(frame))}
+      />
     </div>
   )
 }
