@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { QuerySummary } from '@/api/client'
-import { NewChartDrawer, buildQueryTemplate, buildViewTemplate } from './NewChartDrawer'
+import { NewChartDrawer, buildChartTemplate } from './NewChartDrawer'
 
 const listQueries = vi.fn()
 const getQuery = vi.fn()
@@ -18,29 +18,26 @@ function querySummary(name: string, root: string | null = 'PullRequest'): QueryS
   return { name, root, measure_count: 1, group_by_count: 1 } as QuerySummary
 }
 
-describe('buildQueryTemplate', () => {
-  it('produces a sensible query stub rooted on the entity', () => {
-    const t = buildQueryTemplate({ name: 'x', entity: 'PullRequest' })
+describe('buildChartTemplate', () => {
+  it('produces a self-contained bar chart template', () => {
+    const t = buildChartTemplate({ name: 'x', entity: 'PullRequest', chartType: 'bar' })
     expect(t).toContain('entity: PullRequest')
     expect(t).toContain('attributes:')
-    expect(t).toContain('measures:')
-  })
-})
-
-describe('buildViewTemplate', () => {
-  it('produces a bar chart template', () => {
-    const t = buildViewTemplate({ name: 'x', chartType: 'bar' })
     expect(t).toContain('type: chart')
     expect(t).toContain('chart_type: bar')
-    expect(t).toContain('query: x')
+    // No self-referencing ``query: x`` — that field is a split-time
+    // implementation detail, not something the user should see.
+    expect(t).not.toContain('query: x')
   })
+
   it('produces a metric template for kpi', () => {
-    const t = buildViewTemplate({ name: 'x', chartType: 'kpi' })
+    const t = buildChartTemplate({ name: 'x', entity: 'PullRequest', chartType: 'kpi' })
     expect(t).toContain('type: metric')
     expect(t).toContain('measure:')
   })
+
   it('produces a table template', () => {
-    const t = buildViewTemplate({ name: 'x', chartType: 'table' })
+    const t = buildChartTemplate({ name: 'x', entity: 'PullRequest', chartType: 'table' })
     expect(t).toContain('type: table')
     expect(t).toContain('columns:')
   })
@@ -71,9 +68,9 @@ describe('NewChartDrawer', () => {
     expect(saveChart).not.toHaveBeenCalled()
   })
 
-  it('saves with both yamls then onCreated + onClose', async () => {
+  it('saves the composed chart YAML then onCreated + onClose', async () => {
     listQueries.mockClear().mockResolvedValue([])
-    saveChart.mockClear().mockResolvedValue({ query: {}, view: {} })
+    saveChart.mockClear().mockResolvedValue({ query: {}, view: {}, chart_yaml: '' })
     const onCreated = vi.fn()
     const onClose = vi.fn()
     render(<NewChartDrawer entity="PullRequest" onClose={onClose} onCreated={onCreated} />)
@@ -81,11 +78,13 @@ describe('NewChartDrawer', () => {
                      { target: { value: 'new_chart' } })
     fireEvent.click(screen.getByRole('button', { name: /create chart/i }))
     await waitFor(() => expect(saveChart).toHaveBeenCalledTimes(1))
-    const [name, qYaml, vYaml] = saveChart.mock.calls[0]
+    const [name, yaml] = saveChart.mock.calls[0]
     expect(name).toBe('new_chart')
-    expect(qYaml).toContain('entity: PullRequest')
-    expect(vYaml).toContain('query: new_chart')
-    expect(vYaml).toContain('chart_type: bar')
+    // Single YAML string containing both query and viz fields — the
+    // load-bearing property that proves the two-file → one-file collapse.
+    expect(yaml).toContain('entity: PullRequest')
+    expect(yaml).toContain('chart_type: bar')
+    expect(yaml).toContain('visualization:')
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new_chart'))
     await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
@@ -102,7 +101,7 @@ describe('NewChartDrawer', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('loads an existing query into the query pane when picked', async () => {
+  it('inlines an existing query when picked', async () => {
     listQueries.mockClear().mockResolvedValue([querySummary('prs_open')])
     getQuery.mockClear().mockResolvedValue({
       name: 'prs_open', raw_yaml: 'name: prs_open\nentity: PullRequest\nattributes:\n  - id\n',
@@ -111,8 +110,11 @@ describe('NewChartDrawer', () => {
     await screen.findByText(/Start from existing query/i)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'prs_open' } })
     await waitFor(() => expect(getQuery).toHaveBeenCalledWith('prs_open'))
-    const textboxes = screen.getAllByRole('textbox') as HTMLTextAreaElement[]
-    const queryTextarea = textboxes.find((t) => t.value.includes('name: prs_open'))
-    expect(queryTextarea).toBeDefined()
+    // Single editor now shows both the loaded query fields AND the viz
+    // template appended below.
+    const textareas = screen.getAllByRole('textbox') as HTMLTextAreaElement[]
+    const chartTextarea = textareas.find((t) => t.value.includes('- id'))
+    expect(chartTextarea).toBeDefined()
+    expect(chartTextarea!.value).toContain('visualization:')
   })
 })

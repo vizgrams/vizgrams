@@ -2,20 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * NewChartDrawer — unified chart authoring (Epic 27 VG-304 + follow-up).
+ * NewChartDrawer — single-editor chart authoring.
  *
- * Authors the query + visualization that compose a chart in a single
- * drawer. Both YAML files are saved atomically via api.saveChart, which
- * rolls back the query write if the view fails to validate.
+ * A chart is one YAML file: query fields (root, attributes, where, …)
+ * live at the top level, visualization + type live under the
+ * ``visualization`` block. The server splits this into a query + view
+ * pair on save (see ``api/services/chart_service.py``).
  *
- * Mental model: the user creates ONE thing — a chart. Internally that's
- * still a query.yaml + a view.yaml sharing the same name. Power users
- * who want query reuse can still author standalone queries via the
- * regular endpoints; this drawer is the friendly default.
- *
- * "Start from existing query" pre-populates the query pane from an
- * existing artifact so reuse is one click away without forcing the user
- * to think about it.
+ * "Start from existing query" fetches the query YAML and inlines its
+ * fields into the current chart YAML — one click to reuse a shared
+ * query without leaving the single-file mental model.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -40,15 +36,11 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
 
   const [name, setName] = useState('')
   const [chartType, setChartType] = useState<ChartType>('bar')
-  const [queryYaml, setQueryYaml] = useState('')
-  const [viewYaml, setViewYaml] = useState('')
-  const [queryDirty, setQueryDirty] = useState(false)
-  const [viewDirty, setViewDirty] = useState(false)
+  const [chartYaml, setChartYaml] = useState('')
+  const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // List existing queries for the "Start from" picker. Filtered to those
-  // rooted on the current entity so the user only sees relevant ones.
   useEffect(() => {
     let cancelled = false
     api.listQueries()
@@ -57,27 +49,27 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
     return () => { cancelled = true }
   }, [api, entity])
 
-  // Regenerate templates when name / type / entity changes — unless the
-  // user has typed into the pane (the dirty flags). Each pane tracks its
-  // own dirty bit so editing one doesn't freeze the other.
-  const defaultQuery = useMemo(
-    () => buildQueryTemplate({ name, entity }),
-    [name, entity],
+  // Regenerate the template unless the user has typed into the editor.
+  // Once dirty, name/type changes stop clobbering their work — the
+  // ``Reset to template`` button is the escape hatch.
+  const defaultYaml = useMemo(
+    () => buildChartTemplate({ name, entity, chartType }),
+    [name, entity, chartType],
   )
-  const defaultView = useMemo(
-    () => buildViewTemplate({ name, chartType }),
-    [name, chartType],
-  )
-  useEffect(() => { if (!queryDirty) setQueryYaml(defaultQuery) }, [defaultQuery, queryDirty])
-  useEffect(() => { if (!viewDirty) setViewYaml(defaultView) }, [defaultView, viewDirty])
+  useEffect(() => { if (!dirty) setChartYaml(defaultYaml) }, [defaultYaml, dirty])
 
   function loadExistingQuery(qName: string) {
     if (!qName) return
     api.getQuery(qName)
       .then((q) => {
         if (q.raw_yaml) {
-          setQueryYaml(q.raw_yaml)
-          setQueryDirty(true)
+          // Inline the existing query fields under the current chart's
+          // visualization block. Renaming the ``name:`` field to the
+          // chart's new name is deliberate — the on-disk artifact keeps
+          // its identity, but the *chart* the user is authoring is the
+          // one they typed a name for.
+          setChartYaml(inlineQueryIntoChart(q.raw_yaml, name, chartType))
+          setDirty(true)
         }
       })
       .catch(() => { /* silent — picker keeps current yaml */ })
@@ -91,7 +83,7 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
     }
     setSaving(true)
     try {
-      await api.saveChart(name, queryYaml, viewYaml)
+      await api.saveChart(name, chartYaml)
       onCreated?.(name)
       onClose()
     } catch (e) {
@@ -123,9 +115,6 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
               placeholder="snake_case_name"
               className="w-full text-xs bg-background border rounded px-2 py-1.5 font-mono"
             />
-            <p className="text-[10px] text-muted-foreground/60 mt-1">
-              Used as the name of both the query and the chart that consume it.
-            </p>
           </Field>
 
           <Field label="Chart type">
@@ -160,36 +149,19 @@ export function NewChartDrawer({ entity, onClose, onCreated }: Props) {
             </Field>
           )}
 
-          <Field label="Query (YAML)">
+          <Field label="Chart (YAML)">
             <textarea
-              value={queryYaml}
-              onChange={(e) => { setQueryYaml(e.target.value); setQueryDirty(true) }}
-              rows={10}
+              value={chartYaml}
+              onChange={(e) => { setChartYaml(e.target.value); setDirty(true) }}
+              rows={22}
               className="w-full text-xs bg-background border rounded px-2.5 py-2 font-mono resize-y"
             />
-            {queryDirty && (
+            {dirty && (
               <button
-                onClick={() => setQueryDirty(false)}
+                onClick={() => setDirty(false)}
                 className="mt-1 text-[10px] text-muted-foreground hover:text-foreground"
               >
-                Reset query to template
-              </button>
-            )}
-          </Field>
-
-          <Field label="Visualization (YAML)">
-            <textarea
-              value={viewYaml}
-              onChange={(e) => { setViewYaml(e.target.value); setViewDirty(true) }}
-              rows={10}
-              className="w-full text-xs bg-background border rounded px-2.5 py-2 font-mono resize-y"
-            />
-            {viewDirty && (
-              <button
-                onClick={() => setViewDirty(false)}
-                className="mt-1 text-[10px] text-muted-foreground hover:text-foreground"
-              >
-                Reset visualization to template
+                Reset to template
               </button>
             )}
           </Field>
@@ -226,9 +198,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-export function buildQueryTemplate({ name, entity }: { name: string; entity: string }): string {
-  const safeName = name || '<query_name>'
-  return [
+// ---------------------------------------------------------------------------
+// Templates — one chart YAML, query fields at top level + visualization block
+// ---------------------------------------------------------------------------
+
+export function buildChartTemplate({
+  name, entity, chartType,
+}: { name: string; entity: string; chartType: ChartType }): string {
+  const safeName = name || '<chart_name>'
+  const commonQuery = [
     `name: ${safeName}`,
     `entity: ${entity}`,
     'attributes:',
@@ -236,18 +214,11 @@ export function buildQueryTemplate({ name, entity }: { name: string; entity: str
     'measures:',
     '  - count(*)',
     '',
-  ].join('\n')
-}
-
-export function buildViewTemplate({
-  name, chartType,
-}: { name: string; chartType: ChartType }): string {
-  const safeName = name || '<chart_name>'
+  ]
   if (chartType === 'kpi') {
     return [
-      `name: ${safeName}`,
+      ...commonQuery,
       'type: metric',
-      `query: ${safeName}`,
       'measure: <measure_name>',
       'visualization:',
       '  suffix: ""',
@@ -256,9 +227,8 @@ export function buildViewTemplate({
   }
   if (chartType === 'table') {
     return [
-      `name: ${safeName}`,
+      ...commonQuery,
       'type: table',
-      `query: ${safeName}`,
       'visualization:',
       '  columns:',
       '    - <column_name>',
@@ -266,14 +236,54 @@ export function buildViewTemplate({
     ].join('\n')
   }
   return [
-    `name: ${safeName}`,
+    ...commonQuery,
     'type: chart',
-    `query: ${safeName}`,
     'visualization:',
     `  chart_type: ${chartType}`,
     '  x: <x_column>',
     '  y:',
     '    - <y_column>',
     '',
+  ].join('\n')
+}
+
+// Inline an existing query YAML into a fresh chart template. String-level
+// composition rather than YAML parsing so we don't pull in js-yaml or
+// disturb the user's field ordering; the ``name:`` line is retargeted to
+// the chart being authored.
+function inlineQueryIntoChart(queryYaml: string, chartName: string, chartType: ChartType): string {
+  const retargeted = queryYaml.replace(
+    /^name:\s*[a-zA-Z0-9_]+\s*$/m,
+    `name: ${chartName || '<chart_name>'}`,
+  )
+  const trimmed = retargeted.trimEnd()
+  const vizBlock = buildVisualizationBlock(chartType)
+  return `${trimmed}\n${vizBlock}\n`
+}
+
+function buildVisualizationBlock(chartType: ChartType): string {
+  if (chartType === 'kpi') {
+    return [
+      'type: metric',
+      'measure: <measure_name>',
+      'visualization:',
+      '  suffix: ""',
+    ].join('\n')
+  }
+  if (chartType === 'table') {
+    return [
+      'type: table',
+      'visualization:',
+      '  columns:',
+      '    - <column_name>',
+    ].join('\n')
+  }
+  return [
+    'type: chart',
+    'visualization:',
+    `  chart_type: ${chartType}`,
+    '  x: <x_column>',
+    '  y:',
+    '    - <y_column>',
   ].join('\n')
 }

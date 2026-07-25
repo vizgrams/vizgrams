@@ -8,9 +8,11 @@
  * Two modes:
  *   - Preview (default): renders the chart via the canonical ViewContent.
  *     Drilldowns inside the drawer push a DrilldownOverlay on top.
- *   - Edit: side-by-side query + visualization YAML editors. Save calls
- *     api.saveChart which writes both atomically (query rollback on view
- *     validation failure). Switching back to Preview refetches.
+ *   - Edit: single YAML editor showing the composed chart (query fields
+ *     at the top level + visualization block). Save calls api.saveChart
+ *     which server-side splits back into the query + view pair (with
+ *     query rollback on view validation failure). Switching back to
+ *     Preview refetches.
  *
  * The chart-as-one-thing UX is the point: users don't have to think
  * "edit query, then edit view." Members proposing changes is deferred
@@ -20,7 +22,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Eye, Pencil, X } from 'lucide-react'
 
-import type { QueryDetail, ViewDetail, ViewResult } from '@/api/client'
+import type { ViewDetail, ViewResult } from '@/api/client'
 import { DrilldownOverlay } from '@/components/explore/DrilldownOverlay'
 import { ViewContent } from '@/components/view/ViewContent'
 import { ViewParamBar } from '@/components/view/ViewParamBar'
@@ -39,7 +41,7 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
   const [mode, setMode] = useState<Mode>('preview')
   const [detail, setDetail] = useState<ViewDetail | null>(null)
   const [result, setResult] = useState<ViewResult | null>(null)
-  const [query, setQuery] = useState<QueryDetail | null>(null)
+  const [chartYaml, setChartYaml] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [executing, setExecuting] = useState(false)
@@ -59,22 +61,16 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
     Promise.all([
       api.getView(viewName),
       api.executeView(viewName, 1000, 0, paramValues),
+      // Composed chart YAML for the Edit tab. 404 is recoverable (the
+      // view exists but has no query behind it) — edit shows blank so
+      // the user can paste one in.
+      api.getChart(viewName).catch(() => null),
     ])
-      .then(([d, r]) => {
+      .then(([d, r, c]) => {
         if (cancelled) return
         setDetail(d)
         setResult(r)
-        // Best-effort fetch of the underlying query so Edit mode has the
-        // YAML to start from. Convention: query name == view name for
-        // charts authored via NewChartDrawer. Older charts may reference
-        // a differently-named query — fall back to that.
-        const targetQuery = (d.query as string | null) || viewName
-        return api.getQuery(targetQuery).then((q) => {
-          if (!cancelled) setQuery(q)
-        }).catch(() => {
-          // No matching query is recoverable — edit will just show blank.
-          if (!cancelled) setQuery(null)
-        })
+        setChartYaml(c?.chart_yaml ?? '')
       })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load') })
       .finally(() => { if (!cancelled) setLoading(false) })
@@ -169,8 +165,7 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
           {!loading && !error && mode === 'edit' && (
             <EditPanel
               viewName={viewName}
-              initialQueryYaml={query?.raw_yaml ?? ''}
-              initialViewYaml={detail?.raw_yaml ?? ''}
+              initialChartYaml={chartYaml}
               onSaved={() => {
                 setMode('preview')
                 setRefreshTick((t) => t + 1)
@@ -187,33 +182,29 @@ export function ChartDetailDrawer({ viewName, onClose }: Props) {
 }
 
 // ---------------------------------------------------------------------------
-// Edit panel — two YAML textareas + one Save button calling api.saveChart.
-// Kept local to ChartDetailDrawer since the lifecycle is tied to it.
+// Edit panel — single YAML textarea for the composed chart. Server splits
+// into query + view on save (see api/services/chart_service.py).
 // ---------------------------------------------------------------------------
 
 function EditPanel({
-  viewName, initialQueryYaml, initialViewYaml, onSaved,
+  viewName, initialChartYaml, onSaved,
 }: {
   viewName: string
-  initialQueryYaml: string
-  initialViewYaml: string
+  initialChartYaml: string
   onSaved: () => void
 }) {
   const { api } = useModel()
-  const [queryYaml, setQueryYaml] = useState(initialQueryYaml)
-  const [viewYaml, setViewYaml] = useState(initialViewYaml)
+  const [chartYaml, setChartYaml] = useState(initialChartYaml)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // If the parent refetches and supplies new initial content, pick it up.
-  useEffect(() => { setQueryYaml(initialQueryYaml) }, [initialQueryYaml])
-  useEffect(() => { setViewYaml(initialViewYaml) }, [initialViewYaml])
+  useEffect(() => { setChartYaml(initialChartYaml) }, [initialChartYaml])
 
   async function save() {
     setSaving(true)
     setError(null)
     try {
-      await api.saveChart(viewName, queryYaml, viewYaml)
+      await api.saveChart(viewName, chartYaml)
       onSaved()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -226,26 +217,14 @@ function EditPanel({
     <div className="space-y-4">
       <div>
         <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5">
-          Query (YAML)
+          Chart (YAML)
         </div>
         <textarea
-          value={queryYaml}
-          onChange={(e) => setQueryYaml(e.target.value)}
-          rows={12}
+          value={chartYaml}
+          onChange={(e) => setChartYaml(e.target.value)}
+          rows={24}
           className="w-full text-xs bg-background border rounded px-2.5 py-2 font-mono resize-y"
-          placeholder="No query found — paste the query YAML here to create one."
-        />
-      </div>
-
-      <div>
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5">
-          Visualization (YAML)
-        </div>
-        <textarea
-          value={viewYaml}
-          onChange={(e) => setViewYaml(e.target.value)}
-          rows={12}
-          className="w-full text-xs bg-background border rounded px-2.5 py-2 font-mono resize-y"
+          placeholder="No chart YAML found — paste one here to create it."
         />
       </div>
 
