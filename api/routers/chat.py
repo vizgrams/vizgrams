@@ -20,11 +20,12 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_current_user, require_member, resolve_model_dir
+from api.services.chat import agui_stream, service
 from api.services.chat import publish as chat_publish_service
-from api.services.chat import service
 from core import chat_history_db
 
 router = APIRouter(prefix="/model/{model}/chat", tags=["chat"])
@@ -119,6 +120,40 @@ class ChatResponse(BaseModel):
     query_yaml: str | None = None
     view_yaml: str | None = None
     sql: str | None = None
+
+
+@router.post("/stream")
+def chat_stream(
+    body: ChatRequest,
+    model: str,
+    model_dir: str = Depends(resolve_model_dir),
+    user_id: str = Depends(get_current_user),
+    _email: str = Depends(require_member),
+) -> StreamingResponse:
+    """AG-UI streaming variant of the chat turn.
+
+    Returns ``text/event-stream``. Every event is one AG-UI protocol
+    frame (see ``agui_stream.stream_turn``). Persistence + publish live
+    on the non-streaming ``POST /chat`` for now; a follow-up will fold
+    them into the stream via a final ``CUSTOM`` event carrying the
+    ``session_id`` + ``turn_id`` so the frontend can wire "publish this
+    turn" without a second round-trip.
+    """
+    from ag_ui.encoder import AGUI_MEDIA_TYPE, EventEncoder
+
+    thread_id = body.session_id or "new"
+    encoder = EventEncoder()
+
+    def _sse_iter():
+        for event in agui_stream.stream_turn(
+            model_dir=Path(model_dir),
+            message=body.message,
+            thread_id=thread_id,
+            history=[turn.model_dump() for turn in body.history],
+        ):
+            yield encoder.encode(event)
+
+    return StreamingResponse(_sse_iter(), media_type=AGUI_MEDIA_TYPE)
 
 
 @router.post("", response_model=ChatResponse)

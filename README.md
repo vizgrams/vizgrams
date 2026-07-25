@@ -61,6 +61,83 @@ Extracts raw data from external systems into a local SQLite database, models it 
               http://localhost:5173        (ui)
 ```
 
+## Chat surface
+
+The `/` route is a chat interface — one controllable surface for the whole
+platform: manage entities, check health, run workflows, explore data,
+generate charts, publish vizgrams. YAML editors are still there as an
+"advanced" affordance; chat is the front door.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Frontend  (React + Tailwind + shadcn)                           │
+│  ui/src/pages/ChatPage.tsx                                       │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  assistant-ui  <Thread>                                    │  │
+│  │  - message rendering        - approvals in-thread          │  │
+│  │  - streaming autoscroll     - generative UI (React tools)  │  │
+│  └────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────┬────────────────────────────────────┘
+                              │
+                              │ AG-UI events over SSE
+                              │ (RUN_STARTED, TEXT_MESSAGE_CHUNK,
+                              │  TOOL_CALL_*, RUN_UI_TREE, …)
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Backend  (FastAPI + ag_ui)                                      │
+│  api/routers/chat.py    /api/v1/chat/stream                      │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  Orchestrator  (semantic/llm/orchestrator.py)              │  │
+│  │                                                            │  │
+│  │  One loop, provider-agnostic (OpenAI | Anthropic).         │  │
+│  │  Emits AG-UI events; dispatches to registered tools.       │  │
+│  └────┬───────────────────────────────────────────────────────┘  │
+│       │                                                          │
+│       │  registered tools (thin wrappers over api/services/*)    │
+│       ▼                                                          │
+│  ┌────────────────┐  ┌─────────────────┐  ┌───────────────────┐  │
+│  │  read          │  │  write (needs   │  │  generative UI    │  │
+│  │  ────          │  │  approval)      │  │  ─────────────    │  │
+│  │  find_artifact │  │  upsert_entity  │  │  Chart, EntityForm│  │
+│  │  run_query     │  │  publish_vizg.  │  │  HealthGrid,      │  │
+│  │  find_health   │  │  save_chart     │  │  JobStatus, Ask   │  │
+│  │  ...           │  │  ...            │  │  (approval)       │  │
+│  │                │  │                 │  │                   │  │
+│  │  fire &        │  │  side-effect    │  │  RunUiTree event  │  │
+│  │  triggers      │  │  ────────────   │  │  → React widget   │  │
+│  │  (no approval) │  │  run_extractor  │  │                   │  │
+│  │                │  │  rematerialize  │  │                   │  │
+│  └────────────────┘  └─────────────────┘  └───────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Pluggability** — three seams designed to grow:
+
+1. **Tools** — each tool is `~50 LOC` wrapping an existing service call. New
+   surface? Add a tool file under `semantic/llm/tools/`, register it, done.
+2. **Generative UI widgets** — orchestrator emits an AG-UI `RunUiTree` with
+   a widget name + props; assistant-ui renders the matching React
+   component. Add a widget = one React file + one entry in the registry.
+3. **Providers** — `semantic/llm/provider.py` is an adapter interface.
+   OpenAI + Anthropic ship; add Bedrock, Gemini, local Ollama by writing
+   an adapter.
+
+**Tech choices** (locked 2026-07):
+
+| Layer         | Choice                | Why                                          |
+|---------------|-----------------------|----------------------------------------------|
+| Chat client   | assistant-ui (MIT)    | Composable React primitives; ships AG-UI runtime; owns nothing you don't hand it. |
+| Wire protocol | AG-UI (MIT)           | Standard for streaming agent events + generative UI + approvals; SSE transport; Python + TS SDKs. |
+| Design system | shadcn/ui + Tailwind  | assistant-ui expects Tailwind; shadcn brings the primitives assistant-ui builds on. |
+| Server SDK    | `ag_ui` (PyPI)        | Pydantic models for every AG-UI event; drops into FastAPI as `StreamingResponse`. |
+| LLM providers | OpenAI + Anthropic    | Anthropic's tool-use blocks pair with AG-UI streaming; OpenAI kept as fallback. |
+
+**Approval policy** — writes to *versioned artefacts* (entities, mappers,
+features, queries, views, charts, applications) require in-thread
+approval. Job triggers (extract, materialize, reconcile) do not — they're
+recoverable and the Health page already surfaces their state.
+
 ## Project structure
 
 ```

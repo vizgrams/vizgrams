@@ -115,6 +115,139 @@ class OpenAIClient:
 
 
 # ---------------------------------------------------------------------------
+# Anthropic implementation
+# ---------------------------------------------------------------------------
+
+
+class AnthropicClient:
+    """LLMClient backed by the Anthropic Messages API.
+
+    Translates OpenAI-shape messages to Anthropic's ``messages`` array +
+    ``system`` string (OpenAI carries system prompts as a role='system'
+    message; Anthropic wants them out-of-band). Tool defs translate 1:1:
+    OpenAI's ``{type: 'function', function: {name, description,
+    parameters}}`` becomes Anthropic's ``{name, description,
+    input_schema}``.
+    """
+
+    def __init__(self, *, api_key: str, default_model: str = "claude-haiku-4-5-20251001") -> None:
+        try:
+            from anthropic import Anthropic
+        except ImportError as exc:
+            raise ImportError(
+                "anthropic package is required for AnthropicClient. "
+                "Install with: poetry add anthropic"
+            ) from exc
+        self._client = Anthropic(api_key=api_key)
+        self._default_model = default_model
+
+    @staticmethod
+    def _to_anthropic_messages(messages: list[dict]) -> tuple[str, list[dict]]:
+        """Split OpenAI-shape history into (system_prompt, message_list).
+
+        OpenAI: ``[{role: 'system', content: ...}, {role: 'user', ...}, …]``
+        Anthropic: ``system="…", messages=[{role: 'user'/'assistant', content: …}]``
+
+        Assistant messages with tool_calls translate to Anthropic
+        ``content`` blocks (`{type: 'tool_use', …}`); the paired
+        ``role='tool'`` result translates to the next user message's
+        ``content`` block (`{type: 'tool_result', …}`).
+        """
+        system_parts: list[str] = []
+        out: list[dict] = []
+        for m in messages:
+            role = m.get("role")
+            if role == "system":
+                system_parts.append(m.get("content") or "")
+                continue
+            if role == "tool":
+                # Anthropic packs tool_result into the *next* user message.
+                # If the previous assistant emitted tool_use, and now we're
+                # feeding back its result, wrap as a user-turn tool_result.
+                out.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": m.get("tool_call_id"),
+                        "content": m.get("content") or "",
+                    }],
+                })
+                continue
+            if role == "assistant" and m.get("tool_calls"):
+                blocks: list[dict] = []
+                if m.get("content"):
+                    blocks.append({"type": "text", "text": m["content"]})
+                for tc in m["tool_calls"]:
+                    args = tc.get("function", {}).get("arguments") or "{}"
+                    try:
+                        parsed = json.loads(args) if isinstance(args, str) else args
+                    except json.JSONDecodeError:
+                        parsed = {}
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id"),
+                        "name": tc.get("function", {}).get("name"),
+                        "input": parsed,
+                    })
+                out.append({"role": "assistant", "content": blocks})
+                continue
+            out.append({"role": role, "content": m.get("content") or ""})
+        return ("\n\n".join(system_parts).strip(), out)
+
+    @staticmethod
+    def _to_anthropic_tools(tools: list[dict]) -> list[dict]:
+        result = []
+        for t in tools:
+            fn = t.get("function", t)
+            result.append({
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+            })
+        return result
+
+    def complete(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        model: str | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
+    ) -> LLMResponse:
+        system, anthropic_messages = self._to_anthropic_messages(messages)
+        kwargs: dict[str, Any] = {
+            "model": model or self._default_model,
+            "messages": anthropic_messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system:
+            kwargs["system"] = system
+        if tools:
+            kwargs["tools"] = self._to_anthropic_tools(tools)
+
+        resp = self._client.messages.create(**kwargs)
+        text_parts: list[str] = []
+        calls: list[ToolCall] = []
+        for block in resp.content:
+            btype = getattr(block, "type", None)
+            if btype == "text":
+                text_parts.append(block.text)
+            elif btype == "tool_use":
+                calls.append(ToolCall(
+                    id=block.id,
+                    name=block.name,
+                    arguments=block.input if isinstance(block.input, dict) else {},
+                ))
+        return LLMResponse(
+            content="".join(text_parts) or None,
+            tool_calls=calls,
+            raw=resp,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Factory — read provider choice from environment
 # ---------------------------------------------------------------------------
 
@@ -140,7 +273,18 @@ def get_default_client() -> LLMClient:
             default_model=model_override or "gpt-4o-mini",
         )
 
+    if provider == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise RuntimeError(
+                "VZ_LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set."
+            )
+        return AnthropicClient(
+            api_key=api_key,
+            default_model=model_override or "claude-haiku-4-5-20251001",
+        )
+
     raise ValueError(
         f"Unknown VZ_LLM_PROVIDER: {provider!r}. "
-        f"Currently supported: 'openai'."
+        f"Currently supported: 'openai', 'anthropic'."
     )
