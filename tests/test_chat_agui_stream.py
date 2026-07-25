@@ -107,31 +107,65 @@ class TestTraceMapping:
         assert starts[0].tool_call_name == "build_and_run_query"
 
 
-class TestCustomViewEvent:
-    def test_inline_view_emits_custom_event(self):
-        events = _run(_FakeResult(
+class TestTerminalToolResultCarriesView:
+    """The chart card renders on the terminal tool's TOOL_CALL_RESULT.
+    Frontend ``makeAssistantToolUI`` reads the tool name + JSON payload
+    and picks the right React component."""
+
+    def test_present_view_result_carries_inline_view_json(self):
+        import json as _json
+        result = _FakeResult(
             success=True,
             inline_view={"view_yaml": "name: c\n", "caption": "yes"},
-        ))
-        customs = [e for e in events if e.type == EventType.CUSTOM]
-        assert len(customs) == 1
-        assert customs[0].name == "vizgrams.view"
-        assert customs[0].value["kind"] == "inline_view"
-        assert customs[0].value["payload"]["caption"] == "yes"
+            trace=[
+                _FakeTraceStep("build_and_run_query", {}, True, "42 rows"),
+                _FakeTraceStep("present_view", {"chart_type": "bar"}, True, "ok"),
+            ],
+        )
+        events = _run(result)
+        results = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+        # Non-terminal tool keeps its summary; terminal tool carries JSON
+        assert results[0].content == "42 rows"
+        payload = _json.loads(results[-1].content)
+        assert payload["kind"] == "inline_view"
+        assert payload["payload"]["caption"] == "yes"
 
-    def test_saved_view_emits_custom_event(self):
-        events = _run(_FakeResult(
+    def test_run_saved_view_result_carries_saved_view_json(self):
+        import json as _json
+        result = _FakeResult(
             success=True,
             saved_view={"name": "dora_clt_trend", "caption": "..."},
-        ))
-        customs = [e for e in events if e.type == EventType.CUSTOM]
-        assert len(customs) == 1
-        assert customs[0].value["kind"] == "saved_view"
+            trace=[
+                _FakeTraceStep("find_artifacts", {}, True, "1 match"),
+                _FakeTraceStep("run_saved_view", {"name": "dora_clt_trend"},
+                               True, "ok"),
+            ],
+        )
+        events = _run(result)
+        results = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+        payload = _json.loads(results[-1].content)
+        assert payload["kind"] == "saved_view"
 
-    def test_failed_turn_emits_no_custom_view(self):
-        events = _run(_FakeResult(success=False, error="oops"))
-        customs = [e for e in events if e.type == EventType.CUSTOM]
-        assert customs == []
+    def test_no_terminal_tool_no_json_result(self):
+        """When the LLM stops without calling a terminal tool, results
+        stay as summary strings — the frontend renders nothing special."""
+        events = _run(_FakeResult(
+            success=True, inline_view={"caption": "hi"},
+            trace=[_FakeTraceStep("find_artifacts", {}, True, "1 match")],
+        ))
+        results = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+        assert results[0].content == "1 match"
+
+    def test_failed_terminal_tool_falls_back_to_summary(self):
+        """A terminal tool that failed doesn't produce a view payload —
+        result stays as the failure summary so the tool UI can show an
+        error state."""
+        events = _run(_FakeResult(
+            success=False, error="oops",
+            trace=[_FakeTraceStep("present_view", {}, False, "invalid caption")],
+        ))
+        results = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+        assert results[-1].content == "invalid caption"
 
 
 class TestFinalText:
